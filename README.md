@@ -1,4 +1,4 @@
-# Heltec LoRa Interface
+# Heltec LoRa Interface (s3-lora-interface)
 
 This sketch turns an ESP32-S3 board into a browser-based interface for a Heltec LoRa unit running Meshtastic firmware.
 
