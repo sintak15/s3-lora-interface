@@ -156,6 +156,7 @@ static const char* SD_PUBLIC_CHAT_PATH = "/s3-lora/public_chat.log";
 static const char* SD_PRIVATE_CHAT_PATH = "/s3-lora/private_chat.log";
 static const char* SD_POSITIONS_PATH = "/s3-lora/positions.csv";
 static const char* SD_MAP_CACHE_PATH = "/s3-lora/map_cache.bin";
+static const char* SD_LAST_LOCATION_PATH = "/s3-lora/last_location.txt";
 static constexpr uint32_t COLOR_BG = 0x050807;
 static constexpr uint32_t COLOR_PANEL = 0x101816;
 static constexpr uint32_t COLOR_INPUT = 0x07100D;
@@ -213,11 +214,11 @@ static lv_obj_t* pageLora = nullptr;
 static lv_obj_t* pagePublicChat = nullptr;
 static lv_obj_t* pagePrivateChat = nullptr;
 static lv_obj_t* pageGps = nullptr;
-static lv_obj_t* pageMap = nullptr;
 static lv_obj_t* pageSystem = nullptr;
 static lv_obj_t* pageSystemInterface = nullptr;
 static lv_obj_t* pageSystemSerial = nullptr;
 static lv_obj_t* pageSystemRadio = nullptr;
+static lv_obj_t* pageSystemGps = nullptr;
 static lv_obj_t* pageBattery = nullptr;
 static lv_obj_t* currentPage = nullptr;
 static lv_obj_t* previousPage = nullptr;
@@ -257,6 +258,7 @@ static int cachedMapPixelY = INT_MIN;
 static bool cachedMapTileFound = false;
 static double cachedMapLat = 0.0;
 static double cachedMapLon = 0.0;
+static char mapCacheStatus[48] = "not checked";
 static uint32_t touchSamples = 0;
 static uint32_t lastTouchMs = 0;
 static uint16_t lastTouchX = 0;
@@ -377,6 +379,31 @@ static void logPositionToSd(uint32_t from, const char* sourceKind, double lat, d
   appendSdLine(SD_POSITIONS_PATH, line);
 }
 
+static void saveLastLocationToSd(double lat, double lon, int32_t alt) {
+  if (!sdStorage.available) return;
+  if (SD_MMC.exists(SD_LAST_LOCATION_PATH)) SD_MMC.remove(SD_LAST_LOCATION_PATH);
+  File file = SD_MMC.open(SD_LAST_LOCATION_PATH, FILE_WRITE);
+  if (!file) return;
+  file.printf("%.7f,%.7f,%ld,%lu\n", lat, lon, (long)alt, (unsigned long)millis());
+  file.close();
+}
+
+static bool loadLastLocationFromSd() {
+  if (!sdStorage.available || !SD_MMC.exists(SD_LAST_LOCATION_PATH)) return false;
+  File file = SD_MMC.open(SD_LAST_LOCATION_PATH, FILE_READ);
+  if (!file) return false;
+  String line = file.readStringUntil('\n');
+  file.close();
+  double lat = 0.0;
+  double lon = 0.0;
+  long alt = 0;
+  if (sscanf(line.c_str(), "%lf,%lf,%ld", &lat, &lon, &alt) != 3) return false;
+  if (lat < -90.0 || lat > 90.0 || lon < -180.0 || lon > 180.0) return false;
+  cachedMapLat = lat;
+  cachedMapLon = lon;
+  return true;
+}
+
 static void updateLocalGpsStats() {
   if (!localGps.location.isValid()) return;
 
@@ -410,6 +437,7 @@ static void updateLocalGpsStats() {
   }
   strlcpy(gpsStats.sourceKind, "CYD GPS UART", sizeof(gpsStats.sourceKind));
   gpsStats.lastUpdateMs = millis();
+  saveLastLocationToSd(gpsStats.latitude, gpsStats.longitude, gpsStats.altitude);
 
   if (stats.myNodeNum != 0) {
     NodeRecord* node = findOrCreateNode(stats.myNodeNum);
@@ -669,8 +697,8 @@ static void showPage(lv_obj_t* target, bool remember = true) {
   if (!target) return;
   if (remember && currentPage && currentPage != target) previousPage = currentPage;
   lv_obj_t* pages[] = {
-    pageLauncher, pageLora, pagePublicChat, pagePrivateChat, pageGps, pageMap,
-    pageSystem, pageSystemInterface, pageSystemSerial, pageSystemRadio, pageBattery
+    pageLauncher, pageLora, pagePublicChat, pagePrivateChat, pageGps,
+    pageSystem, pageSystemInterface, pageSystemSerial, pageSystemRadio, pageSystemGps, pageBattery
   };
   for (lv_obj_t* page : pages) {
     if (!page) continue;
@@ -679,7 +707,7 @@ static void showPage(lv_obj_t* target, bool remember = true) {
   }
   if (keyboard) lv_obj_add_flag(keyboard, LV_OBJ_FLAG_HIDDEN);
   currentPage = target;
-  if (target == pageMap) {
+  if (target == pageGps) {
     mapRenderPending = true;
     lastMapUiRefreshMs = millis();
     if (mapCanvasCached && lblMapStats) {
@@ -828,11 +856,11 @@ static void buildScreenUi() {
   pagePublicChat = makePage(screen);
   pagePrivateChat = makePage(screen);
   pageGps = makePage(screen);
-  pageMap = makePage(screen);
   pageSystem = makePage(screen);
   pageSystemInterface = makePage(screen);
   pageSystemSerial = makePage(screen);
   pageSystemRadio = makePage(screen);
+  pageSystemGps = makePage(screen);
   pageBattery = makePage(screen);
 
   currentPage = pageLauncher;
@@ -931,18 +959,8 @@ static void buildScreenUi() {
   lv_obj_set_style_text_color(privHint, lv_color_hex(COLOR_MUTED), 0);
   lv_obj_align(privHint, LV_ALIGN_TOP_LEFT, 2, 236);
 
-  makePageTitle(pageGps, "GPS");
-  lv_obj_t* gpsPanel = makePanel(pageGps);
-  lv_obj_set_size(gpsPanel, SCREEN_W - 12, 176);
-  lv_obj_align(gpsPanel, LV_ALIGN_TOP_MID, 0, 24);
-  lblGpsStats = lv_label_create(gpsPanel);
-  lv_label_set_text(lblGpsStats, "Waiting for CYD GPS UART...");
-  lv_obj_set_style_text_color(lblGpsStats, lv_color_hex(COLOR_TEXT), 0);
-  lv_obj_set_width(lblGpsStats, lv_pct(100));
-  makeActionButton(pageGps, "Node Map", 210, [](lv_event_t*) { showPage(pageMap); });
-
-  makePageTitle(pageMap, "Node Map");
-  mapPlot = makePanel(pageMap);
+  makePageTitle(pageGps, "GPS / Map");
+  mapPlot = makePanel(pageGps);
   lv_obj_set_size(mapPlot, MAP_PLOT_W, MAP_PLOT_H);
   lv_obj_align(mapPlot, LV_ALIGN_TOP_MID, 0, 22);
   lv_obj_set_style_bg_color(mapPlot, lv_color_hex(COLOR_INPUT), 0);
@@ -964,17 +982,18 @@ static void buildScreenUi() {
     lv_obj_clear_flag(mapDots[i], LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(mapDots[i], LV_OBJ_FLAG_CLICKABLE);
   }
-  lblMapStats = lv_label_create(pageMap);
+  lblMapStats = lv_label_create(pageGps);
   lv_label_set_text(lblMapStats, "Waiting for node positions...");
   lv_obj_set_style_text_color(lblMapStats, lv_color_hex(COLOR_TEXT), 0);
   lv_obj_set_width(lblMapStats, SCREEN_W - 16);
   lv_obj_align(lblMapStats, LV_ALIGN_TOP_LEFT, 6, 164);
 
   makePageTitle(pageSystem, "System");
-  makeActionButton(pageSystem, "Interface", 28, [](lv_event_t*) { showPage(pageSystemInterface); });
-  makeActionButton(pageSystem, "Serial Link", 80, [](lv_event_t*) { showPage(pageSystemSerial); });
-  makeActionButton(pageSystem, "Radio Stats", 132, [](lv_event_t*) { showPage(pageSystemRadio); });
-  makeActionButton(pageSystem, "Battery", 184, [](lv_event_t*) { showPage(pageBattery); });
+  makeActionButton(pageSystem, "Interface", 24, [](lv_event_t*) { showPage(pageSystemInterface); });
+  makeActionButton(pageSystem, "Serial Link", 70, [](lv_event_t*) { showPage(pageSystemSerial); });
+  makeActionButton(pageSystem, "Radio Stats", 116, [](lv_event_t*) { showPage(pageSystemRadio); });
+  makeActionButton(pageSystem, "GPS Stats", 162, [](lv_event_t*) { showPage(pageSystemGps); });
+  makeActionButton(pageSystem, "Battery", 208, [](lv_event_t*) { showPage(pageBattery); });
 
   makePageTitle(pageSystemInterface, "Interface");
   lv_obj_t* interfacePanel = makePanel(pageSystemInterface);
@@ -1002,6 +1021,15 @@ static void buildScreenUi() {
   lv_label_set_text(lblSystemRadio, "Radio ready");
   lv_obj_set_style_text_color(lblSystemRadio, lv_color_hex(COLOR_TEXT), 0);
   lv_obj_set_width(lblSystemRadio, lv_pct(100));
+
+  makePageTitle(pageSystemGps, "GPS Stats");
+  lv_obj_t* gpsPanel = makePanel(pageSystemGps);
+  lv_obj_set_size(gpsPanel, SCREEN_W - 12, 226);
+  lv_obj_align(gpsPanel, LV_ALIGN_TOP_MID, 0, 24);
+  lblGpsStats = lv_label_create(gpsPanel);
+  lv_label_set_text(lblGpsStats, "Waiting for CYD GPS UART...");
+  lv_obj_set_style_text_color(lblGpsStats, lv_color_hex(COLOR_TEXT), 0);
+  lv_obj_set_width(lblGpsStats, lv_pct(100));
 
   makePageTitle(pageBattery, "Battery");
   lv_obj_t* batteryPanel = makePanel(pageBattery);
@@ -1117,13 +1145,28 @@ static lv_color_t rgb565ToLvColor(uint16_t rgb565) {
 }
 
 static void loadMapCacheFromSd() {
-  if (!sdStorage.available || !mapCanvas || !SD_MMC.exists(SD_MAP_CACHE_PATH)) return;
+  if (!sdStorage.available || !mapCanvas) {
+    strlcpy(mapCacheStatus, "not ready", sizeof(mapCacheStatus));
+    return;
+  }
+  bool hasLastLocation = loadLastLocationFromSd();
+  if (!SD_MMC.exists(SD_MAP_CACHE_PATH)) {
+    strlcpy(mapCacheStatus, hasLastLocation ? "image missing, location loaded" : "missing", sizeof(mapCacheStatus));
+    Serial.printf("[MAPCACHE] %s path=%s\n", mapCacheStatus, SD_MAP_CACHE_PATH);
+    return;
+  }
   File file = SD_MMC.open(SD_MAP_CACHE_PATH, FILE_READ);
-  if (!file) return;
+  if (!file) {
+    strlcpy(mapCacheStatus, "open failed", sizeof(mapCacheStatus));
+    Serial.printf("[MAPCACHE] %s path=%s\n", mapCacheStatus, SD_MAP_CACHE_PATH);
+    return;
+  }
 
   MapCacheHeader header;
   if (file.read((uint8_t*)&header, sizeof(header)) != sizeof(header)) {
     file.close();
+    strlcpy(mapCacheStatus, "header read failed", sizeof(mapCacheStatus));
+    Serial.printf("[MAPCACHE] %s path=%s\n", mapCacheStatus, SD_MAP_CACHE_PATH);
     return;
   }
   if (header.magic != MAP_CACHE_MAGIC ||
@@ -1131,11 +1174,22 @@ static void loadMapCacheFromSd() {
       header.width != MAP_PLOT_W ||
       header.height != MAP_PLOT_H) {
     file.close();
+    strlcpy(mapCacheStatus, "header mismatch", sizeof(mapCacheStatus));
+    Serial.printf("[MAPCACHE] %s magic=%08lX ver=%u size=%ux%u expected=%ux%u\n",
+                  mapCacheStatus,
+                  (unsigned long)header.magic,
+                  (unsigned)header.version,
+                  (unsigned)header.width,
+                  (unsigned)header.height,
+                  (unsigned)MAP_PLOT_W,
+                  (unsigned)MAP_PLOT_H);
     return;
   }
   size_t expected = sizeof(mapCanvasBuf);
   if (file.read((uint8_t*)mapCanvasBuf, expected) != expected) {
     file.close();
+    strlcpy(mapCacheStatus, "image read failed", sizeof(mapCacheStatus));
+    Serial.printf("[MAPCACHE] %s path=%s\n", mapCacheStatus, SD_MAP_CACHE_PATH);
     return;
   }
   file.close();
@@ -1149,14 +1203,30 @@ static void loadMapCacheFromSd() {
   cachedMapLon = header.lon;
   cachedMapTileFound = header.tileFound != 0;
   mapCanvasCached = true;
+  strlcpy(mapCacheStatus, "loaded", sizeof(mapCacheStatus));
+  Serial.printf("[MAPCACHE] loaded %.6f,%.6f z%d tile=%ld/%ld found=%s bytes=%u\n",
+                cachedMapLat,
+                cachedMapLon,
+                cachedMapZoom,
+                cachedMapTileX,
+                cachedMapTileY,
+                cachedMapTileFound ? "true" : "false",
+                (unsigned)expected);
   lv_obj_invalidate(mapCanvas);
 }
 
 static void saveMapCacheToSd() {
-  if (!sdStorage.available || !mapCanvasCached) return;
+  if (!sdStorage.available || !mapCanvasCached) {
+    strlcpy(mapCacheStatus, "save skipped", sizeof(mapCacheStatus));
+    return;
+  }
   if (SD_MMC.exists(SD_MAP_CACHE_PATH)) SD_MMC.remove(SD_MAP_CACHE_PATH);
   File file = SD_MMC.open(SD_MAP_CACHE_PATH, FILE_WRITE);
-  if (!file) return;
+  if (!file) {
+    strlcpy(mapCacheStatus, "save open failed", sizeof(mapCacheStatus));
+    Serial.printf("[MAPCACHE] %s path=%s\n", mapCacheStatus, SD_MAP_CACHE_PATH);
+    return;
+  }
   MapCacheHeader header = {};
   header.magic = MAP_CACHE_MAGIC;
   header.version = MAP_CACHE_VERSION;
@@ -1170,9 +1240,19 @@ static void saveMapCacheToSd() {
   header.lat = cachedMapLat;
   header.lon = cachedMapLon;
   header.tileFound = cachedMapTileFound ? 1 : 0;
-  file.write((const uint8_t*)&header, sizeof(header));
-  file.write((const uint8_t*)mapCanvasBuf, sizeof(mapCanvasBuf));
+  size_t headerWritten = file.write((const uint8_t*)&header, sizeof(header));
+  size_t imageWritten = file.write((const uint8_t*)mapCanvasBuf, sizeof(mapCanvasBuf));
   file.close();
+  strlcpy(mapCacheStatus, imageWritten == sizeof(mapCanvasBuf) ? "saved" : "save short write", sizeof(mapCacheStatus));
+  Serial.printf("[MAPCACHE] %s %.6f,%.6f z%d tile=%ld/%ld header=%u image=%u\n",
+                mapCacheStatus,
+                cachedMapLat,
+                cachedMapLon,
+                cachedMapZoom,
+                cachedMapTileX,
+                cachedMapTileY,
+                (unsigned)headerWritten,
+                (unsigned)imageWritten);
 }
 
 static bool renderOfflineTileMap(double lat, double lon, int zoom, char* centerPath, size_t centerPathSize) {
@@ -1270,7 +1350,7 @@ static bool placeMapDot(size_t index, double lat, double lon, int zoom, lv_color
 
 static void refreshMapUi() {
   if (!mapPlot || !lblMapStats) return;
-  if (currentPage != pageMap) return;
+  if (currentPage != pageGps) return;
   uint32_t minIntervalMs = mapRenderPending ? 750 : 5000;
   if (lastMapUiRefreshMs && millis() - lastMapUiRefreshMs < minIntervalMs) return;
   lastMapUiRefreshMs = millis();
@@ -1290,15 +1370,20 @@ static void refreshMapUi() {
       snprintf(waitingText, sizeof(waitingText),
                "Waiting for CYD GPS fix...\n"
                "Showing cached %.5f, %.5f z%d\n"
+               "Cache: %s\n"
                "RX GPIO%d: %lu bytes",
                cachedMapLat,
                cachedMapLon,
                cachedMapZoom,
+               mapCacheStatus,
                GPS_RX_PIN,
                (unsigned long)gpsBytesFromLocal);
     } else {
       snprintf(waitingText, sizeof(waitingText),
-               "Waiting for CYD GPS fix...\nRX GPIO%d: %lu bytes\nSD maps: %s",
+               "Waiting for CYD GPS fix...\n"
+               "Cache: %s\n"
+               "RX GPIO%d: %lu bytes\nSD maps: %s",
+               mapCacheStatus,
                GPS_RX_PIN,
                (unsigned long)gpsBytesFromLocal,
                sdStorage.available ? "ready" : sdStorage.status);
@@ -1328,6 +1413,7 @@ static void refreshMapUi() {
            "CYD GPS: fix  RX %lu bytes\n"
            "Lat/lon: %.5f, %.5f\n"
            "Offline tile z%d/%ld/%ld: %s\n"
+           "Cache: %s\n"
            "%u plotted point%s",
            (unsigned long)gpsBytesFromLocal,
            gpsStats.latitude,
@@ -1336,6 +1422,7 @@ static void refreshMapUi() {
            tileX,
            tileY,
            centerTileFound ? "drawn" : "missing",
+           mapCacheStatus,
            (unsigned)plotted,
            plotted == 1 ? "" : "s");
   lv_label_set_text(lblMapStats, mapText);
@@ -2069,6 +2156,8 @@ static void handleStatus() {
   json += "\"localGpsSentences\":" + String(localGps.sentencesWithFix()) + ",";
   json += "\"localGpsFailedChecksum\":" + String(localGps.failedChecksum()) + ",";
   json += "\"positionedNodes\":" + String(countPositionedNodes()) + ",";
+  json += "\"mapCacheStatus\":\"" + jsonEscape(mapCacheStatus) + "\",";
+  json += "\"mapCacheLoaded\":" + String(mapCanvasCached ? "true" : "false") + ",";
   json += "\"log\":\"" + jsonEscape(eventLog) + "\",";
   json += "\"nodes\":[";
   for (size_t i = 0; i < nodeCount; i++) {
@@ -2143,7 +2232,7 @@ canvas{width:100%;height:260px;background:#07100d;border:1px solid #24483e;borde
 <section><h2>Send Message</h2><input id="msg" maxlength="233" placeholder="Message to mesh"><button onclick="send()">Send</button></section>
 <section><h2>Chat</h2><pre id="chat"></pre></section>
 <section><h2>Map</h2><div id="realMap"></div><canvas id="mapFallback" class="hidden" width="640" height="360"></canvas><div class="mapMeta" id="mapMeta"></div></section>
-<section><h2>SD Storage</h2><div class="stats" id="storage"></div><button onclick="mountSd()">Mount SD</button><div class="links"><a href="/sd/events">Events</a><a href="/sd/public">Public Chat</a><a href="/sd/private">Private Chat</a><a href="/sd/positions">Positions CSV</a></div></section>
+<section><h2>SD Storage</h2><div class="stats" id="storage"></div><button onclick="mountSd()">Mount SD</button><div class="links"><a href="/sd/events">Events</a><a href="/sd/public">Public Chat</a><a href="/sd/private">Private Chat</a><a href="/sd/positions">Positions CSV</a><a href="/sd/mapcache">Map Cache</a><a href="/sd/last-location">Last GPS</a></div></section>
 <section><h2>Nodes</h2><table><thead><tr><th>Node</th><th>Name</th><th>SNR</th><th>Age</th><th>GPS</th></tr></thead><tbody id="nodes"></tbody></table></section>
 <section><h2>Serial Link</h2><pre id="serial"></pre></section>
 <section><h2>Event Log</h2><pre id="log"></pre></section>
@@ -2153,7 +2242,7 @@ function initRealMap(){if(realMapReady||!window.L)return;leafletMap=L.map('realM
 async function refresh(){const s=await (await fetch('/status')).json();ip.textContent='AP '+s.ip;
 stats.innerHTML=[['Node',s.myNode],['S3 Battery',s.battery+'% '+s.voltage+'V'],['Power',s.powerState],['Frames',s.frames],['Errors',s.errors],['RX/TX',s.rx+'/'+s.tx],['Nodes',s.online+'/'+s.total],['SD',s.sdStatus]]
 .map(x=>`<div class=stat><div class=label>${x[0]}</div><div class=value>${x[1]}</div></div>`).join('');
-storage.innerHTML=[['Status',s.sdAvailable?'mounted':s.sdStatus],['Type',s.sdType],['Used',formatBytes(s.sdUsedKb)],['Total',formatBytes(s.sdTotalKb)],['Writes',s.sdWrites],['Errors',s.sdErrors]]
+storage.innerHTML=[['Status',s.sdAvailable?'mounted':s.sdStatus],['Type',s.sdType],['Used',formatBytes(s.sdUsedKb)],['Total',formatBytes(s.sdTotalKb)],['Writes',s.sdWrites],['Errors',s.sdErrors],['Map Cache',s.mapCacheLoaded?'loaded':s.mapCacheStatus]]
 .map(x=>`<div class=stat><div class=label>${x[0]}</div><div class=value>${x[1]}</div></div>`).join('');
 chat.textContent=s.chat||'No chat yet';log.textContent=s.log||'Waiting for radio data';
 serial.textContent=`RX bytes: ${s.bytes}\nTX bytes: ${s.txBytes}\nLast byte: ${s.lastByte}\nMagic 94/C3: ${s.magic1}/${s.magic2}\nStream frames: ${s.streamFrames}\nBad lengths: ${s.badLengths}\nText/Tel/GPS/Node: ${s.textPackets}/${s.telemetryPackets}/${s.positionPackets}/${s.nodeInfoPackets}\nHeltec GPS ignored: ${s.remotePositionPackets}\nConfig/Other/Encrypted: ${s.configFrames}/${s.otherFrames}/${s.encryptedPackets}\nLast port: ${s.lastPort}\nASCII seen: ${s.serialPeek||''}`;
@@ -2191,6 +2280,8 @@ void setup() {
   server.on("/sd/public", HTTP_GET, []() { handleSdDownload(SD_PUBLIC_CHAT_PATH, "public_chat.log", "text/plain"); });
   server.on("/sd/private", HTTP_GET, []() { handleSdDownload(SD_PRIVATE_CHAT_PATH, "private_chat.log", "text/plain"); });
   server.on("/sd/positions", HTTP_GET, []() { handleSdDownload(SD_POSITIONS_PATH, "positions.csv", "text/csv"); });
+  server.on("/sd/mapcache", HTTP_GET, []() { handleSdDownload(SD_MAP_CACHE_PATH, "map_cache.bin", "application/octet-stream"); });
+  server.on("/sd/last-location", HTTP_GET, []() { handleSdDownload(SD_LAST_LOCATION_PATH, "last_location.txt", "text/plain"); });
   server.on("/sd/mount", HTTP_POST, []() {
     initSdStorage();
     server.send(sdStorage.available ? 200 : 503, "text/plain", sdStorage.status);
