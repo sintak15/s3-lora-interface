@@ -2,6 +2,7 @@
 #define USER_SETUP_INFO "s3-lora-interface ILI9341"
 
 #define ILI9341_DRIVER
+#define TFT_INVERSION_ON
 #define USE_HSPI_PORT
 
 #define TFT_CS   10

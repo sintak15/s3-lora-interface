@@ -127,14 +127,36 @@ namespace MeshUtils {
      * suitable for the ESP32-S3 hardware.
      */
     inline uint32_t mvoltsToPct(uint32_t mvolts) {
-        if (mvolts >= 4050) return 100; // Pad 100% to include full resting voltage (e.g., 4.05V)
-        if (mvolts >= 4000) return 90;  // 4.00V
-        if (mvolts >= 3900) return 80;  // 3.90V
-        if (mvolts >= 3800) return 60;
-        if (mvolts >= 3700) return 40;
-        if (mvolts >= 3600) return 20;
-        if (mvolts >= 3500) return 10;
-        return 0;
+        struct BatteryCurvePoint {
+            uint32_t mv;
+            uint8_t pct;
+        };
+
+        static const BatteryCurvePoint curve[] = {
+            {3300, 0},
+            {3500, 10},
+            {3600, 25},
+            {3650, 35},
+            {3680, 42},
+            {3700, 46},
+            {3750, 55},
+            {3800, 62},
+            {3850, 72},
+            {3920, 80},
+            {4000, 88},
+            {4100, 95},
+            {4200, 100},
+        };
+
+        if (mvolts <= curve[0].mv) return curve[0].pct;
+        for (size_t i = 1; i < sizeof(curve) / sizeof(curve[0]); ++i) {
+            if (mvolts <= curve[i].mv) {
+                uint32_t mvRange = curve[i].mv - curve[i - 1].mv;
+                uint32_t pctRange = curve[i].pct - curve[i - 1].pct;
+                return curve[i - 1].pct + (((mvolts - curve[i - 1].mv) * pctRange + (mvRange / 2)) / mvRange);
+            }
+        }
+        return curve[sizeof(curve) / sizeof(curve[0]) - 1].pct;
     }
 
     /**

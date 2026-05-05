@@ -1,9 +1,13 @@
 #include <Arduino.h>
+#include <limits.h>
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Wire.h>
+#include <SD_MMC.h>
+#include <FS.h>
 #include <TFT_eSPI.h>
 #include <lvgl.h>
+#include <TinyGPSPlus.h>
 #include <pb_decode.h>
 #include <pb_encode.h>
 
@@ -14,14 +18,21 @@
 #include "src/UIConfig.h"
 
 HardwareSerial SerialLoRa(2);
+HardwareSerial SerialGPS(1);
 WebServer server(80);
 TFT_eSPI tft;
+TinyGPSPlus localGps;
 
 struct NodeRecord {
   uint32_t num = 0;
   char name[40] = "";
   float snr = 0.0f;
   uint32_t lastHeardMs = 0;
+  bool hasPosition = false;
+  double latitude = 0.0;
+  double longitude = 0.0;
+  int32_t altitude = 0;
+  uint32_t lastPositionMs = 0;
 };
 
 struct ChannelRecord {
@@ -96,13 +107,63 @@ struct LocalBatteryStats {
   char powerState[24] = "unknown";
 };
 
+struct SdStorageStats {
+  bool available = false;
+  uint64_t cardSizeBytes = 0;
+  uint64_t totalBytes = 0;
+  uint64_t usedBytes = 0;
+  uint32_t writes = 0;
+  uint32_t writeErrors = 0;
+  char status[48] = "not mounted";
+  char cardType[12] = "none";
+};
+
+struct MapCacheHeader {
+  uint32_t magic;
+  uint16_t version;
+  uint16_t width;
+  uint16_t height;
+  int16_t zoom;
+  int32_t tileX;
+  int32_t tileY;
+  int32_t pixelX;
+  int32_t pixelY;
+  double lat;
+  double lon;
+  uint8_t tileFound;
+  uint8_t reserved[7];
+};
+
 static constexpr size_t LOG_SIZE = 8192;
 static constexpr size_t CHAT_SIZE = 4096;
 static constexpr size_t MAX_NODES = 64;
+static constexpr size_t MAP_DOT_COUNT = MAX_NODES + 1;
 static constexpr size_t MAX_CHANNELS = 8;
 static constexpr size_t FRAME_MAX = 512;
+static constexpr int STATUS_BAR_H = 20;
 static constexpr int NAV_BAR_H = 40;
+static constexpr int MAP_PLOT_W = SCREEN_W - 16;
+static constexpr int MAP_PLOT_H = 136;
+static constexpr int MAP_TILE_SIZE = 256;
+static constexpr int MAP_TILE_MIN_ZOOM = 10;
+static constexpr int MAP_TILE_MAX_ZOOM = 14;
+static constexpr uint32_t MAP_CACHE_MAGIC = 0x4D415031UL;
+static constexpr uint16_t MAP_CACHE_VERSION = 1;
 static constexpr int8_t PUBLIC_CHANNEL_INDEX = 0;
+static const char* SD_DIR = "/s3-lora";
+static const char* SD_EVENTS_PATH = "/s3-lora/events.log";
+static const char* SD_PUBLIC_CHAT_PATH = "/s3-lora/public_chat.log";
+static const char* SD_PRIVATE_CHAT_PATH = "/s3-lora/private_chat.log";
+static const char* SD_POSITIONS_PATH = "/s3-lora/positions.csv";
+static const char* SD_MAP_CACHE_PATH = "/s3-lora/map_cache.bin";
+static constexpr uint32_t COLOR_BG = 0x050807;
+static constexpr uint32_t COLOR_PANEL = 0x101816;
+static constexpr uint32_t COLOR_INPUT = 0x07100D;
+static constexpr uint32_t COLOR_BORDER = 0x24483E;
+static constexpr uint32_t COLOR_TEXT = 0xF4FFF9;
+static constexpr uint32_t COLOR_MUTED = 0x8AB7A6;
+static constexpr uint32_t COLOR_ACCENT = 0x68FFC0;
+static constexpr uint32_t COLOR_ACTION = 0x00C985;
 
 static char eventLog[LOG_SIZE];
 static char publicChatLog[CHAT_SIZE];
@@ -114,6 +175,7 @@ static int8_t privateChannelIndex = -1;
 static DeviceStats stats;
 static GpsStats gpsStats;
 static LocalBatteryStats localBattery;
+static SdStorageStats sdStorage;
 static uint32_t framesDecoded = 0;
 static uint32_t decodeErrors = 0;
 static uint32_t bytesFromRadio = 0;
@@ -136,25 +198,43 @@ static char serialPeek[96] = "";
 static uint32_t lastTelemetryMs = 0;
 static uint32_t lastConfigRequestMs = 0;
 static uint8_t configRequestCount = 0;
+static uint32_t gpsBytesFromLocal = 0;
+static uint32_t lastLocalGpsByteMs = 0;
+static uint32_t lastLocalGpsFixLogMs = 0;
+static bool localGpsHasFix = false;
 
 static lv_disp_draw_buf_t drawBuf;
 static lv_color_t lvBuf1[SCREEN_W * 24];
 static lv_color_t lvBuf2[SCREEN_W * 24];
+static lv_color_t mapCanvasBuf[MAP_PLOT_W * MAP_PLOT_H];
+static uint16_t mapReadBuf[MAP_PLOT_W];
 static lv_obj_t* pageLauncher = nullptr;
 static lv_obj_t* pageLora = nullptr;
 static lv_obj_t* pagePublicChat = nullptr;
 static lv_obj_t* pagePrivateChat = nullptr;
 static lv_obj_t* pageGps = nullptr;
+static lv_obj_t* pageMap = nullptr;
 static lv_obj_t* pageSystem = nullptr;
+static lv_obj_t* pageSystemInterface = nullptr;
+static lv_obj_t* pageSystemSerial = nullptr;
+static lv_obj_t* pageSystemRadio = nullptr;
 static lv_obj_t* pageBattery = nullptr;
 static lv_obj_t* currentPage = nullptr;
 static lv_obj_t* previousPage = nullptr;
+static lv_obj_t* statusBar = nullptr;
 static lv_obj_t* navBar = nullptr;
 static lv_obj_t* lblStatus = nullptr;
+static lv_obj_t* lblBatteryStatus = nullptr;
 static lv_obj_t* lblStats = nullptr;
-static lv_obj_t* lblSystemSummary = nullptr;
+static lv_obj_t* lblSystemInterface = nullptr;
+static lv_obj_t* lblSystemSerial = nullptr;
+static lv_obj_t* lblSystemRadio = nullptr;
 static lv_obj_t* lblBatteryStats = nullptr;
 static lv_obj_t* lblGpsStats = nullptr;
+static lv_obj_t* lblMapStats = nullptr;
+static lv_obj_t* mapPlot = nullptr;
+static lv_obj_t* mapCanvas = nullptr;
+static lv_obj_t* mapDots[MAP_DOT_COUNT];
 static lv_obj_t* taPublicChat = nullptr;
 static lv_obj_t* taPrivateChat = nullptr;
 static lv_obj_t* taScreenLog = nullptr;
@@ -165,13 +245,246 @@ static lv_obj_t* activeChatInput = nullptr;
 static lv_obj_t* keyboard = nullptr;
 static uint32_t lastUiRefreshMs = 0;
 static uint32_t lastSerialDiagMs = 0;
+static uint32_t lastSdDiagMs = 0;
+static uint32_t lastMapUiRefreshMs = 0;
+static bool mapCanvasCached = false;
+static bool mapRenderPending = false;
+static int cachedMapZoom = -1;
+static long cachedMapTileX = LONG_MIN;
+static long cachedMapTileY = LONG_MIN;
+static int cachedMapPixelX = INT_MIN;
+static int cachedMapPixelY = INT_MIN;
+static bool cachedMapTileFound = false;
+static double cachedMapLat = 0.0;
+static double cachedMapLon = 0.0;
+static uint32_t touchSamples = 0;
+static uint32_t lastTouchMs = 0;
+static uint16_t lastTouchX = 0;
+static uint16_t lastTouchY = 0;
 
 static bool sendTextMessage(const char* text, int8_t channelIndex = PUBLIC_CHANNEL_INDEX);
+static const char* nodeName(uint32_t num);
+static NodeRecord* findOrCreateNode(uint32_t num);
+static void appendLine(char* buffer, size_t bufferSize, const char* line);
+static void refreshMapUi();
+static void loadMapCacheFromSd();
+
+static bool appendSdLine(const char* path, const char* line) {
+  if (!sdStorage.available || !path || !line) return false;
+  File file = SD_MMC.open(path, FILE_APPEND);
+  if (!file) {
+    sdStorage.writeErrors++;
+    strlcpy(sdStorage.status, "open failed", sizeof(sdStorage.status));
+    return false;
+  }
+  size_t len = strlen(line);
+  bool ok = file.write((const uint8_t*)line, len) == len;
+  file.close();
+  if (ok) {
+    sdStorage.writes++;
+    strlcpy(sdStorage.status, "logging", sizeof(sdStorage.status));
+  } else {
+    sdStorage.writeErrors++;
+    strlcpy(sdStorage.status, "write failed", sizeof(sdStorage.status));
+  }
+  return ok;
+}
+
+static void initSdStorage() {
+  Serial.printf("[sd] setPins clk=%d cmd=%d d0=%d d1=%d d2=%d d3=%d oneBit=%s freq=%d\n",
+                SD_CLK_PIN, SD_CMD_PIN, SD_D0_PIN, SD_D1_PIN, SD_D2_PIN, SD_D3_PIN,
+                SD_MMC_ONE_BIT ? "true" : "false", SD_MMC_FREQ);
+  SD_MMC.end();
+  bool pinsOk = SD_MMC_ONE_BIT
+                  ? SD_MMC.setPins(SD_CLK_PIN, SD_CMD_PIN, SD_D0_PIN)
+                  : SD_MMC.setPins(SD_CLK_PIN, SD_CMD_PIN, SD_D0_PIN, SD_D1_PIN, SD_D2_PIN, SD_D3_PIN);
+  if (!pinsOk) {
+    sdStorage.available = false;
+    sdStorage.cardSizeBytes = 0;
+    sdStorage.totalBytes = 0;
+    sdStorage.usedBytes = 0;
+    strlcpy(sdStorage.cardType, "none", sizeof(sdStorage.cardType));
+    strlcpy(sdStorage.status, "pin setup failed", sizeof(sdStorage.status));
+    Serial.println("[sd] setPins failed");
+    return;
+  }
+
+  if (!SD_MMC.begin("/sdcard", SD_MMC_ONE_BIT, false, SD_MMC_FREQ)) {
+    sdStorage.available = false;
+    sdStorage.cardSizeBytes = 0;
+    sdStorage.totalBytes = 0;
+    sdStorage.usedBytes = 0;
+    strlcpy(sdStorage.cardType, "none", sizeof(sdStorage.cardType));
+    strlcpy(sdStorage.status, "mount failed", sizeof(sdStorage.status));
+    Serial.println("[sd] mount failed");
+    return;
+  }
+
+  uint8_t cardType = SD_MMC.cardType();
+  if (cardType == CARD_NONE) {
+    sdStorage.available = false;
+    sdStorage.cardSizeBytes = 0;
+    sdStorage.totalBytes = 0;
+    sdStorage.usedBytes = 0;
+    strlcpy(sdStorage.cardType, "none", sizeof(sdStorage.cardType));
+    strlcpy(sdStorage.status, "card none", sizeof(sdStorage.status));
+    Serial.println("[sd] card type none");
+    SD_MMC.end();
+    return;
+  }
+
+  if (cardType == CARD_MMC) strlcpy(sdStorage.cardType, "MMC", sizeof(sdStorage.cardType));
+  else if (cardType == CARD_SD) strlcpy(sdStorage.cardType, "SDSC", sizeof(sdStorage.cardType));
+  else if (cardType == CARD_SDHC) strlcpy(sdStorage.cardType, "SDHC", sizeof(sdStorage.cardType));
+  else strlcpy(sdStorage.cardType, "unknown", sizeof(sdStorage.cardType));
+
+  sdStorage.available = true;
+  sdStorage.cardSizeBytes = SD_MMC.cardSize();
+  sdStorage.totalBytes = SD_MMC.totalBytes();
+  if (sdStorage.totalBytes == 0) sdStorage.totalBytes = sdStorage.cardSizeBytes;
+  sdStorage.usedBytes = SD_MMC.usedBytes();
+  strlcpy(sdStorage.status, "mounted", sizeof(sdStorage.status));
+  Serial.printf("[sd] mounted type=%s card=%llu total=%llu used=%llu\n",
+                sdStorage.cardType,
+                (unsigned long long)sdStorage.cardSizeBytes,
+                (unsigned long long)sdStorage.totalBytes,
+                (unsigned long long)sdStorage.usedBytes);
+  if (!SD_MMC.exists(SD_DIR)) SD_MMC.mkdir(SD_DIR);
+  if (!SD_MMC.exists(SD_POSITIONS_PATH)) {
+    appendSdLine(SD_POSITIONS_PATH, "uptime_ms,node,name,source,lat,lon,alt_m\n");
+  }
+  loadMapCacheFromSd();
+}
+
+static void refreshSdUsage() {
+  if (!sdStorage.available) return;
+  sdStorage.totalBytes = SD_MMC.totalBytes();
+  if (sdStorage.totalBytes == 0) sdStorage.totalBytes = sdStorage.cardSizeBytes;
+  sdStorage.usedBytes = SD_MMC.usedBytes();
+}
+
+static void logPositionToSd(uint32_t from, const char* sourceKind, double lat, double lon, int32_t alt) {
+  if (!sdStorage.available) return;
+  char line[180];
+  snprintf(line, sizeof(line), "%lu,!%08lX,%s,%s,%.6f,%.6f,%ld\n",
+           (unsigned long)millis(),
+           (unsigned long)from,
+           nodeName(from),
+           sourceKind ? sourceKind : "unknown",
+           lat,
+           lon,
+           (long)alt);
+  appendSdLine(SD_POSITIONS_PATH, line);
+}
+
+static void updateLocalGpsStats() {
+  if (!localGps.location.isValid()) return;
+
+  localGpsHasFix = true;
+  gpsStats.valid = true;
+  gpsStats.from = stats.myNodeNum;
+  gpsStats.latitude = localGps.location.lat();
+  gpsStats.longitude = localGps.location.lng();
+  gpsStats.altitude = localGps.altitude.isValid() ? (int32_t)localGps.altitude.meters() : 0;
+  gpsStats.hasAltitudeHae = false;
+  gpsStats.hasGeoidalSeparation = false;
+  if (localGps.satellites.isValid()) {
+    gpsStats.sats = localGps.satellites.value();
+    gpsStats.hasSats = true;
+  }
+  gpsStats.fixQuality = 1;
+  gpsStats.hasFixQuality = true;
+  gpsStats.fixType = gpsStats.hasSats && gpsStats.sats >= 4 ? 3 : 2;
+  gpsStats.hasFixType = true;
+  if (localGps.hdop.isValid()) {
+    gpsStats.hdop = localGps.hdop.value();
+    gpsStats.hasHdop = true;
+  }
+  if (localGps.speed.isValid()) {
+    gpsStats.groundSpeed = (uint32_t)(localGps.speed.mps() * 100.0);
+    gpsStats.hasGroundSpeed = true;
+  }
+  if (localGps.course.isValid()) {
+    gpsStats.groundTrack = (uint32_t)(localGps.course.deg() * 100.0);
+    gpsStats.hasGroundTrack = true;
+  }
+  strlcpy(gpsStats.sourceKind, "CYD GPS UART", sizeof(gpsStats.sourceKind));
+  gpsStats.lastUpdateMs = millis();
+
+  if (stats.myNodeNum != 0) {
+    NodeRecord* node = findOrCreateNode(stats.myNodeNum);
+    if (node) {
+      node->hasPosition = true;
+      node->latitude = gpsStats.latitude;
+      node->longitude = gpsStats.longitude;
+      node->altitude = gpsStats.altitude;
+      node->lastPositionMs = millis();
+    }
+  }
+
+  if (millis() - lastLocalGpsFixLogMs > 30000) {
+    lastLocalGpsFixLogMs = millis();
+    char line[160];
+    snprintf(line, sizeof(line), "[cyd gps] fix %.6f, %.6f\n", gpsStats.latitude, gpsStats.longitude);
+    appendLine(eventLog, LOG_SIZE, line);
+    logPositionToSd(stats.myNodeNum, "CYD GPS UART", gpsStats.latitude, gpsStats.longitude, gpsStats.altitude);
+  }
+}
+
+static void pollLocalGps() {
+  while (SerialGPS.available()) {
+    char c = (char)SerialGPS.read();
+    gpsBytesFromLocal++;
+    lastLocalGpsByteMs = millis();
+    if (localGps.encode(c) && localGps.location.isUpdated()) {
+      updateLocalGpsStats();
+    }
+  }
+}
+
+static unsigned long bytesToWholeKb(uint64_t bytes) {
+  return (unsigned long)((bytes + 1023ULL) / 1024ULL);
+}
+
+static unsigned long bytesToWholeMb(uint64_t bytes) {
+  return (unsigned long)((bytes + (1024ULL * 1024ULL - 1ULL)) / (1024ULL * 1024ULL));
+}
+
+static int interpolateBatteryPct(uint32_t mv, uint32_t lowMv, uint8_t lowPct, uint32_t highMv, uint8_t highPct) {
+  uint32_t mvRange = highMv - lowMv;
+  uint32_t pctRange = highPct - lowPct;
+  return lowPct + (int)(((mv - lowMv) * pctRange + (mvRange / 2)) / mvRange);
+}
 
 static int batteryPercentFromMv(uint32_t mv) {
-  if (mv >= 4200) return 100;
-  if (mv <= 3300) return 0;
-  return constrain((int)((mv - 3300) * 100 / 900), 0, 100);
+  struct BatteryCurvePoint {
+    uint32_t mv;
+    uint8_t pct;
+  };
+
+  static const BatteryCurvePoint curve[] = {
+    {3300, 0},
+    {3500, 10},
+    {3600, 25},
+    {3650, 35},
+    {3680, 42},
+    {3700, 46},
+    {3750, 55},
+    {3800, 62},
+    {3850, 72},
+    {3920, 80},
+    {4000, 88},
+    {4100, 95},
+    {4200, 100},
+  };
+
+  if (mv <= curve[0].mv) return curve[0].pct;
+  for (size_t i = 1; i < sizeof(curve) / sizeof(curve[0]); ++i) {
+    if (mv <= curve[i].mv) {
+      return constrain(interpolateBatteryPct(mv, curve[i - 1].mv, curve[i - 1].pct, curve[i].mv, curve[i].pct), 0, 100);
+    }
+  }
+  return curve[sizeof(curve) / sizeof(curve[0]) - 1].pct;
 }
 
 static void sampleLocalBattery() {
@@ -195,12 +508,16 @@ static void sampleLocalBattery() {
     int32_t delta = (int32_t)localBattery.batteryMv - (int32_t)localBattery.lastTrendMv;
     uint32_t elapsedMs = millis() - localBattery.lastTrendMs;
     localBattery.deltaMvPerMin = (int32_t)((delta * 60000L) / (int32_t)elapsedMs);
+    if (localBattery.batteryMv < 4100 && localBattery.deltaMvPerMin > 0) {
+      localBattery.deltaMvPerMin = 0;
+    }
     localBattery.lastTrendMs = millis();
     localBattery.lastTrendMv = localBattery.batteryMv;
   }
 
-  localBattery.usbLikely = localBattery.batteryMv >= 4300;
-  localBattery.chargingLikely = localBattery.batteryMv >= 4100 && localBattery.deltaMvPerMin > 4;
+  bool fullAndSteady = localBattery.batteryMv >= 4180 && abs(localBattery.deltaMvPerMin) <= 4;
+  localBattery.usbLikely = localBattery.batteryMv >= 4300 || fullAndSteady;
+  localBattery.chargingLikely = !localBattery.usbLikely && localBattery.batteryMv >= 4100 && localBattery.deltaMvPerMin > 4;
 
   if (localBattery.usbLikely) {
     strlcpy(localBattery.powerState, "USB/external", sizeof(localBattery.powerState));
@@ -228,6 +545,14 @@ static void appendLine(char* buffer, size_t bufferSize, const char* line) {
     used = strlen(buffer);
   }
   strncat(buffer, line, bufferSize - used - 1);
+
+  if (buffer == eventLog) {
+    appendSdLine(SD_EVENTS_PATH, line);
+  } else if (buffer == publicChatLog) {
+    appendSdLine(SD_PUBLIC_CHAT_PATH, line);
+  } else if (buffer == privateChatLog) {
+    appendSdLine(SD_PRIVATE_CHAT_PATH, line);
+  }
 }
 
 static void lvFlush(lv_disp_drv_t* disp, const lv_area_t* area, lv_color_t* colors) {
@@ -262,6 +587,10 @@ static void lvTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
   uint16_t x = 0;
   uint16_t y = 0;
   if (readTouch(x, y)) {
+    touchSamples++;
+    lastTouchMs = millis();
+    lastTouchX = x;
+    lastTouchY = y;
     data->state = LV_INDEV_STATE_PR;
     data->point.x = x;
     data->point.y = y;
@@ -270,33 +599,79 @@ static void lvTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
   }
 }
 
+static void styleDarkObject(lv_obj_t* obj, uint32_t bg, uint32_t text = COLOR_TEXT) {
+  lv_obj_set_style_bg_color(obj, lv_color_hex(bg), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_text_color(obj, lv_color_hex(text), LV_PART_MAIN);
+  lv_obj_set_style_shadow_width(obj, 0, LV_PART_MAIN);
+}
+
+static void styleDarkBorder(lv_obj_t* obj, uint32_t color = COLOR_BORDER) {
+  lv_obj_set_style_border_color(obj, lv_color_hex(color), LV_PART_MAIN);
+  lv_obj_set_style_border_width(obj, 1, LV_PART_MAIN);
+}
+
+static void styleDarkTextArea(lv_obj_t* ta) {
+  styleDarkObject(ta, COLOR_INPUT, 0xE8FFF5);
+  styleDarkBorder(ta, 0x2F705F);
+  lv_obj_set_style_text_color(ta, lv_color_hex(COLOR_MUTED), LV_PART_TEXTAREA_PLACEHOLDER);
+  lv_obj_set_style_bg_color(ta, lv_color_hex(0x16342C), LV_PART_SELECTED);
+  lv_obj_set_style_text_color(ta, lv_color_hex(COLOR_TEXT), LV_PART_SELECTED);
+}
+
 static lv_obj_t* makePanel(lv_obj_t* parent) {
   lv_obj_t* panel = lv_obj_create(parent);
-  lv_obj_set_style_bg_color(panel, lv_color_hex(0x101816), 0);
-  lv_obj_set_style_border_color(panel, lv_color_hex(0x24483E), 0);
-  lv_obj_set_style_border_width(panel, 1, 0);
+  styleDarkObject(panel, COLOR_PANEL);
+  styleDarkBorder(panel);
   lv_obj_set_style_radius(panel, 6, 0);
-  lv_obj_set_style_pad_all(panel, 8, 0);
+  lv_obj_set_style_pad_all(panel, 6, 0);
   return panel;
 }
 
 static lv_obj_t* makePage(lv_obj_t* parent) {
   lv_obj_t* page = lv_obj_create(parent);
-  lv_obj_set_size(page, SCREEN_W, SCREEN_H - NAV_BAR_H);
-  lv_obj_align(page, LV_ALIGN_TOP_LEFT, 0, 0);
-  lv_obj_set_style_bg_color(page, lv_color_hex(0x050807), 0);
-  lv_obj_set_style_bg_opa(page, LV_OPA_COVER, 0);
+  lv_obj_set_size(page, SCREEN_W, SCREEN_H - NAV_BAR_H - STATUS_BAR_H);
+  lv_obj_align(page, LV_ALIGN_TOP_LEFT, 0, STATUS_BAR_H);
+  styleDarkObject(page, COLOR_BG);
   lv_obj_set_style_border_width(page, 0, 0);
-  lv_obj_set_style_pad_all(page, 8, 0);
+  lv_obj_set_style_pad_all(page, 6, 0);
   lv_obj_clear_flag(page, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(page, LV_OBJ_FLAG_HIDDEN);
   return page;
 }
 
+static void buildStatusBar(lv_obj_t* screen) {
+  statusBar = lv_obj_create(screen);
+  lv_obj_set_size(statusBar, SCREEN_W, STATUS_BAR_H);
+  lv_obj_align(statusBar, LV_ALIGN_TOP_MID, 0, 0);
+  styleDarkObject(statusBar, 0x080D0B, COLOR_MUTED);
+  lv_obj_set_style_border_color(statusBar, lv_color_hex(COLOR_BORDER), 0);
+  lv_obj_set_style_border_side(statusBar, LV_BORDER_SIDE_BOTTOM, 0);
+  lv_obj_set_style_border_width(statusBar, 1, 0);
+  lv_obj_set_style_pad_hor(statusBar, 6, 0);
+  lv_obj_set_style_pad_ver(statusBar, 2, 0);
+  lv_obj_clear_flag(statusBar, LV_OBJ_FLAG_SCROLLABLE);
+
+  lblStatus = lv_label_create(statusBar);
+  lv_label_set_text(lblStatus, "booting");
+  lv_obj_set_style_text_color(lblStatus, lv_color_hex(COLOR_MUTED), 0);
+  lv_obj_set_style_text_font(lblStatus, LV_FONT_DEFAULT, 0);
+  lv_obj_align(lblStatus, LV_ALIGN_LEFT_MID, 0, 0);
+
+  lblBatteryStatus = lv_label_create(statusBar);
+  lv_label_set_text(lblBatteryStatus, "Batt --%");
+  lv_obj_set_style_text_color(lblBatteryStatus, lv_color_hex(COLOR_ACCENT), 0);
+  lv_obj_set_style_text_font(lblBatteryStatus, LV_FONT_DEFAULT, 0);
+  lv_obj_align(lblBatteryStatus, LV_ALIGN_RIGHT_MID, 0, 0);
+}
+
 static void showPage(lv_obj_t* target, bool remember = true) {
   if (!target) return;
   if (remember && currentPage && currentPage != target) previousPage = currentPage;
-  lv_obj_t* pages[] = {pageLauncher, pageLora, pagePublicChat, pagePrivateChat, pageGps, pageSystem, pageBattery};
+  lv_obj_t* pages[] = {
+    pageLauncher, pageLora, pagePublicChat, pagePrivateChat, pageGps, pageMap,
+    pageSystem, pageSystemInterface, pageSystemSerial, pageSystemRadio, pageBattery
+  };
   for (lv_obj_t* page : pages) {
     if (!page) continue;
     if (page == target) lv_obj_clear_flag(page, LV_OBJ_FLAG_HIDDEN);
@@ -304,31 +679,47 @@ static void showPage(lv_obj_t* target, bool remember = true) {
   }
   if (keyboard) lv_obj_add_flag(keyboard, LV_OBJ_FLAG_HIDDEN);
   currentPage = target;
+  if (target == pageMap) {
+    mapRenderPending = true;
+    lastMapUiRefreshMs = millis();
+    if (mapCanvasCached && lblMapStats) {
+      char cacheText[180];
+      snprintf(cacheText, sizeof(cacheText),
+               "Cached map ready\n"
+               "Last: %.5f, %.5f  z%d\n"
+               "Refreshing shortly...",
+               cachedMapLat,
+               cachedMapLon,
+               cachedMapZoom);
+      lv_label_set_text(lblMapStats, cacheText);
+    }
+  }
 }
 
 static lv_obj_t* makeActionButton(lv_obj_t* parent, const char* text, int y, lv_event_cb_t cb) {
   lv_obj_t* btn = lv_btn_create(parent);
-  lv_obj_set_size(btn, SCREEN_W - 24, 52);
+  lv_obj_set_size(btn, SCREEN_W - 18, 44);
   lv_obj_align(btn, LV_ALIGN_TOP_MID, 0, y);
-  lv_obj_set_style_bg_color(btn, lv_color_hex(0x101816), 0);
-  lv_obj_set_style_border_color(btn, lv_color_hex(0x2F705F), 0);
-  lv_obj_set_style_border_width(btn, 1, 0);
+  styleDarkObject(btn, COLOR_PANEL);
+  styleDarkBorder(btn, 0x2F705F);
   lv_obj_set_style_radius(btn, 8, 0);
   lv_obj_set_style_shadow_width(btn, 0, 0);
+  lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* label = lv_label_create(btn);
   lv_label_set_text(label, text);
-  lv_obj_set_style_text_color(label, lv_color_hex(0xF4FFF9), 0);
+  lv_obj_set_style_text_color(label, lv_color_hex(COLOR_TEXT), 0);
   lv_obj_center(label);
+  lv_obj_move_foreground(btn);
   return btn;
 }
 
 static lv_obj_t* makePageTitle(lv_obj_t* parent, const char* text) {
   lv_obj_t* title = lv_label_create(parent);
   lv_label_set_text(title, text);
-  lv_obj_set_style_text_color(title, lv_color_hex(0x68FFC0), 0);
+  lv_obj_set_style_text_color(title, lv_color_hex(COLOR_ACCENT), 0);
   lv_obj_set_style_text_font(title, LV_FONT_DEFAULT, 0);
-  lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
+  lv_obj_align(title, LV_ALIGN_TOP_LEFT, 2, 0);
   return title;
 }
 
@@ -336,16 +727,17 @@ static lv_obj_t* makeNavButton(lv_obj_t* parent, const char* text, lv_align_t al
   lv_obj_t* btn = lv_btn_create(parent);
   lv_obj_set_size(btn, 92, 30);
   lv_obj_align(btn, align, x, 0);
-  lv_obj_set_style_bg_color(btn, lv_color_hex(0x111A18), 0);
-  lv_obj_set_style_border_color(btn, lv_color_hex(0x315B50), 0);
-  lv_obj_set_style_border_width(btn, 1, 0);
+  styleDarkObject(btn, 0x111A18);
+  styleDarkBorder(btn, 0x315B50);
   lv_obj_set_style_radius(btn, 6, 0);
   lv_obj_set_style_shadow_width(btn, 0, 0);
+  lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* label = lv_label_create(btn);
   lv_label_set_text(label, text);
-  lv_obj_set_style_text_color(label, lv_color_hex(0xF4FFF9), 0);
+  lv_obj_set_style_text_color(label, lv_color_hex(COLOR_TEXT), 0);
   lv_obj_center(label);
+  lv_obj_move_foreground(btn);
   return btn;
 }
 
@@ -353,9 +745,8 @@ static void buildNavBar(lv_obj_t* screen) {
   navBar = lv_obj_create(screen);
   lv_obj_set_size(navBar, SCREEN_W, NAV_BAR_H);
   lv_obj_align(navBar, LV_ALIGN_BOTTOM_MID, 0, 0);
-  lv_obj_set_style_bg_color(navBar, lv_color_hex(0x080D0B), 0);
-  lv_obj_set_style_bg_opa(navBar, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_color(navBar, lv_color_hex(0x24483E), 0);
+  styleDarkObject(navBar, 0x080D0B);
+  lv_obj_set_style_border_color(navBar, lv_color_hex(COLOR_BORDER), 0);
   lv_obj_set_style_border_side(navBar, LV_BORDER_SIDE_TOP, 0);
   lv_obj_set_style_border_width(navBar, 1, 0);
   lv_obj_set_style_pad_all(navBar, 4, 0);
@@ -383,9 +774,7 @@ static lv_obj_t* makeReadonlyText(lv_obj_t* parent, int y, int h) {
   lv_textarea_set_cursor_click_pos(ta, false);
   lv_obj_clear_flag(ta, LV_OBJ_FLAG_CLICK_FOCUSABLE);
   lv_obj_set_style_text_font(ta, LV_FONT_DEFAULT, 0);
-  lv_obj_set_style_bg_color(ta, lv_color_hex(0x07100D), 0);
-  lv_obj_set_style_text_color(ta, lv_color_hex(0xE8FFF5), 0);
-  lv_obj_set_style_border_color(ta, lv_color_hex(0x2F705F), 0);
+  styleDarkTextArea(ta);
   return ta;
 }
 
@@ -430,22 +819,20 @@ static void inputEvent(lv_event_t* e) {
 
 static void buildScreenUi() {
   lv_obj_t* screen = lv_scr_act();
-  lv_obj_set_style_bg_color(screen, lv_color_hex(0x050807), 0);
-  lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
-  lv_obj_set_style_text_color(screen, lv_color_hex(0xF4FFF9), 0);
+  styleDarkObject(screen, COLOR_BG);
 
-  lblStatus = lv_label_create(screen);
-  lv_label_set_text(lblStatus, "booting...");
-  lv_obj_set_style_text_color(lblStatus, lv_color_hex(0x8AB7A6), 0);
-  lv_obj_set_style_text_font(lblStatus, LV_FONT_DEFAULT, 0);
-  lv_obj_align(lblStatus, LV_ALIGN_TOP_RIGHT, -8, 8);
+  buildStatusBar(screen);
 
   pageLauncher = makePage(screen);
   pageLora = makePage(screen);
   pagePublicChat = makePage(screen);
   pagePrivateChat = makePage(screen);
   pageGps = makePage(screen);
+  pageMap = makePage(screen);
   pageSystem = makePage(screen);
+  pageSystemInterface = makePage(screen);
+  pageSystemSerial = makePage(screen);
+  pageSystemRadio = makePage(screen);
   pageBattery = makePage(screen);
 
   currentPage = pageLauncher;
@@ -453,26 +840,26 @@ static void buildScreenUi() {
 
   lv_obj_t* launcherTitle = lv_label_create(pageLauncher);
   lv_label_set_text(launcherTitle, "Heltec Interface");
-  lv_obj_set_style_text_color(launcherTitle, lv_color_hex(0xF4FFF9), 0);
+  lv_obj_set_style_text_color(launcherTitle, lv_color_hex(COLOR_TEXT), 0);
   lv_obj_set_style_text_font(launcherTitle, LV_FONT_DEFAULT, 0);
-  lv_obj_align(launcherTitle, LV_ALIGN_TOP_LEFT, 4, 18);
+  lv_obj_align(launcherTitle, LV_ALIGN_TOP_LEFT, 2, 4);
 
   lv_obj_t* launcherSub = lv_label_create(pageLauncher);
   lv_label_set_text(launcherSub, "Select a module");
-  lv_obj_set_style_text_color(launcherSub, lv_color_hex(0x8AB7A6), 0);
-  lv_obj_align(launcherSub, LV_ALIGN_TOP_LEFT, 4, 42);
+  lv_obj_set_style_text_color(launcherSub, lv_color_hex(COLOR_MUTED), 0);
+  lv_obj_align(launcherSub, LV_ALIGN_TOP_LEFT, 2, 24);
 
-  makeActionButton(pageLauncher, "LoRa", 86, [](lv_event_t*) { showPage(pageLora); });
-  makeActionButton(pageLauncher, "GPS", 148, [](lv_event_t*) { showPage(pageGps); });
-  makeActionButton(pageLauncher, "System", 210, [](lv_event_t*) { showPage(pageSystem); });
+  makeActionButton(pageLauncher, "LoRa", 54, [](lv_event_t*) { showPage(pageLora); });
+  makeActionButton(pageLauncher, "GPS / Map", 106, [](lv_event_t*) { showPage(pageGps); });
+  makeActionButton(pageLauncher, "System", 158, [](lv_event_t*) { showPage(pageSystem); });
 
   makePageTitle(pageLora, "LoRa");
-  makeActionButton(pageLora, "Public Chat", 76, [](lv_event_t*) { showPage(pagePublicChat); });
-  makeActionButton(pageLora, "Private Chat", 138, [](lv_event_t*) { showPage(pagePrivateChat); });
+  makeActionButton(pageLora, "Public Chat", 34, [](lv_event_t*) { showPage(pagePublicChat); });
+  makeActionButton(pageLora, "Private Chat", 86, [](lv_event_t*) { showPage(pagePrivateChat); });
 
   lv_obj_t* loraPanel = makePanel(pageLora);
-  lv_obj_set_size(loraPanel, SCREEN_W - 16, 74);
-  lv_obj_align(loraPanel, LV_ALIGN_TOP_MID, 0, 202);
+  lv_obj_set_size(loraPanel, SCREEN_W - 12, 112);
+  lv_obj_align(loraPanel, LV_ALIGN_TOP_MID, 0, 140);
   lblStats = lv_label_create(loraPanel);
   lv_label_set_text(lblStats, "Waiting for radio...");
   lv_obj_set_style_text_font(lblStats, LV_FONT_DEFAULT, 0);
@@ -482,17 +869,15 @@ static void buildScreenUi() {
   makePageTitle(pagePublicChat, "Public Chat");
   lv_obj_t* publicStats = lv_label_create(pagePublicChat);
   lv_label_set_text(publicStats, "Channel: primary");
-  lv_obj_set_style_text_color(publicStats, lv_color_hex(0x8AB7A6), 0);
-  lv_obj_align(publicStats, LV_ALIGN_TOP_LEFT, 4, 34);
+  lv_obj_set_style_text_color(publicStats, lv_color_hex(COLOR_MUTED), 0);
+  lv_obj_align(publicStats, LV_ALIGN_TOP_LEFT, 2, 18);
 
-  taPublicChat = makeReadonlyText(pagePublicChat, 54, 146);
+  taPublicChat = makeReadonlyText(pagePublicChat, 36, 148);
   lv_textarea_set_text(taPublicChat, "No public chat yet");
   taPublicInput = lv_textarea_create(pagePublicChat);
   lv_obj_set_size(taPublicInput, SCREEN_W - 76, 38);
-  lv_obj_align(taPublicInput, LV_ALIGN_TOP_LEFT, 8, 210);
-  lv_obj_set_style_bg_color(taPublicInput, lv_color_hex(0x07100D), 0);
-  lv_obj_set_style_text_color(taPublicInput, lv_color_hex(0xF4FFF9), 0);
-  lv_obj_set_style_border_color(taPublicInput, lv_color_hex(0x2F705F), 0);
+  lv_obj_align(taPublicInput, LV_ALIGN_TOP_LEFT, 6, 192);
+  styleDarkTextArea(taPublicInput);
   lv_textarea_set_one_line(taPublicInput, true);
   lv_textarea_set_max_length(taPublicInput, 233);
   lv_textarea_set_placeholder_text(taPublicInput, "Public message");
@@ -500,29 +885,29 @@ static void buildScreenUi() {
 
   lv_obj_t* publicSendBtn = lv_btn_create(pagePublicChat);
   lv_obj_set_size(publicSendBtn, 56, 38);
-  lv_obj_align(publicSendBtn, LV_ALIGN_TOP_RIGHT, -8, 210);
-  lv_obj_set_style_bg_color(publicSendBtn, lv_color_hex(0x00C985), 0);
+  lv_obj_align(publicSendBtn, LV_ALIGN_TOP_RIGHT, -6, 192);
+  styleDarkObject(publicSendBtn, COLOR_ACTION, 0x001B12);
   lv_obj_set_style_shadow_width(publicSendBtn, 0, 0);
   lv_obj_add_event_cb(publicSendBtn, [](lv_event_t*) { sendFromInput(taPublicInput, PUBLIC_CHANNEL_INDEX); }, LV_EVENT_CLICKED, nullptr);
+  lv_obj_add_flag(publicSendBtn, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_t* publicSendLbl = lv_label_create(publicSendBtn);
   lv_label_set_text(publicSendLbl, "Send");
   lv_obj_set_style_text_color(publicSendLbl, lv_color_hex(0x001B12), 0);
   lv_obj_center(publicSendLbl);
+  lv_obj_move_foreground(publicSendBtn);
 
   makePageTitle(pagePrivateChat, "Private Chat");
   lv_obj_t* privateStats = lv_label_create(pagePrivateChat);
   lv_label_set_text(privateStats, "Channel: priv");
-  lv_obj_set_style_text_color(privateStats, lv_color_hex(0x8AB7A6), 0);
-  lv_obj_align(privateStats, LV_ALIGN_TOP_LEFT, 4, 34);
+  lv_obj_set_style_text_color(privateStats, lv_color_hex(COLOR_MUTED), 0);
+  lv_obj_align(privateStats, LV_ALIGN_TOP_LEFT, 2, 18);
 
-  taPrivateChat = makeReadonlyText(pagePrivateChat, 54, 146);
+  taPrivateChat = makeReadonlyText(pagePrivateChat, 36, 148);
   lv_textarea_set_text(taPrivateChat, "No private chat yet");
   taPrivateInput = lv_textarea_create(pagePrivateChat);
   lv_obj_set_size(taPrivateInput, SCREEN_W - 76, 38);
-  lv_obj_align(taPrivateInput, LV_ALIGN_TOP_LEFT, 8, 210);
-  lv_obj_set_style_bg_color(taPrivateInput, lv_color_hex(0x07100D), 0);
-  lv_obj_set_style_text_color(taPrivateInput, lv_color_hex(0xF4FFF9), 0);
-  lv_obj_set_style_border_color(taPrivateInput, lv_color_hex(0x2F705F), 0);
+  lv_obj_align(taPrivateInput, LV_ALIGN_TOP_LEFT, 6, 192);
+  styleDarkTextArea(taPrivateInput);
   lv_textarea_set_one_line(taPrivateInput, true);
   lv_textarea_set_max_length(taPrivateInput, 233);
   lv_textarea_set_placeholder_text(taPrivateInput, "Private message");
@@ -530,46 +915,101 @@ static void buildScreenUi() {
 
   lv_obj_t* privateSendBtn = lv_btn_create(pagePrivateChat);
   lv_obj_set_size(privateSendBtn, 56, 38);
-  lv_obj_align(privateSendBtn, LV_ALIGN_TOP_RIGHT, -8, 210);
-  lv_obj_set_style_bg_color(privateSendBtn, lv_color_hex(0x00C985), 0);
+  lv_obj_align(privateSendBtn, LV_ALIGN_TOP_RIGHT, -6, 192);
+  styleDarkObject(privateSendBtn, COLOR_ACTION, 0x001B12);
   lv_obj_set_style_shadow_width(privateSendBtn, 0, 0);
   lv_obj_add_event_cb(privateSendBtn, [](lv_event_t*) { sendFromInput(taPrivateInput, privateChannelIndex >= 0 ? privateChannelIndex : 1); }, LV_EVENT_CLICKED, nullptr);
+  lv_obj_add_flag(privateSendBtn, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_t* privateSendLbl = lv_label_create(privateSendBtn);
   lv_label_set_text(privateSendLbl, "Send");
   lv_obj_set_style_text_color(privateSendLbl, lv_color_hex(0x001B12), 0);
   lv_obj_center(privateSendLbl);
+  lv_obj_move_foreground(privateSendBtn);
 
   lv_obj_t* privHint = lv_label_create(pagePrivateChat);
   lv_label_set_text(privHint, "Meshtastic channel name: priv");
-  lv_obj_set_style_text_color(privHint, lv_color_hex(0x8AB7A6), 0);
-  lv_obj_align(privHint, LV_ALIGN_TOP_LEFT, 4, 252);
+  lv_obj_set_style_text_color(privHint, lv_color_hex(COLOR_MUTED), 0);
+  lv_obj_align(privHint, LV_ALIGN_TOP_LEFT, 2, 236);
 
   makePageTitle(pageGps, "GPS");
   lv_obj_t* gpsPanel = makePanel(pageGps);
-  lv_obj_set_size(gpsPanel, SCREEN_W - 16, 214);
-  lv_obj_align(gpsPanel, LV_ALIGN_TOP_MID, 0, 48);
+  lv_obj_set_size(gpsPanel, SCREEN_W - 12, 176);
+  lv_obj_align(gpsPanel, LV_ALIGN_TOP_MID, 0, 24);
   lblGpsStats = lv_label_create(gpsPanel);
-  lv_label_set_text(lblGpsStats, "Waiting for GPS from Heltec...");
-  lv_obj_set_style_text_color(lblGpsStats, lv_color_hex(0xF4FFF9), 0);
+  lv_label_set_text(lblGpsStats, "Waiting for CYD GPS UART...");
+  lv_obj_set_style_text_color(lblGpsStats, lv_color_hex(COLOR_TEXT), 0);
   lv_obj_set_width(lblGpsStats, lv_pct(100));
+  makeActionButton(pageGps, "Node Map", 210, [](lv_event_t*) { showPage(pageMap); });
+
+  makePageTitle(pageMap, "Node Map");
+  mapPlot = makePanel(pageMap);
+  lv_obj_set_size(mapPlot, MAP_PLOT_W, MAP_PLOT_H);
+  lv_obj_align(mapPlot, LV_ALIGN_TOP_MID, 0, 22);
+  lv_obj_set_style_bg_color(mapPlot, lv_color_hex(COLOR_INPUT), 0);
+  lv_obj_set_style_pad_all(mapPlot, 0, 0);
+  lv_obj_clear_flag(mapPlot, LV_OBJ_FLAG_SCROLLABLE);
+  mapCanvas = lv_canvas_create(mapPlot);
+  lv_canvas_set_buffer(mapCanvas, mapCanvasBuf, MAP_PLOT_W, MAP_PLOT_H, LV_IMG_CF_TRUE_COLOR);
+  lv_canvas_fill_bg(mapCanvas, lv_color_hex(0x07100D), LV_OPA_COVER);
+  lv_obj_set_pos(mapCanvas, 0, 0);
+  lv_obj_clear_flag(mapCanvas, LV_OBJ_FLAG_CLICKABLE);
+  for (size_t i = 0; i < MAP_DOT_COUNT; i++) {
+    mapDots[i] = lv_obj_create(mapPlot);
+    styleDarkObject(mapDots[i], COLOR_ACCENT);
+    lv_obj_set_size(mapDots[i], 8, 8);
+    lv_obj_set_style_radius(mapDots[i], LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_width(mapDots[i], 0, 0);
+    lv_obj_set_style_bg_color(mapDots[i], lv_color_hex(COLOR_ACCENT), 0);
+    lv_obj_add_flag(mapDots[i], LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(mapDots[i], LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(mapDots[i], LV_OBJ_FLAG_CLICKABLE);
+  }
+  lblMapStats = lv_label_create(pageMap);
+  lv_label_set_text(lblMapStats, "Waiting for node positions...");
+  lv_obj_set_style_text_color(lblMapStats, lv_color_hex(COLOR_TEXT), 0);
+  lv_obj_set_width(lblMapStats, SCREEN_W - 16);
+  lv_obj_align(lblMapStats, LV_ALIGN_TOP_LEFT, 6, 164);
 
   makePageTitle(pageSystem, "System");
-  lv_obj_t* systemPanel = makePanel(pageSystem);
-  lv_obj_set_size(systemPanel, SCREEN_W - 16, 190);
-  lv_obj_align(systemPanel, LV_ALIGN_TOP_MID, 0, 48);
-  lblSystemSummary = lv_label_create(systemPanel);
-  lv_label_set_text(lblSystemSummary, "System ready");
-  lv_obj_set_style_text_color(lblSystemSummary, lv_color_hex(0xF4FFF9), 0);
-  lv_obj_set_width(lblSystemSummary, lv_pct(100));
-  makeActionButton(pageSystem, "Battery", 238, [](lv_event_t*) { showPage(pageBattery); });
+  makeActionButton(pageSystem, "Interface", 28, [](lv_event_t*) { showPage(pageSystemInterface); });
+  makeActionButton(pageSystem, "Serial Link", 80, [](lv_event_t*) { showPage(pageSystemSerial); });
+  makeActionButton(pageSystem, "Radio Stats", 132, [](lv_event_t*) { showPage(pageSystemRadio); });
+  makeActionButton(pageSystem, "Battery", 184, [](lv_event_t*) { showPage(pageBattery); });
+
+  makePageTitle(pageSystemInterface, "Interface");
+  lv_obj_t* interfacePanel = makePanel(pageSystemInterface);
+  lv_obj_set_size(interfacePanel, SCREEN_W - 12, 226);
+  lv_obj_align(interfacePanel, LV_ALIGN_TOP_MID, 0, 24);
+  lblSystemInterface = lv_label_create(interfacePanel);
+  lv_label_set_text(lblSystemInterface, "Interface ready");
+  lv_obj_set_style_text_color(lblSystemInterface, lv_color_hex(COLOR_TEXT), 0);
+  lv_obj_set_width(lblSystemInterface, lv_pct(100));
+
+  makePageTitle(pageSystemSerial, "Serial Link");
+  lv_obj_t* serialPanel = makePanel(pageSystemSerial);
+  lv_obj_set_size(serialPanel, SCREEN_W - 12, 226);
+  lv_obj_align(serialPanel, LV_ALIGN_TOP_MID, 0, 24);
+  lblSystemSerial = lv_label_create(serialPanel);
+  lv_label_set_text(lblSystemSerial, "Serial ready");
+  lv_obj_set_style_text_color(lblSystemSerial, lv_color_hex(COLOR_TEXT), 0);
+  lv_obj_set_width(lblSystemSerial, lv_pct(100));
+
+  makePageTitle(pageSystemRadio, "Radio Stats");
+  lv_obj_t* radioPanel = makePanel(pageSystemRadio);
+  lv_obj_set_size(radioPanel, SCREEN_W - 12, 226);
+  lv_obj_align(radioPanel, LV_ALIGN_TOP_MID, 0, 24);
+  lblSystemRadio = lv_label_create(radioPanel);
+  lv_label_set_text(lblSystemRadio, "Radio ready");
+  lv_obj_set_style_text_color(lblSystemRadio, lv_color_hex(COLOR_TEXT), 0);
+  lv_obj_set_width(lblSystemRadio, lv_pct(100));
 
   makePageTitle(pageBattery, "Battery");
   lv_obj_t* batteryPanel = makePanel(pageBattery);
-  lv_obj_set_size(batteryPanel, SCREEN_W - 16, 222);
-  lv_obj_align(batteryPanel, LV_ALIGN_TOP_MID, 0, 48);
+  lv_obj_set_size(batteryPanel, SCREEN_W - 12, 226);
+  lv_obj_align(batteryPanel, LV_ALIGN_TOP_MID, 0, 24);
   lblBatteryStats = lv_label_create(batteryPanel);
   lv_label_set_text(lblBatteryStats, "Reading S3 battery...");
-  lv_obj_set_style_text_color(lblBatteryStats, lv_color_hex(0xF4FFF9), 0);
+  lv_obj_set_style_text_color(lblBatteryStats, lv_color_hex(COLOR_TEXT), 0);
   lv_obj_set_width(lblBatteryStats, lv_pct(100));
 
   buildNavBar(screen);
@@ -577,8 +1017,11 @@ static void buildScreenUi() {
   keyboard = lv_keyboard_create(screen);
   lv_obj_set_size(keyboard, SCREEN_W, 132);
   lv_obj_align(keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
-  lv_obj_set_style_bg_color(keyboard, lv_color_hex(0x101816), 0);
-  lv_obj_set_style_text_color(keyboard, lv_color_hex(0xF4FFF9), 0);
+  styleDarkObject(keyboard, COLOR_PANEL);
+  lv_obj_set_style_bg_color(keyboard, lv_color_hex(0x111A18), LV_PART_ITEMS);
+  lv_obj_set_style_text_color(keyboard, lv_color_hex(COLOR_TEXT), LV_PART_ITEMS);
+  lv_obj_set_style_border_color(keyboard, lv_color_hex(0x315B50), LV_PART_ITEMS);
+  lv_obj_set_style_border_width(keyboard, 1, LV_PART_ITEMS);
   lv_obj_add_flag(keyboard, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -595,6 +1038,7 @@ static void initScreen() {
 
   tft.init();
   tft.setRotation(0);
+  tft.invertDisplay(true);
   tft.fillScreen(TFT_BLACK);
 
   lv_init();
@@ -617,13 +1061,300 @@ static void initScreen() {
   buildScreenUi();
 }
 
+static size_t countPositionedNodes() {
+  size_t count = 0;
+  for (size_t i = 0; i < nodeCount; i++) {
+    if (nodes[i].hasPosition) count++;
+  }
+  return count;
+}
+
+static long lonToTileX(double lon, int zoom) {
+  double n = (double)(1UL << zoom);
+  return (long)floor((lon + 180.0) / 360.0 * n);
+}
+
+static double lonToGlobalPixelX(double lon, int zoom) {
+  double n = (double)(1UL << zoom) * MAP_TILE_SIZE;
+  return (lon + 180.0) / 360.0 * n;
+}
+
+static long latToTileY(double lat, int zoom) {
+  lat = constrain(lat, -85.05112878, 85.05112878);
+  double latRad = lat * DEG_TO_RAD;
+  double n = (double)(1UL << zoom);
+  return (long)floor((1.0 - log(tan(latRad) + 1.0 / cos(latRad)) / PI) / 2.0 * n);
+}
+
+static double latToGlobalPixelY(double lat, int zoom) {
+  lat = constrain(lat, -85.05112878, 85.05112878);
+  double latRad = lat * DEG_TO_RAD;
+  double n = (double)(1UL << zoom) * MAP_TILE_SIZE;
+  return (1.0 - log(tan(latRad) + 1.0 / cos(latRad)) / PI) / 2.0 * n;
+}
+
+static bool mapTileExists(int zoom, long x, long y, char* path, size_t pathSize) {
+  snprintf(path, pathSize, "%s/tiles/%d/%ld/%ld.rgb565", SD_DIR, zoom, x, y);
+  return sdStorage.available && SD_MMC.exists(path);
+}
+
+static int findBestMapZoom(double lat, double lon, char* centerPath, size_t centerPathSize) {
+  for (int zoom = MAP_TILE_MAX_ZOOM; zoom >= MAP_TILE_MIN_ZOOM; zoom--) {
+    long tileX = lonToTileX(lon, zoom);
+    long tileY = latToTileY(lat, zoom);
+    if (mapTileExists(zoom, tileX, tileY, centerPath, centerPathSize)) {
+      return zoom;
+    }
+  }
+  long tileX = lonToTileX(lon, MAP_TILE_MAX_ZOOM);
+  long tileY = latToTileY(lat, MAP_TILE_MAX_ZOOM);
+  mapTileExists(MAP_TILE_MAX_ZOOM, tileX, tileY, centerPath, centerPathSize);
+  return MAP_TILE_MAX_ZOOM;
+}
+
+static lv_color_t rgb565ToLvColor(uint16_t rgb565) {
+  return lv_color_make((rgb565 >> 8) & 0xF8, (rgb565 >> 3) & 0xFC, (rgb565 << 3) & 0xF8);
+}
+
+static void loadMapCacheFromSd() {
+  if (!sdStorage.available || !mapCanvas || !SD_MMC.exists(SD_MAP_CACHE_PATH)) return;
+  File file = SD_MMC.open(SD_MAP_CACHE_PATH, FILE_READ);
+  if (!file) return;
+
+  MapCacheHeader header;
+  if (file.read((uint8_t*)&header, sizeof(header)) != sizeof(header)) {
+    file.close();
+    return;
+  }
+  if (header.magic != MAP_CACHE_MAGIC ||
+      header.version != MAP_CACHE_VERSION ||
+      header.width != MAP_PLOT_W ||
+      header.height != MAP_PLOT_H) {
+    file.close();
+    return;
+  }
+  size_t expected = sizeof(mapCanvasBuf);
+  if (file.read((uint8_t*)mapCanvasBuf, expected) != expected) {
+    file.close();
+    return;
+  }
+  file.close();
+
+  cachedMapZoom = header.zoom;
+  cachedMapTileX = header.tileX;
+  cachedMapTileY = header.tileY;
+  cachedMapPixelX = header.pixelX;
+  cachedMapPixelY = header.pixelY;
+  cachedMapLat = header.lat;
+  cachedMapLon = header.lon;
+  cachedMapTileFound = header.tileFound != 0;
+  mapCanvasCached = true;
+  lv_obj_invalidate(mapCanvas);
+}
+
+static void saveMapCacheToSd() {
+  if (!sdStorage.available || !mapCanvasCached) return;
+  if (SD_MMC.exists(SD_MAP_CACHE_PATH)) SD_MMC.remove(SD_MAP_CACHE_PATH);
+  File file = SD_MMC.open(SD_MAP_CACHE_PATH, FILE_WRITE);
+  if (!file) return;
+  MapCacheHeader header = {};
+  header.magic = MAP_CACHE_MAGIC;
+  header.version = MAP_CACHE_VERSION;
+  header.width = MAP_PLOT_W;
+  header.height = MAP_PLOT_H;
+  header.zoom = cachedMapZoom;
+  header.tileX = cachedMapTileX;
+  header.tileY = cachedMapTileY;
+  header.pixelX = cachedMapPixelX;
+  header.pixelY = cachedMapPixelY;
+  header.lat = cachedMapLat;
+  header.lon = cachedMapLon;
+  header.tileFound = cachedMapTileFound ? 1 : 0;
+  file.write((const uint8_t*)&header, sizeof(header));
+  file.write((const uint8_t*)mapCanvasBuf, sizeof(mapCanvasBuf));
+  file.close();
+}
+
+static bool renderOfflineTileMap(double lat, double lon, int zoom, char* centerPath, size_t centerPathSize) {
+  if (!mapCanvas || !sdStorage.available) return false;
+
+  double centerX = lonToGlobalPixelX(lon, zoom);
+  double centerY = latToGlobalPixelY(lat, zoom);
+  long centerTileX = (long)floor(centerX / MAP_TILE_SIZE);
+  long centerTileY = (long)floor(centerY / MAP_TILE_SIZE);
+  bool centerTileFound = mapTileExists(zoom, centerTileX, centerTileY, centerPath, centerPathSize);
+
+  int centerPixelX = (int)round(centerX);
+  int centerPixelY = (int)round(centerY);
+  if (mapCanvasCached &&
+      cachedMapZoom == zoom &&
+      cachedMapTileX == centerTileX &&
+      cachedMapTileY == centerTileY &&
+      abs(cachedMapPixelX - centerPixelX) < 32 &&
+      abs(cachedMapPixelY - centerPixelY) < 32 &&
+      cachedMapTileFound == centerTileFound) {
+    return centerTileFound;
+  }
+
+  for (int y = 0; y < MAP_PLOT_H; y++) {
+    for (int x = 0; x < MAP_PLOT_W; x++) {
+      mapCanvasBuf[y * MAP_PLOT_W + x] = lv_color_hex(0x07100D);
+    }
+  }
+
+  for (int y = 0; y < MAP_PLOT_H; y++) {
+    long globalY = centerPixelY - (MAP_PLOT_H / 2) + y;
+    if (globalY < 0) continue;
+    long tileY = globalY / MAP_TILE_SIZE;
+    int inTileY = globalY % MAP_TILE_SIZE;
+    int x = 0;
+    while (x < MAP_PLOT_W) {
+      long globalX = centerPixelX - (MAP_PLOT_W / 2) + x;
+      if (globalX < 0) {
+        x++;
+        continue;
+      }
+      long tileX = globalX / MAP_TILE_SIZE;
+      int inTileX = globalX % MAP_TILE_SIZE;
+      int segment = min(MAP_PLOT_W - x, MAP_TILE_SIZE - inTileX);
+      char path[96];
+      if (mapTileExists(zoom, tileX, tileY, path, sizeof(path))) {
+        File tile = SD_MMC.open(path, FILE_READ);
+        if (tile) {
+          size_t bytesToRead = segment * sizeof(uint16_t);
+          tile.seek((inTileY * MAP_TILE_SIZE + inTileX) * sizeof(uint16_t));
+          size_t bytesRead = tile.read((uint8_t*)mapReadBuf, bytesToRead);
+          tile.close();
+          int pixelsRead = bytesRead / sizeof(uint16_t);
+          for (int i = 0; i < pixelsRead; i++) {
+            mapCanvasBuf[y * MAP_PLOT_W + x + i] = rgb565ToLvColor(mapReadBuf[i]);
+          }
+        }
+      }
+      x += segment;
+    }
+  }
+
+  cachedMapZoom = zoom;
+  cachedMapTileX = centerTileX;
+  cachedMapTileY = centerTileY;
+  cachedMapPixelX = centerPixelX;
+  cachedMapPixelY = centerPixelY;
+  cachedMapLat = lat;
+  cachedMapLon = lon;
+  cachedMapTileFound = centerTileFound;
+  mapCanvasCached = true;
+  saveMapCacheToSd();
+  lv_obj_invalidate(mapCanvas);
+  return centerTileFound;
+}
+
+static bool placeMapDot(size_t index, double lat, double lon, int zoom, lv_color_t color, int size) {
+  if (index >= MAP_DOT_COUNT || !mapDots[index] || !gpsStats.valid) return false;
+  double centerX = lonToGlobalPixelX(gpsStats.longitude, zoom);
+  double centerY = latToGlobalPixelY(gpsStats.latitude, zoom);
+  double pointX = lonToGlobalPixelX(lon, zoom);
+  double pointY = latToGlobalPixelY(lat, zoom);
+  int x = (MAP_PLOT_W / 2) + (int)round(pointX - centerX) - (size / 2);
+  int y = (MAP_PLOT_H / 2) + (int)round(pointY - centerY) - (size / 2);
+  if (x < -size || y < -size || x > MAP_PLOT_W || y > MAP_PLOT_H) {
+    lv_obj_add_flag(mapDots[index], LV_OBJ_FLAG_HIDDEN);
+    return false;
+  }
+  lv_obj_set_size(mapDots[index], size, size);
+  lv_obj_set_pos(mapDots[index], x, y);
+  lv_obj_set_style_bg_color(mapDots[index], color, 0);
+  lv_obj_clear_flag(mapDots[index], LV_OBJ_FLAG_HIDDEN);
+  return true;
+}
+
+static void refreshMapUi() {
+  if (!mapPlot || !lblMapStats) return;
+  if (currentPage != pageMap) return;
+  uint32_t minIntervalMs = mapRenderPending ? 750 : 5000;
+  if (lastMapUiRefreshMs && millis() - lastMapUiRefreshMs < minIntervalMs) return;
+  lastMapUiRefreshMs = millis();
+  mapRenderPending = false;
+
+  const bool hasLocalFix = gpsStats.valid;
+  for (size_t i = 0; i < MAP_DOT_COUNT; i++) {
+    if (mapDots[i]) lv_obj_add_flag(mapDots[i], LV_OBJ_FLAG_HIDDEN);
+  }
+
+  if (!hasLocalFix) {
+    if (mapCanvas && !mapCanvasCached) {
+      lv_canvas_fill_bg(mapCanvas, lv_color_hex(0x07100D), LV_OPA_COVER);
+    }
+    char waitingText[160];
+    if (mapCanvasCached) {
+      snprintf(waitingText, sizeof(waitingText),
+               "Waiting for CYD GPS fix...\n"
+               "Showing cached %.5f, %.5f z%d\n"
+               "RX GPIO%d: %lu bytes",
+               cachedMapLat,
+               cachedMapLon,
+               cachedMapZoom,
+               GPS_RX_PIN,
+               (unsigned long)gpsBytesFromLocal);
+    } else {
+      snprintf(waitingText, sizeof(waitingText),
+               "Waiting for CYD GPS fix...\nRX GPIO%d: %lu bytes\nSD maps: %s",
+               GPS_RX_PIN,
+               (unsigned long)gpsBytesFromLocal,
+               sdStorage.available ? "ready" : sdStorage.status);
+    }
+    lv_label_set_text(lblMapStats, waitingText);
+    return;
+  }
+
+  char tilePath[96];
+  int mapZoom = findBestMapZoom(gpsStats.latitude, gpsStats.longitude, tilePath, sizeof(tilePath));
+  bool centerTileFound = renderOfflineTileMap(gpsStats.latitude, gpsStats.longitude, mapZoom, tilePath, sizeof(tilePath));
+  size_t plotted = 0;
+  for (size_t i = 0; i < nodeCount; i++) {
+    if (!nodes[i].hasPosition) continue;
+    lv_color_t color = nodes[i].num == stats.myNodeNum ? lv_color_hex(0x00C985) : lv_color_hex(0x68FFC0);
+    if (placeMapDot(i, nodes[i].latitude, nodes[i].longitude, mapZoom, color, 8)) plotted++;
+  }
+
+  placeMapDot(MAP_DOT_COUNT - 1, gpsStats.latitude, gpsStats.longitude, mapZoom, lv_color_hex(0x00C985), 10);
+  plotted++;
+
+  long tileX = lonToTileX(gpsStats.longitude, mapZoom);
+  long tileY = latToTileY(gpsStats.latitude, mapZoom);
+
+  char mapText[280];
+  snprintf(mapText, sizeof(mapText),
+           "CYD GPS: fix  RX %lu bytes\n"
+           "Lat/lon: %.5f, %.5f\n"
+           "Offline tile z%d/%ld/%ld: %s\n"
+           "%u plotted point%s",
+           (unsigned long)gpsBytesFromLocal,
+           gpsStats.latitude,
+           gpsStats.longitude,
+           mapZoom,
+           tileX,
+           tileY,
+           centerTileFound ? "drawn" : "missing",
+           (unsigned)plotted,
+           plotted == 1 ? "" : "s");
+  lv_label_set_text(lblMapStats, mapText);
+}
+
 static void refreshScreenUi() {
   if (!lblStatus || millis() - lastUiRefreshMs < 500) return;
   lastUiRefreshMs = millis();
+  refreshSdUsage();
 
   char status[48];
   snprintf(status, sizeof(status), "%lu frames", (unsigned long)framesDecoded);
   lv_label_set_text(lblStatus, status);
+
+  if (lblBatteryStatus) {
+    char batteryStatus[24];
+    snprintf(batteryStatus, sizeof(batteryStatus), "Batt %d%%", localBattery.percent);
+    lv_label_set_text(lblBatteryStatus, batteryStatus);
+  }
 
   char statsText[256];
   snprintf(statsText, sizeof(statsText),
@@ -637,28 +1368,54 @@ static void refreshScreenUi() {
            privateChannelIndex >= 0 ? "found" : "not found");
   lv_label_set_text(lblStats, statsText);
 
-  if (lblSystemSummary) {
-    char systemText[420];
+  if (lblSystemInterface) {
+    char interfaceText[360];
+    snprintf(interfaceText, sizeof(interfaceText),
+             "S3 interface\n"
+             "Uptime: %lu s\n"
+             "AP: %s\n\n"
+             "Memory\n"
+             "Heap free/min: %lu/%lu KB\n"
+             "PSRAM free: %lu KB\n\n"
+             "SD card\n"
+             "Status: %s\n"
+             "Type: %s\n"
+             "Used/total: %lu/%lu MB\n"
+             "Writes/errors: %lu/%lu\n\n"
+             "UI\n"
+             "Frames decoded: %lu",
+             (unsigned long)(millis() / 1000),
+             WiFi.softAPIP().toString().c_str(),
+             (unsigned long)(ESP.getFreeHeap() / 1024),
+             (unsigned long)(ESP.getMinFreeHeap() / 1024),
+             (unsigned long)(ESP.getFreePsram() / 1024),
+             sdStorage.status,
+             sdStorage.cardType,
+             bytesToWholeMb(sdStorage.usedBytes),
+             bytesToWholeMb(sdStorage.totalBytes),
+             (unsigned long)sdStorage.writes,
+             (unsigned long)sdStorage.writeErrors,
+             (unsigned long)framesDecoded);
+    lv_label_set_text(lblSystemInterface, interfaceText);
+  }
+
+  if (lblSystemSerial) {
+    char serialText[340];
     char rxAge[32];
     if (lastByteMs) snprintf(rxAge, sizeof(rxAge), "%lus ago", (unsigned long)((millis() - lastByteMs) / 1000));
     else strlcpy(rxAge, "never", sizeof(rxAge));
-    snprintf(systemText, sizeof(systemText),
-             "Interface uptime: %lus\nFree heap: %lu KB\nFree PSRAM: %lu KB\nAP: %s\n\n"
+    snprintf(serialText, sizeof(serialText),
              "Serial link\n"
-             "RX bytes: %lu  TX bytes: %lu\n"
+             "RX bytes: %lu\n"
+             "TX bytes: %lu\n"
              "Last byte: %s\n"
-             "Magic 94/C3: %lu/%lu\n"
-             "Frames: %lu  Decode errors: %lu\n"
-             "Bad lengths: %lu\n"
-             "Text/Tel/GPS/Node: %lu/%lu/%lu/%lu\n"
-             "Remote GPS ignored: %lu\n"
-             "Config/Other/Encrypted: %lu/%lu/%lu\n"
-             "Last port: %lu\n"
-             "ASCII seen: %.48s",
-             (unsigned long)(millis() / 1000),
-             (unsigned long)(ESP.getFreeHeap() / 1024),
-             (unsigned long)(ESP.getFreePsram() / 1024),
-             WiFi.softAPIP().toString().c_str(),
+             "Magic 94/C3: %lu/%lu\n\n"
+             "Stream\n"
+             "Frames: %lu\n"
+             "Decode errors: %lu\n"
+             "Bad lengths: %lu\n\n"
+             "ASCII seen\n"
+             "%.48s",
              (unsigned long)bytesFromRadio,
              (unsigned long)bytesToRadio,
              rxAge,
@@ -667,6 +1424,24 @@ static void refreshScreenUi() {
              (unsigned long)streamFrames,
              (unsigned long)decodeErrors,
              (unsigned long)invalidFrameLengths,
+             serialPeek);
+    lv_label_set_text(lblSystemSerial, serialText);
+  }
+
+  if (lblSystemRadio) {
+    char radioText[300];
+    snprintf(radioText, sizeof(radioText),
+             "Packet types\n"
+             "Text: %lu\n"
+             "Telemetry: %lu\n"
+             "GPS: %lu\n"
+             "Node info: %lu\n"
+             "Remote GPS mapped: %lu\n\n"
+             "Other traffic\n"
+             "Config: %lu\n"
+             "Other: %lu\n"
+             "Encrypted: %lu\n"
+             "Last port: %lu",
              (unsigned long)textPackets,
              (unsigned long)telemetryPackets,
              (unsigned long)positionPackets,
@@ -675,9 +1450,8 @@ static void refreshScreenUi() {
              (unsigned long)configFrames,
              (unsigned long)otherFrames,
              (unsigned long)encryptedPackets,
-             (unsigned long)lastPortNum,
-             serialPeek);
-    lv_label_set_text(lblSystemSummary, systemText);
+             (unsigned long)lastPortNum);
+    lv_label_set_text(lblSystemRadio, radioText);
   }
 
   if (lblBatteryStats) {
@@ -773,11 +1547,12 @@ static void refreshScreenUi() {
                "Satellites: %s\n"
                "Fix quality: %s\n"
                "Fix type: %s\n"
-               "DOP: %s\n"
-               "Accuracy: %s\n"
-               "Speed: %s\n"
-               "Track: %s\n"
-               "GPS time: %s\n"
+             "DOP: %s\n"
+             "Accuracy: %s\n"
+             "Speed: %s\n"
+             "Track: %s\n"
+             "CYD UART: %lu bytes\n"
+             "GPS time: %s\n"
                "Next update: %s\n"
                "Precision: %s\n"
                "Seq/Sensor: %lu/%lu\n"
@@ -795,6 +1570,7 @@ static void refreshScreenUi() {
                accuracyText,
                speedText,
                trackText,
+               (unsigned long)gpsBytesFromLocal,
                timeText,
                nextUpdateText,
                precisionText,
@@ -803,13 +1579,18 @@ static void refreshScreenUi() {
                (unsigned long)age);
     } else {
       snprintf(gpsText, sizeof(gpsText),
-               "Waiting for GPS from Heltec...\n\n"
-               "Heltec GPS pins:\n"
-               "RX 41, TX 42\n\n"
-               "Meshtastic must have GPS enabled.");
+               "Waiting for GPS...\n\n"
+               "CYD local GPS:\n"
+               "RX GPIO%d  %lu bytes\n\n"
+               "Heltec GPS can still feed\n"
+               "Meshtastic position packets.",
+               GPS_RX_PIN,
+               (unsigned long)gpsBytesFromLocal);
     }
     lv_label_set_text(lblGpsStats, gpsText);
   }
+
+  refreshMapUi();
 
   if (taPublicChat) lv_textarea_set_text(taPublicChat, publicChatLog[0] ? publicChatLog : "No public chat yet");
   if (taPrivateChat) lv_textarea_set_text(taPrivateChat, privateChatLog[0] ? privateChatLog : "No private chat yet");
@@ -868,6 +1649,30 @@ static void printSerialDiagnostics() {
     (unsigned long)encryptedPackets,
     (unsigned long)lastPortNum
   );
+
+  if (millis() - lastSdDiagMs >= 5000) {
+    lastSdDiagMs = millis();
+    refreshSdUsage();
+    Serial.printf(
+      "[SD] available=%s status=\"%s\" type=%s card=%llu total=%llu used=%llu writes=%lu errors=%lu\n",
+      sdStorage.available ? "true" : "false",
+      sdStorage.status,
+      sdStorage.cardType,
+      (unsigned long long)sdStorage.cardSizeBytes,
+      (unsigned long long)sdStorage.totalBytes,
+      (unsigned long long)sdStorage.usedBytes,
+      (unsigned long)sdStorage.writes,
+      (unsigned long)sdStorage.writeErrors
+    );
+    Serial.printf(
+      "[TOUCH] samples=%lu last=%s x=%u y=%u age=%lu\n",
+      (unsigned long)touchSamples,
+      lastTouchMs ? "yes" : "no",
+      (unsigned)lastTouchX,
+      (unsigned)lastTouchY,
+      lastTouchMs ? (unsigned long)((millis() - lastTouchMs) / 1000) : 0
+    );
+  }
 }
 
 static NodeRecord* findOrCreateNode(uint32_t num) {
@@ -948,7 +1753,7 @@ static bool sendConfigRequest() {
 }
 
 static void serviceConfigRequests() {
-  bool needsInitialData = stats.myNodeNum == 0 || nodeInfoPackets == 0 || positionPackets == 0;
+  bool needsInitialData = stats.myNodeNum == 0 || nodeInfoPackets == 0;
   bool needsChannelData = privateChannelIndex < 0 && configFrames == 0;
   if (!(needsInitialData || needsChannelData)) return;
   if (configRequestCount >= 12) return;
@@ -1012,76 +1817,6 @@ static void updateTelemetry(uint32_t from, const meshtastic_Data& data) {
   }
 }
 
-static void updatePositionFromStruct(uint32_t from, const meshtastic_Position& position, const char* sourceKind, bool diagnosticsIncluded) {
-  if (stats.myNodeNum != 0 && from != stats.myNodeNum) {
-    remotePositionPackets++;
-    char line[160];
-    snprintf(line, sizeof(line), "[%s] remote GPS ignored for local GPS screen\n", nodeName(from));
-    appendLine(eventLog, LOG_SIZE, line);
-    return;
-  }
-
-  gpsStats.valid = position.has_latitude_i && position.has_longitude_i;
-  gpsStats.from = from;
-  gpsStats.latitude = position.latitude_i / 10000000.0;
-  gpsStats.longitude = position.longitude_i / 10000000.0;
-  gpsStats.altitude = position.has_altitude ? position.altitude : 0;
-  if (position.sats_in_view > 0) {
-    gpsStats.sats = position.sats_in_view;
-    gpsStats.hasSats = true;
-  } else if (diagnosticsIncluded) {
-    gpsStats.hasSats = false;
-  }
-  if (position.fix_quality > 0) {
-    gpsStats.fixQuality = position.fix_quality;
-    gpsStats.hasFixQuality = true;
-  } else if (diagnosticsIncluded) {
-    gpsStats.hasFixQuality = false;
-  }
-  if (position.fix_type > 0) {
-    gpsStats.fixType = position.fix_type;
-    gpsStats.hasFixType = true;
-  } else if (diagnosticsIncluded) {
-    gpsStats.hasFixType = false;
-  }
-  if (position.timestamp > 0) {
-    gpsStats.timestamp = position.timestamp;
-    gpsStats.hasTimestamp = true;
-  } else if (position.time > 0) {
-    gpsStats.timestamp = position.time;
-    gpsStats.hasTimestamp = true;
-  }
-  if (position.PDOP > 0) { gpsStats.pdop = position.PDOP; gpsStats.hasPdop = true; }
-  if (position.HDOP > 0) { gpsStats.hdop = position.HDOP; gpsStats.hasHdop = true; }
-  if (position.VDOP > 0) { gpsStats.vdop = position.VDOP; gpsStats.hasVdop = true; }
-  if (position.gps_accuracy > 0) { gpsStats.accuracyMm = position.gps_accuracy; gpsStats.hasAccuracy = true; }
-  if (position.has_ground_speed) { gpsStats.groundSpeed = position.ground_speed; gpsStats.hasGroundSpeed = true; }
-  if (position.has_ground_track) { gpsStats.groundTrack = position.ground_track; gpsStats.hasGroundTrack = true; }
-  if (position.has_altitude_hae) { gpsStats.altitudeHae = position.altitude_hae; gpsStats.hasAltitudeHae = true; }
-  if (position.has_altitude_geoidal_separation) {
-    gpsStats.geoidalSeparation = position.altitude_geoidal_separation;
-    gpsStats.hasGeoidalSeparation = true;
-  }
-  if (position.next_update > 0) { gpsStats.nextUpdate = position.next_update; gpsStats.hasNextUpdate = true; }
-  if (position.precision_bits > 0) { gpsStats.precisionBits = position.precision_bits; gpsStats.hasPrecision = true; }
-  gpsStats.sensorId = position.sensor_id;
-  gpsStats.seqNumber = position.seq_number;
-  strlcpy(gpsStats.sourceKind, sourceKind, sizeof(gpsStats.sourceKind));
-  gpsStats.lastUpdateMs = millis();
-
-  char line[160];
-  snprintf(line, sizeof(line), "[%s] GPS %.6f, %.6f\n",
-           nodeName(from), gpsStats.latitude, gpsStats.longitude);
-  appendLine(eventLog, LOG_SIZE, line);
-}
-
-static void updatePosition(uint32_t from, const meshtastic_Data& data) {
-  meshtastic_Position position = meshtastic_Position_init_zero;
-  pb_istream_t stream = pb_istream_from_buffer(data.payload.bytes, data.payload.size);
-  if (!pb_decode(&stream, meshtastic_Position_fields, &position)) return;
-  updatePositionFromStruct(from, position, "position packet", true);
-}
-
 static void handleDecodedPacket(const meshtastic_MeshPacket& packet) {
   NodeRecord* node = findOrCreateNode(packet.from);
   if (node) {
@@ -1116,7 +1851,7 @@ static void handleDecodedPacket(const meshtastic_MeshPacket& packet) {
   } else if (data.portnum == meshtastic_PortNum_POSITION_APP) {
     positionPackets++;
     lastPortNum = data.portnum;
-    updatePosition(packet.from, data);
+    appendLine(eventLog, LOG_SIZE, "[radio] Heltec position packet ignored; using CYD GPS UART\n");
   } else if (data.portnum == meshtastic_PortNum_NODEINFO_APP) {
     nodeInfoPackets++;
     lastPortNum = data.portnum;
@@ -1169,7 +1904,7 @@ static void decodeFromRadio(const uint8_t* payload, size_t len) {
     }
     if (fromRadio.node_info.has_position) {
       positionPackets++;
-      updatePositionFromStruct(fromRadio.node_info.num, fromRadio.node_info.position, "node info", false);
+      appendLine(eventLog, LOG_SIZE, "[radio] Heltec node-info position ignored; using CYD GPS UART\n");
     }
     if (fromRadio.node_info.has_device_metrics) {
       lastTelemetryMs = millis();
@@ -1277,6 +2012,7 @@ static String jsonEscape(const char* text) {
 
 static void handleStatus() {
   sampleLocalBattery();
+  refreshSdUsage();
   char rxAge[32];
   if (lastByteMs) snprintf(rxAge, sizeof(rxAge), "%lus ago", (unsigned long)((millis() - lastByteMs) / 1000));
   else strlcpy(rxAge, "never", sizeof(rxAge));
@@ -1309,6 +2045,15 @@ static void handleStatus() {
   json += "\"batterySource\":\"S3\",";
   json += "\"powerState\":\"" + jsonEscape(localBattery.powerState) + "\",";
   json += "\"batteryTrend\":" + String(localBattery.deltaMvPerMin) + ",";
+  json += "\"sdAvailable\":" + String(sdStorage.available ? "true" : "false") + ",";
+  json += "\"sdStatus\":\"" + jsonEscape(sdStorage.status) + "\",";
+  json += "\"sdType\":\"" + jsonEscape(sdStorage.cardType) + "\",";
+  json += "\"sdUsedKb\":" + String(bytesToWholeKb(sdStorage.usedBytes)) + ",";
+  json += "\"sdTotalKb\":" + String(bytesToWholeKb(sdStorage.totalBytes)) + ",";
+  json += "\"sdUsedMb\":" + String(bytesToWholeMb(sdStorage.usedBytes)) + ",";
+  json += "\"sdSizeMb\":" + String(bytesToWholeMb(sdStorage.totalBytes)) + ",";
+  json += "\"sdWrites\":" + String(sdStorage.writes) + ",";
+  json += "\"sdErrors\":" + String(sdStorage.writeErrors) + ",";
   json += "\"rx\":" + String(stats.packetsRx) + ",";
   json += "\"tx\":" + String(stats.packetsTx) + ",";
   json += "\"online\":" + String(stats.onlineNodes) + ",";
@@ -1317,6 +2062,13 @@ static void handleStatus() {
   json += "\"publicChat\":\"" + jsonEscape(publicChatLog) + "\",";
   json += "\"privateChat\":\"" + jsonEscape(privateChatLog) + "\",";
   json += "\"privateChannel\":" + String(privateChannelIndex) + ",";
+  json += "\"gpsValid\":" + String(gpsStats.valid ? "true" : "false") + ",";
+  json += "\"gpsLat\":" + String(gpsStats.latitude, 6) + ",";
+  json += "\"gpsLon\":" + String(gpsStats.longitude, 6) + ",";
+  json += "\"localGpsBytes\":" + String(gpsBytesFromLocal) + ",";
+  json += "\"localGpsSentences\":" + String(localGps.sentencesWithFix()) + ",";
+  json += "\"localGpsFailedChecksum\":" + String(localGps.failedChecksum()) + ",";
+  json += "\"positionedNodes\":" + String(countPositionedNodes()) + ",";
   json += "\"log\":\"" + jsonEscape(eventLog) + "\",";
   json += "\"nodes\":[";
   for (size_t i = 0; i < nodeCount; i++) {
@@ -1324,10 +2076,34 @@ static void handleStatus() {
     json += "{\"num\":\"!" + String(nodes[i].num, HEX) + "\",";
     json += "\"name\":\"" + jsonEscape(nodes[i].name) + "\",";
     json += "\"snr\":" + String(nodes[i].snr, 1) + ",";
-    json += "\"age\":" + String((millis() - nodes[i].lastHeardMs) / 1000) + "}";
+    json += "\"age\":" + String((millis() - nodes[i].lastHeardMs) / 1000) + ",";
+    json += "\"hasPosition\":" + String(nodes[i].hasPosition ? "true" : "false") + ",";
+    json += "\"lat\":" + String(nodes[i].latitude, 6) + ",";
+    json += "\"lon\":" + String(nodes[i].longitude, 6) + ",";
+    json += "\"alt\":" + String(nodes[i].altitude) + ",";
+    json += "\"positionAge\":" + String(nodes[i].lastPositionMs ? (millis() - nodes[i].lastPositionMs) / 1000 : 0) + "}";
   }
   json += "]}";
   server.send(200, "application/json", json);
+}
+
+static void handleSdDownload(const char* path, const char* downloadName, const char* contentType) {
+  if (!sdStorage.available) {
+    server.send(503, "text/plain", "SD card not available");
+    return;
+  }
+  if (!SD_MMC.exists(path)) {
+    server.send(404, "text/plain", "file not found");
+    return;
+  }
+  File file = SD_MMC.open(path, FILE_READ);
+  if (!file) {
+    server.send(500, "text/plain", "open failed");
+    return;
+  }
+  server.sendHeader("Content-Disposition", String("attachment; filename=\"") + downloadName + "\"");
+  server.streamFile(file, contentType);
+  file.close();
 }
 
 static void handleSend() {
@@ -1343,33 +2119,53 @@ static void handleRoot() {
   server.send(200, "text/html", R"HTML(
 <!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Heltec LoRa Interface</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
-body{margin:0;background:#0b0f0e;color:#e8fff5;font-family:system-ui,Segoe UI,sans-serif}
-header{padding:16px 18px;background:#101816;border-bottom:1px solid #1f3d35}
-h1{font-size:20px;margin:0}main{display:grid;gap:12px;padding:12px;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
-section{background:#111a18;border:1px solid #24483e;border-radius:8px;padding:12px}
-h2{font-size:15px;margin:0 0 10px;color:#68ffc0}.stats{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.stat{background:#0b1210;padding:8px;border-radius:6px}.label{color:#8ab7a6;font-size:12px}.value{font-size:18px}
-pre{white-space:pre-wrap;overflow:auto;max-height:360px;margin:0;font:13px ui-monospace,Consolas,monospace}
-input{box-sizing:border-box;width:100%;padding:12px;background:#07100d;border:1px solid #2f705f;color:#fff;border-radius:6px}
-button{margin-top:8px;padding:11px 14px;border:0;border-radius:6px;background:#00c985;color:#001b12;font-weight:700}
-table{width:100%;border-collapse:collapse;font-size:13px}td,th{border-bottom:1px solid #203b35;padding:6px;text-align:left}
+*{box-sizing:border-box}html,body{min-height:100%;background:#050807;color:#f4fff9}
+body{margin:0;background:#050807!important;color:#f4fff9!important;font-family:system-ui,Segoe UI,sans-serif}
+header{padding:8px 10px;background:#080d0b;border-bottom:1px solid #24483e}
+h1{font-size:16px;margin:0;color:#f4fff9}main{display:grid;gap:8px;padding:8px;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+section{background:#101816;color:#f4fff9;border:1px solid #24483e;border-radius:6px;padding:8px}
+h2{font-size:12px;line-height:1.1;margin:0 0 6px;color:#68ffc0;text-transform:uppercase}.stats{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.stat{background:#07100d;color:#f4fff9;padding:6px;border-radius:4px}.label{color:#8ab7a6;font-size:11px}.value{font-size:15px;color:#f4fff9}
+pre{white-space:pre-wrap;overflow:auto;max-height:280px;margin:0;color:#e8fff5;background:#07100d;font:12px ui-monospace,Consolas,monospace}
+input{box-sizing:border-box;width:100%;padding:10px;background:#07100d!important;border:1px solid #2f705f;color:#fff!important;border-radius:6px}
+button{margin-top:6px;padding:9px 12px;border:0;border-radius:6px;background:#00c985;color:#001b12;font-weight:700}
+a{color:#68ffc0;text-decoration:none}.links{display:flex;flex-wrap:wrap;gap:6px}.links a{padding:7px 8px;border:1px solid #2f705f;border-radius:6px;background:#07100d}
+table{width:100%;border-collapse:collapse;font-size:12px;color:#f4fff9}td,th{border-bottom:1px solid #203b35;padding:4px;text-align:left}
+#realMap{width:100%;height:320px;background:#07100d;border:1px solid #24483e;border-radius:6px;box-sizing:border-box;overflow:hidden}
+canvas{width:100%;height:260px;background:#07100d;border:1px solid #24483e;border-radius:6px;box-sizing:border-box}
+.hidden{display:none}
+.mapMeta{color:#8ab7a6;font-size:12px;margin-top:8px}
+.leaflet-container{background:#07100d;color:#10231d}.leaflet-popup-content-wrapper,.leaflet-popup-tip{background:#101816;color:#e8fff5}
 </style></head><body><header><h1>Heltec LoRa Interface</h1><div id="ip"></div></header><main>
 <section><h2>Radio</h2><div class="stats" id="stats"></div><button onclick="fetch('/config',{method:'POST'})">Request Config</button></section>
 <section><h2>Send Message</h2><input id="msg" maxlength="233" placeholder="Message to mesh"><button onclick="send()">Send</button></section>
 <section><h2>Chat</h2><pre id="chat"></pre></section>
-<section><h2>Nodes</h2><table><thead><tr><th>Node</th><th>Name</th><th>SNR</th><th>Age</th></tr></thead><tbody id="nodes"></tbody></table></section>
+<section><h2>Map</h2><div id="realMap"></div><canvas id="mapFallback" class="hidden" width="640" height="360"></canvas><div class="mapMeta" id="mapMeta"></div></section>
+<section><h2>SD Storage</h2><div class="stats" id="storage"></div><button onclick="mountSd()">Mount SD</button><div class="links"><a href="/sd/events">Events</a><a href="/sd/public">Public Chat</a><a href="/sd/private">Private Chat</a><a href="/sd/positions">Positions CSV</a></div></section>
+<section><h2>Nodes</h2><table><thead><tr><th>Node</th><th>Name</th><th>SNR</th><th>Age</th><th>GPS</th></tr></thead><tbody id="nodes"></tbody></table></section>
 <section><h2>Serial Link</h2><pre id="serial"></pre></section>
 <section><h2>Event Log</h2><pre id="log"></pre></section>
-</main><script>
+</main><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script>
+let leafletMap=null,markers={},realMapReady=false;
+function initRealMap(){if(realMapReady||!window.L)return;leafletMap=L.map('realMap',{zoomControl:true,attributionControl:true});L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(leafletMap);leafletMap.setView([0,0],2);realMapReady=true;}
 async function refresh(){const s=await (await fetch('/status')).json();ip.textContent='AP '+s.ip;
-stats.innerHTML=[['Node',s.myNode],['S3 Battery',s.battery+'% '+s.voltage+'V'],['Power',s.powerState],['Frames',s.frames],['Errors',s.errors],['RX/TX',s.rx+'/'+s.tx],['Nodes',s.online+'/'+s.total]]
+stats.innerHTML=[['Node',s.myNode],['S3 Battery',s.battery+'% '+s.voltage+'V'],['Power',s.powerState],['Frames',s.frames],['Errors',s.errors],['RX/TX',s.rx+'/'+s.tx],['Nodes',s.online+'/'+s.total],['SD',s.sdStatus]]
+.map(x=>`<div class=stat><div class=label>${x[0]}</div><div class=value>${x[1]}</div></div>`).join('');
+storage.innerHTML=[['Status',s.sdAvailable?'mounted':s.sdStatus],['Type',s.sdType],['Used',formatBytes(s.sdUsedKb)],['Total',formatBytes(s.sdTotalKb)],['Writes',s.sdWrites],['Errors',s.sdErrors]]
 .map(x=>`<div class=stat><div class=label>${x[0]}</div><div class=value>${x[1]}</div></div>`).join('');
 chat.textContent=s.chat||'No chat yet';log.textContent=s.log||'Waiting for radio data';
-serial.textContent=`RX bytes: ${s.bytes}\nTX bytes: ${s.txBytes}\nLast byte: ${s.lastByte}\nMagic 94/C3: ${s.magic1}/${s.magic2}\nStream frames: ${s.streamFrames}\nBad lengths: ${s.badLengths}\nText/Tel/GPS/Node: ${s.textPackets}/${s.telemetryPackets}/${s.positionPackets}/${s.nodeInfoPackets}\nRemote GPS ignored: ${s.remotePositionPackets}\nConfig/Other/Encrypted: ${s.configFrames}/${s.otherFrames}/${s.encryptedPackets}\nLast port: ${s.lastPort}\nASCII seen: ${s.serialPeek||''}`;
-nodes.innerHTML=s.nodes.map(n=>`<tr><td>${n.num}</td><td>${n.name}</td><td>${n.snr}</td><td>${n.age}s</td></tr>`).join('');
+serial.textContent=`RX bytes: ${s.bytes}\nTX bytes: ${s.txBytes}\nLast byte: ${s.lastByte}\nMagic 94/C3: ${s.magic1}/${s.magic2}\nStream frames: ${s.streamFrames}\nBad lengths: ${s.badLengths}\nText/Tel/GPS/Node: ${s.textPackets}/${s.telemetryPackets}/${s.positionPackets}/${s.nodeInfoPackets}\nHeltec GPS ignored: ${s.remotePositionPackets}\nConfig/Other/Encrypted: ${s.configFrames}/${s.otherFrames}/${s.encryptedPackets}\nLast port: ${s.lastPort}\nASCII seen: ${s.serialPeek||''}`;
+nodes.innerHTML=s.nodes.map(n=>`<tr><td>${n.num}</td><td>${n.name}</td><td>${n.snr}</td><td>${n.age}s</td><td>${n.hasPosition?`${n.lat.toFixed(5)}, ${n.lon.toFixed(5)}`:'-'}</td></tr>`).join('');
+drawMap(s);
 }
 async function send(){const m=msg.value.trim();if(!m)return;await fetch('/send',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'msg='+encodeURIComponent(m)});msg.value='';refresh();}
+async function mountSd(){await fetch('/sd/mount',{method:'POST'});refresh();}
+function formatBytes(kb){if(!kb)return'0 KB';return kb>=1024?Math.ceil(kb/1024)+' MB':kb+' KB';}
+function drawMap(s){initRealMap();const pts=s.nodes.filter(n=>n.hasPosition);if(realMapReady){realMap.classList.remove('hidden');mapFallback.classList.add('hidden');drawRealMap(s,pts);return}realMap.classList.add('hidden');mapFallback.classList.remove('hidden');drawFallbackMap(s,pts);}
+function drawRealMap(s,pts){if(!pts.length){mapMeta.textContent='No node positions yet';return}const seen={};for(const p of pts){seen[p.num]=true;const html=`<b>${p.name||p.num}</b><br>${p.num}<br>${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}<br>Alt ${p.alt} m<br>${p.positionAge}s old`;if(!markers[p.num])markers[p.num]=L.circleMarker([p.lat,p.lon],{radius:7,color:p.num===s.myNode?'#00c985':'#68ffc0',weight:2,fillColor:p.num===s.myNode?'#00c985':'#68ffc0',fillOpacity:.85}).addTo(leafletMap);else markers[p.num].setLatLng([p.lat,p.lon]);markers[p.num].setStyle({color:p.num===s.myNode?'#00c985':'#68ffc0',fillColor:p.num===s.myNode?'#00c985':'#68ffc0'});markers[p.num].bindPopup(html)}for(const id in markers){if(!seen[id]){leafletMap.removeLayer(markers[id]);delete markers[id]}}const bounds=L.latLngBounds(pts.map(p=>[p.lat,p.lon]));leafletMap.fitBounds(bounds.pad(.2),{maxZoom:15,animate:false});mapMeta.textContent=`OpenStreetMap | ${pts.length} positioned node${pts.length===1?'':'s'}`;}
+function drawFallbackMap(s,pts){const c=mapFallback,ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);ctx.fillStyle='#07100d';ctx.fillRect(0,0,c.width,c.height);ctx.strokeStyle='#1f3d35';ctx.lineWidth=1;for(let x=40;x<c.width;x+=80){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,c.height);ctx.stroke()}for(let y=40;y<c.height;y+=80){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(c.width,y);ctx.stroke()}if(!pts.length){ctx.fillStyle='#8ab7a6';ctx.font='16px system-ui';ctx.fillText('Waiting for position packets',24,40);mapMeta.textContent='No node positions yet';return}let minLat=Math.min(...pts.map(p=>p.lat)),maxLat=Math.max(...pts.map(p=>p.lat)),minLon=Math.min(...pts.map(p=>p.lon)),maxLon=Math.max(...pts.map(p=>p.lon));let latSpan=Math.max(maxLat-minLat,0.000001),lonSpan=Math.max(maxLon-minLon,0.000001),pad=28;for(const p of pts){let x=pad+(p.lon-minLon)*(c.width-pad*2)/lonSpan,y=pad+(maxLat-p.lat)*(c.height-pad*2)/latSpan;ctx.fillStyle=p.num===s.myNode?'#00c985':'#68ffc0';ctx.beginPath();ctx.arc(x,y,6,0,Math.PI*2);ctx.fill();ctx.fillStyle='#e8fff5';ctx.font='12px system-ui';ctx.fillText(p.name||p.num,x+9,y+4)}mapMeta.textContent=`Offline plot | ${pts.length} positioned node${pts.length===1?'':'s'} | center ${((minLat+maxLat)/2).toFixed(5)}, ${((minLon+maxLon)/2).toFixed(5)}`;}
 setInterval(refresh,1000);refresh();
 </script></body></html>
 )HTML");
@@ -1379,7 +2175,9 @@ void setup() {
   Serial.begin(115200);
   SerialLoRa.setRxBufferSize(4096);
   SerialLoRa.begin(LORA_BAUD, SERIAL_8N1, LORA_RX_PIN, LORA_TX_PIN);
+  SerialGPS.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
   initScreen();
+  initSdStorage();
 
   appendLine(eventLog, LOG_SIZE, "[boot] Heltec LoRa interface starting\n");
 
@@ -1389,6 +2187,14 @@ void setup() {
   server.on("/", HTTP_GET, handleRoot);
   server.on("/status", HTTP_GET, handleStatus);
   server.on("/send", HTTP_POST, handleSend);
+  server.on("/sd/events", HTTP_GET, []() { handleSdDownload(SD_EVENTS_PATH, "events.log", "text/plain"); });
+  server.on("/sd/public", HTTP_GET, []() { handleSdDownload(SD_PUBLIC_CHAT_PATH, "public_chat.log", "text/plain"); });
+  server.on("/sd/private", HTTP_GET, []() { handleSdDownload(SD_PRIVATE_CHAT_PATH, "private_chat.log", "text/plain"); });
+  server.on("/sd/positions", HTTP_GET, []() { handleSdDownload(SD_POSITIONS_PATH, "positions.csv", "text/csv"); });
+  server.on("/sd/mount", HTTP_POST, []() {
+    initSdStorage();
+    server.send(sdStorage.available ? 200 : 503, "text/plain", sdStorage.status);
+  });
   server.on("/config", HTTP_POST, []() {
     bool ok = sendConfigRequest();
     server.send(ok ? 200 : 500, "text/plain", ok ? "requested" : "request failed");
@@ -1402,6 +2208,7 @@ void setup() {
 }
 
 void loop() {
+  pollLocalGps();
   pollLoRa();
   serviceConfigRequests();
   server.handleClient();
