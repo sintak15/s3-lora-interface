@@ -211,6 +211,8 @@ static bool wifiEnabled = true;
 static uint32_t wifiStartedMs = 0;
 static uint32_t wifiStoppedMs = 0;
 static uint32_t wifiToggleCount = 0;
+static uint8_t backlightPercent = 80;
+static bool backlightPwmReady = false;
 static uint32_t lastLocalSentMs = 0;
 static uint8_t lastLocalSentChannel = PUBLIC_CHANNEL_INDEX;
 
@@ -233,6 +235,7 @@ static lv_obj_t* pageSystemRadio = nullptr;
 static lv_obj_t* pageSystemGps = nullptr;
 static lv_obj_t* pageWifi = nullptr;
 static lv_obj_t* pageWifiStats = nullptr;
+static lv_obj_t* pageBacklight = nullptr;
 static lv_obj_t* pageBattery = nullptr;
 static lv_obj_t* currentPage = nullptr;
 static lv_obj_t* previousPage = nullptr;
@@ -247,6 +250,8 @@ static lv_obj_t* lblSystemRadio = nullptr;
 static lv_obj_t* lblWifiState = nullptr;
 static lv_obj_t* lblWifiStats = nullptr;
 static lv_obj_t* swWifiEnabled = nullptr;
+static lv_obj_t* sliderBacklight = nullptr;
+static lv_obj_t* lblBacklight = nullptr;
 static lv_obj_t* lblBatteryStats = nullptr;
 static lv_obj_t* lblGpsStats = nullptr;
 static lv_obj_t* lblMapStats = nullptr;
@@ -699,6 +704,28 @@ static void setWifiEnabled(bool enabled) {
   else stopWifiAp();
 }
 
+static void applyBacklight() {
+  uint8_t pct = constrain(backlightPercent, 10, 100);
+  uint32_t duty = map(pct, 0, 100, 0, 255);
+  if (backlightPwmReady) {
+    ledcWrite(TFT_BL, duty);
+  } else {
+    analogWrite(TFT_BL, duty);
+  }
+}
+
+static void initBacklight() {
+  pinMode(TFT_BL, OUTPUT);
+  backlightPwmReady = ledcAttach(TFT_BL, 5000, 8);
+  applyBacklight();
+}
+
+static void backlightSliderEvent(lv_event_t* e) {
+  lv_obj_t* slider = (lv_obj_t*)lv_event_get_target(e);
+  backlightPercent = constrain((int)lv_slider_get_value(slider), 10, 100);
+  applyBacklight();
+}
+
 static void lvFlush(lv_disp_drv_t* disp, const lv_area_t* area, lv_color_t* colors) {
   uint32_t w = area->x2 - area->x1 + 1;
   uint32_t h = area->y2 - area->y1 + 1;
@@ -822,7 +849,7 @@ static void showPage(lv_obj_t* target, bool remember = true) {
   lv_obj_t* pages[] = {
     pageLauncher, pageLora, pagePublicChat, pagePrivateChat, pageGps,
     pageSystem, pageSystemInterface, pageSystemSerial, pageSystemRadio, pageSystemGps,
-    pageWifi, pageWifiStats, pageBattery
+    pageWifi, pageWifiStats, pageBacklight, pageBattery
   };
   for (lv_obj_t* page : pages) {
     if (!page) continue;
@@ -861,6 +888,30 @@ static lv_obj_t* makeActionButton(lv_obj_t* parent, const char* text, int y, lv_
   lv_obj_t* label = lv_label_create(btn);
   lv_label_set_text(label, text);
   lv_obj_set_style_text_color(label, lv_color_hex(COLOR_TEXT), 0);
+  lv_obj_center(label);
+  lv_obj_move_foreground(btn);
+  return btn;
+}
+
+static lv_obj_t* makeSystemTile(lv_obj_t* parent, const char* text, int col, int row, lv_event_cb_t cb) {
+  const int tileW = 106;
+  const int tileH = 54;
+  const int gap = 8;
+  const int x = 6 + col * (tileW + gap);
+  const int y = 24 + row * (tileH + gap);
+  lv_obj_t* btn = lv_btn_create(parent);
+  lv_obj_set_size(btn, tileW, tileH);
+  lv_obj_align(btn, LV_ALIGN_TOP_LEFT, x, y);
+  styleDarkObject(btn, COLOR_PANEL);
+  styleDarkBorder(btn, 0x2F705F);
+  lv_obj_set_style_radius(btn, 6, 0);
+  lv_obj_set_style_shadow_width(btn, 0, 0);
+  lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* label = lv_label_create(btn);
+  lv_label_set_text(label, text);
+  lv_obj_set_style_text_color(label, lv_color_hex(COLOR_TEXT), 0);
+  lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_center(label);
   lv_obj_move_foreground(btn);
   return btn;
@@ -1065,6 +1116,7 @@ static void buildScreenUi() {
   pageSystemGps = makePage(screen);
   pageWifi = makePage(screen);
   pageWifiStats = makePage(screen);
+  pageBacklight = makePage(screen);
   pageBattery = makePage(screen);
 
   currentPage = pageLauncher;
@@ -1081,9 +1133,9 @@ static void buildScreenUi() {
   lv_obj_set_style_text_color(launcherSub, lv_color_hex(COLOR_MUTED), 0);
   lv_obj_align(launcherSub, LV_ALIGN_TOP_LEFT, 2, 24);
 
-  makeActionButton(pageLauncher, "LoRa", 54, [](lv_event_t*) { showPage(pageLora); });
-  makeActionButton(pageLauncher, "GPS / Map", 106, [](lv_event_t*) { showPage(pageGps); });
-  makeActionButton(pageLauncher, "System", 158, [](lv_event_t*) { showPage(pageSystem); });
+  makeSystemTile(pageLauncher, "LoRa", 0, 0, [](lv_event_t*) { showPage(pageLora); });
+  makeSystemTile(pageLauncher, "GPS / Map", 1, 0, [](lv_event_t*) { showPage(pageGps); });
+  makeSystemTile(pageLauncher, "System", 0, 1, [](lv_event_t*) { showPage(pageSystem); });
 
   makePageTitle(pageLora, "LoRa");
   makeActionButton(pageLora, "Public Chat", 34, [](lv_event_t*) { showPage(pagePublicChat); });
@@ -1193,12 +1245,13 @@ static void buildScreenUi() {
   lv_obj_align(lblMapStats, LV_ALIGN_TOP_LEFT, 6, 164);
 
   makePageTitle(pageSystem, "System");
-  lv_obj_set_height(makeActionButton(pageSystem, "Interface", 24, [](lv_event_t*) { showPage(pageSystemInterface); }), 36);
-  lv_obj_set_height(makeActionButton(pageSystem, "Serial Link", 62, [](lv_event_t*) { showPage(pageSystemSerial); }), 36);
-  lv_obj_set_height(makeActionButton(pageSystem, "Radio Stats", 100, [](lv_event_t*) { showPage(pageSystemRadio); }), 36);
-  lv_obj_set_height(makeActionButton(pageSystem, "GPS Stats", 138, [](lv_event_t*) { showPage(pageSystemGps); }), 36);
-  lv_obj_set_height(makeActionButton(pageSystem, "WiFi", 176, [](lv_event_t*) { showPage(pageWifi); }), 36);
-  lv_obj_set_height(makeActionButton(pageSystem, "Battery", 214, [](lv_event_t*) { showPage(pageBattery); }), 36);
+  makeSystemTile(pageSystem, "Interface", 0, 0, [](lv_event_t*) { showPage(pageSystemInterface); });
+  makeSystemTile(pageSystem, "Serial", 1, 0, [](lv_event_t*) { showPage(pageSystemSerial); });
+  makeSystemTile(pageSystem, "Radio", 0, 1, [](lv_event_t*) { showPage(pageSystemRadio); });
+  makeSystemTile(pageSystem, "GPS", 1, 1, [](lv_event_t*) { showPage(pageSystemGps); });
+  makeSystemTile(pageSystem, "WiFi", 0, 2, [](lv_event_t*) { showPage(pageWifi); });
+  makeSystemTile(pageSystem, "Backlight", 1, 2, [](lv_event_t*) { showPage(pageBacklight); });
+  makeSystemTile(pageSystem, "Battery", 0, 3, [](lv_event_t*) { showPage(pageBattery); });
 
   makePageTitle(pageSystemInterface, "Interface");
   lv_obj_t* interfacePanel = makePanel(pageSystemInterface);
@@ -1266,6 +1319,29 @@ static void buildScreenUi() {
   lv_obj_set_style_text_color(lblWifiStats, lv_color_hex(COLOR_TEXT), 0);
   lv_obj_set_width(lblWifiStats, lv_pct(100));
 
+  makePageTitle(pageBacklight, "Backlight");
+  lv_obj_t* backlightPanel = makePanel(pageBacklight);
+  lv_obj_set_size(backlightPanel, SCREEN_W - 12, 150);
+  lv_obj_align(backlightPanel, LV_ALIGN_TOP_MID, 0, 30);
+  lblBacklight = lv_label_create(backlightPanel);
+  lv_label_set_text(lblBacklight, "Brightness: 80%");
+  lv_obj_set_style_text_color(lblBacklight, lv_color_hex(COLOR_TEXT), 0);
+  lv_obj_align(lblBacklight, LV_ALIGN_TOP_LEFT, 2, 4);
+  sliderBacklight = lv_slider_create(backlightPanel);
+  lv_obj_set_size(sliderBacklight, SCREEN_W - 42, 24);
+  lv_obj_align(sliderBacklight, LV_ALIGN_TOP_MID, 0, 54);
+  lv_slider_set_range(sliderBacklight, 10, 100);
+  lv_slider_set_value(sliderBacklight, backlightPercent, LV_ANIM_OFF);
+  lv_obj_set_style_bg_color(sliderBacklight, lv_color_hex(0x16342C), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(sliderBacklight, lv_color_hex(COLOR_ACTION), LV_PART_INDICATOR);
+  lv_obj_set_style_bg_color(sliderBacklight, lv_color_hex(COLOR_TEXT), LV_PART_KNOB);
+  lv_obj_add_event_cb(sliderBacklight, backlightSliderEvent, LV_EVENT_VALUE_CHANGED, nullptr);
+  lv_obj_t* backlightHint = lv_label_create(backlightPanel);
+  lv_label_set_text(backlightHint, "Lower brightness extends battery runtime.");
+  lv_obj_set_style_text_color(backlightHint, lv_color_hex(COLOR_MUTED), 0);
+  lv_obj_set_width(backlightHint, lv_pct(100));
+  lv_obj_align(backlightHint, LV_ALIGN_TOP_LEFT, 2, 96);
+
   makePageTitle(pageBattery, "Battery");
   lv_obj_t* batteryPanel = makePanel(pageBattery);
   lv_obj_set_size(batteryPanel, SCREEN_W - 12, 226);
@@ -1289,8 +1365,7 @@ static void buildScreenUi() {
 }
 
 static void initScreen() {
-  pinMode(TFT_BL, OUTPUT);
-  digitalWrite(TFT_BL, HIGH);
+  initBacklight();
 
   Wire.begin(TOUCH_SDA, TOUCH_SCL);
   pinMode(TOUCH_RST, OUTPUT);
@@ -1823,6 +1898,19 @@ static void refreshScreenUi() {
              (unsigned long)wifiToggleCount,
              wifiEnabled ? "listening" : "stopped");
     lv_label_set_text(lblWifiStats, wifiStatsText);
+  }
+
+  if (sliderBacklight && (uint8_t)lv_slider_get_value(sliderBacklight) != backlightPercent) {
+    lv_slider_set_value(sliderBacklight, backlightPercent, LV_ANIM_OFF);
+  }
+
+  if (lblBacklight) {
+    char backlightText[96];
+    snprintf(backlightText, sizeof(backlightText),
+             "Brightness: %u%%\nPWM: %s",
+             backlightPercent,
+             backlightPwmReady ? "LEDC" : "analog fallback");
+    lv_label_set_text(lblBacklight, backlightText);
   }
 
   if (lblBatteryStats) {
