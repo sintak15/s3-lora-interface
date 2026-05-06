@@ -5,6 +5,7 @@
 #include <Wire.h>
 #include <SD_MMC.h>
 #include <FS.h>
+#include <Preferences.h>
 #include <TFT_eSPI.h>
 #include <lvgl.h>
 #include <TinyGPSPlus.h>
@@ -22,6 +23,10 @@ HardwareSerial SerialGPS(1);
 WebServer server(80);
 TFT_eSPI tft;
 TinyGPSPlus localGps;
+
+static void showPage(lv_obj_t* target, bool remember = true);
+static void styleDarkObject(lv_obj_t* obj, uint32_t bgColor, uint32_t textColor = 0xF4FFF9);
+static void styleDarkBorder(lv_obj_t* obj, uint32_t borderColor);
 
 struct NodeRecord {
   uint32_t num = 0;
@@ -208,6 +213,12 @@ static uint32_t lastLocalGpsByteMs = 0;
 static uint32_t lastLocalGpsFixLogMs = 0;
 static bool localGpsHasFix = false;
 static bool wifiEnabled = true;
+static bool wifiIsApMode = true;
+static char wifiLocalSsid[33] = "";
+static char wifiLocalPass[65] = "";
+static char webuiUser[33] = "sintak";
+static char webuiPass[65] = "Brielle!13";
+static Preferences prefs;
 static uint32_t wifiStartedMs = 0;
 static uint32_t wifiStoppedMs = 0;
 static uint32_t wifiToggleCount = 0;
@@ -235,6 +246,9 @@ static lv_obj_t* pageSystemRadio = nullptr;
 static lv_obj_t* pageSystemGps = nullptr;
 static lv_obj_t* pageWifi = nullptr;
 static lv_obj_t* pageWifiStats = nullptr;
+static lv_obj_t* pageWifiLocal = nullptr;
+static lv_obj_t* pageWifiScan = nullptr;
+static lv_obj_t* listWifiScan = nullptr;
 static lv_obj_t* pageBacklight = nullptr;
 static lv_obj_t* pageBattery = nullptr;
 static lv_obj_t* currentPage = nullptr;
@@ -250,6 +264,9 @@ static lv_obj_t* lblSystemRadio = nullptr;
 static lv_obj_t* lblWifiState = nullptr;
 static lv_obj_t* lblWifiStats = nullptr;
 static lv_obj_t* swWifiEnabled = nullptr;
+static lv_obj_t* swWifiApMode = nullptr;
+static lv_obj_t* taWifiSsid = nullptr;
+static lv_obj_t* taWifiPass = nullptr;
 static lv_obj_t* sliderBacklight = nullptr;
 static lv_obj_t* lblBacklight = nullptr;
 static lv_obj_t* lblBatteryStats = nullptr;
@@ -674,34 +691,93 @@ static void appendLine(char* buffer, size_t bufferSize, const char* line) {
   }
 }
 
-static void startWifiAp() {
-  WiFi.mode(WIFI_AP);
-  bool ok = WiFi.softAP(INTERFACE_AP_SSID, INTERFACE_AP_PASS);
-  if (ok) {
+static void startWifi() {
+  if (wifiIsApMode) {
+    WiFi.mode(WIFI_AP);
+    bool ok = WiFi.softAP(INTERFACE_AP_SSID, INTERFACE_AP_PASS);
+    if (ok) {
+      server.begin();
+      wifiEnabled = true;
+      wifiStartedMs = millis();
+      appendLine(eventLog, LOG_SIZE, "[wifi] AP enabled\n");
+    } else {
+      wifiEnabled = false;
+      appendLine(eventLog, LOG_SIZE, "[wifi] AP start failed\n");
+    }
+  } else {
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(wifiLocalSsid, wifiLocalPass);
     server.begin();
     wifiEnabled = true;
     wifiStartedMs = millis();
-    appendLine(eventLog, LOG_SIZE, "[wifi] AP enabled\n");
-  } else {
-    wifiEnabled = false;
-    appendLine(eventLog, LOG_SIZE, "[wifi] AP start failed\n");
+    appendLine(eventLog, LOG_SIZE, "[wifi] STA started\n");
   }
 }
 
-static void stopWifiAp() {
+static bool wifiScanActive = false;
+
+static void startWifiScan() {
+  if (wifiScanActive) return;
+  wifiScanActive = true;
+  if (listWifiScan) lv_obj_clean(listWifiScan);
+  lv_obj_t* lbl = lv_label_create(listWifiScan);
+  lv_label_set_text(lbl, "Scanning...");
+  showPage(pageWifiScan);
+  WiFi.scanNetworks(true); // async
+}
+
+static void pollWifiScan() {
+  if (!wifiScanActive) return;
+  int16_t status = WiFi.scanComplete();
+  if (status == WIFI_SCAN_RUNNING) return;
+  
+  wifiScanActive = false;
+  if (listWifiScan) lv_obj_clean(listWifiScan);
+  if (status == WIFI_SCAN_FAILED || status == 0) {
+    lv_obj_t* lbl = lv_label_create(listWifiScan);
+    lv_label_set_text(lbl, status == 0 ? "No networks found" : "Scan failed");
+  } else {
+    for (int i = 0; i < status; ++i) {
+      String ssid = WiFi.SSID(i);
+      lv_obj_t* btn = lv_btn_create(listWifiScan);
+      lv_obj_set_size(btn, lv_pct(100), 44);
+      styleDarkObject(btn, COLOR_PANEL);
+      styleDarkBorder(btn, 0x2F705F);
+      lv_obj_t* blbl = lv_label_create(btn);
+      lv_label_set_text(blbl, ssid.c_str());
+      lv_obj_center(blbl);
+      
+      lv_obj_add_event_cb(btn, [](lv_event_t* e) {
+        lv_obj_t* target = lv_event_get_target(e);
+        lv_obj_t* label = lv_obj_get_child(target, 0);
+        if (label && taWifiSsid) {
+           lv_textarea_set_text(taWifiSsid, lv_label_get_text(label));
+        }
+        showPage(pageWifiLocal);
+      }, LV_EVENT_CLICKED, nullptr);
+    }
+    WiFi.scanDelete();
+  }
+}
+
+static void stopWifi() {
   server.stop();
-  WiFi.softAPdisconnect(true);
+  if (wifiIsApMode) {
+    WiFi.softAPdisconnect(true);
+  } else {
+    WiFi.disconnect(true);
+  }
   WiFi.mode(WIFI_OFF);
   wifiEnabled = false;
   wifiStoppedMs = millis();
-  appendLine(eventLog, LOG_SIZE, "[wifi] AP disabled\n");
+  appendLine(eventLog, LOG_SIZE, "[wifi] Disabled\n");
 }
 
 static void setWifiEnabled(bool enabled) {
   if (enabled == wifiEnabled) return;
   wifiToggleCount++;
-  if (enabled) startWifiAp();
-  else stopWifiAp();
+  if (enabled) startWifi();
+  else stopWifi();
 }
 
 static void applyBacklight() {
@@ -777,7 +853,7 @@ static void lvTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
   }
 }
 
-static void styleDarkObject(lv_obj_t* obj, uint32_t bg, uint32_t text = COLOR_TEXT) {
+static void styleDarkObject(lv_obj_t* obj, uint32_t bg, uint32_t text) {
   lv_obj_set_style_bg_color(obj, lv_color_hex(bg), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_text_color(obj, lv_color_hex(text), LV_PART_MAIN);
@@ -843,13 +919,13 @@ static void buildStatusBar(lv_obj_t* screen) {
   lv_obj_align(lblBatteryStatus, LV_ALIGN_RIGHT_MID, 0, 0);
 }
 
-static void showPage(lv_obj_t* target, bool remember = true) {
+static void showPage(lv_obj_t* target, bool remember) {
   if (!target) return;
   if (remember && currentPage && currentPage != target) previousPage = currentPage;
   lv_obj_t* pages[] = {
     pageLauncher, pageLora, pagePublicChat, pagePrivateChat, pageGps,
     pageSystem, pageSystemInterface, pageSystemSerial, pageSystemRadio, pageSystemGps,
-    pageWifi, pageWifiStats, pageBacklight, pageBattery
+    pageWifi, pageWifiStats, pageWifiLocal, pageWifiScan, pageBacklight, pageBattery
   };
   for (lv_obj_t* page : pages) {
     if (!page) continue;
@@ -1116,6 +1192,8 @@ static void buildScreenUi() {
   pageSystemGps = makePage(screen);
   pageWifi = makePage(screen);
   pageWifiStats = makePage(screen);
+  pageWifiLocal = makePage(screen);
+  pageWifiScan = makePage(screen);
   pageBacklight = makePage(screen);
   pageBattery = makePage(screen);
 
@@ -1291,10 +1369,11 @@ static void buildScreenUi() {
 
   makePageTitle(pageWifi, "WiFi");
   lv_obj_t* wifiPanel = makePanel(pageWifi);
-  lv_obj_set_size(wifiPanel, SCREEN_W - 12, 112);
+  lv_obj_set_size(wifiPanel, SCREEN_W - 12, 140);
   lv_obj_align(wifiPanel, LV_ALIGN_TOP_MID, 0, 26);
+  
   lv_obj_t* wifiToggleLabel = lv_label_create(wifiPanel);
-  lv_label_set_text(wifiToggleLabel, "Access point");
+  lv_label_set_text(wifiToggleLabel, "Enable WiFi");
   lv_obj_set_style_text_color(wifiToggleLabel, lv_color_hex(COLOR_TEXT), 0);
   lv_obj_align(wifiToggleLabel, LV_ALIGN_TOP_LEFT, 2, 4);
   swWifiEnabled = lv_switch_create(wifiPanel);
@@ -1303,12 +1382,83 @@ static void buildScreenUi() {
   lv_obj_add_event_cb(swWifiEnabled, [](lv_event_t* e) {
     setWifiEnabled(lv_obj_has_state((lv_obj_t*)lv_event_get_target(e), LV_STATE_CHECKED));
   }, LV_EVENT_VALUE_CHANGED, nullptr);
+
+  lv_obj_t* apModeLabel = lv_label_create(wifiPanel);
+  lv_label_set_text(apModeLabel, "Access Point Mode");
+  lv_obj_set_style_text_color(apModeLabel, lv_color_hex(COLOR_TEXT), 0);
+  lv_obj_align(apModeLabel, LV_ALIGN_TOP_LEFT, 2, 44);
+  swWifiApMode = lv_switch_create(wifiPanel);
+  lv_obj_align(swWifiApMode, LV_ALIGN_TOP_RIGHT, -2, 40);
+  if (wifiIsApMode) lv_obj_add_state(swWifiApMode, LV_STATE_CHECKED);
+  lv_obj_add_event_cb(swWifiApMode, [](lv_event_t* e) {
+    wifiIsApMode = lv_obj_has_state((lv_obj_t*)lv_event_get_target(e), LV_STATE_CHECKED);
+    prefs.putBool("wifiIsApMode", wifiIsApMode);
+    if (wifiEnabled) { stopWifi(); startWifi(); }
+  }, LV_EVENT_VALUE_CHANGED, nullptr);
+
   lblWifiState = lv_label_create(wifiPanel);
   lv_label_set_text(lblWifiState, "WiFi starting...");
   lv_obj_set_style_text_color(lblWifiState, lv_color_hex(COLOR_MUTED), 0);
   lv_obj_set_width(lblWifiState, lv_pct(100));
-  lv_obj_align(lblWifiState, LV_ALIGN_TOP_LEFT, 2, 44);
-  makeActionButton(pageWifi, "WiFi Stats", 158, [](lv_event_t*) { showPage(pageWifiStats); });
+  lv_obj_align(lblWifiState, LV_ALIGN_TOP_LEFT, 2, 84);
+  makeActionButton(pageWifi, "WiFi Stats", 176, [](lv_event_t*) { showPage(pageWifiStats); });
+  makeActionButton(pageWifi, "Local Network", 228, [](lv_event_t*) { showPage(pageWifiLocal); });
+
+  makePageTitle(pageWifiScan, "Scan Networks");
+  listWifiScan = lv_list_create(pageWifiScan);
+  lv_obj_set_size(listWifiScan, SCREEN_W - 12, 226);
+  lv_obj_align(listWifiScan, LV_ALIGN_TOP_MID, 0, 24);
+  styleDarkObject(listWifiScan, COLOR_PANEL);
+
+  makePageTitle(pageWifiLocal, "Local Network");
+  lv_obj_t* localWifiPanel = makePanel(pageWifiLocal);
+  lv_obj_set_size(localWifiPanel, SCREEN_W - 12, 140);
+  lv_obj_align(localWifiPanel, LV_ALIGN_TOP_MID, 0, 24);
+
+  taWifiSsid = lv_textarea_create(localWifiPanel);
+  lv_obj_set_size(taWifiSsid, SCREEN_W - 40, 36);
+  lv_obj_align(taWifiSsid, LV_ALIGN_TOP_MID, 0, 6);
+  styleDarkTextArea(taWifiSsid);
+  lv_textarea_set_one_line(taWifiSsid, true);
+  lv_textarea_set_max_length(taWifiSsid, 32);
+  lv_textarea_set_placeholder_text(taWifiSsid, "SSID");
+  lv_textarea_set_text(taWifiSsid, wifiLocalSsid);
+  lv_obj_add_event_cb(taWifiSsid, inputEvent, LV_EVENT_ALL, nullptr);
+
+  taWifiPass = lv_textarea_create(localWifiPanel);
+  lv_obj_set_size(taWifiPass, SCREEN_W - 40, 36);
+  lv_obj_align(taWifiPass, LV_ALIGN_TOP_MID, 0, 50);
+  styleDarkTextArea(taWifiPass);
+  lv_textarea_set_one_line(taWifiPass, true);
+  lv_textarea_set_max_length(taWifiPass, 64);
+  lv_textarea_set_password_mode(taWifiPass, true);
+  lv_textarea_set_placeholder_text(taWifiPass, "Password");
+  lv_textarea_set_text(taWifiPass, wifiLocalPass);
+  lv_obj_add_event_cb(taWifiPass, inputEvent, LV_EVENT_ALL, nullptr);
+
+  lv_obj_t* btnScanWifi = lv_btn_create(localWifiPanel);
+  lv_obj_set_size(btnScanWifi, 80, 36);
+  lv_obj_align(btnScanWifi, LV_ALIGN_TOP_LEFT, 4, 94);
+  styleDarkObject(btnScanWifi, 0x2F705F, 0xFFFFFF);
+  lv_obj_t* lblScanWifi = lv_label_create(btnScanWifi);
+  lv_label_set_text(lblScanWifi, "Scan");
+  lv_obj_center(lblScanWifi);
+  lv_obj_add_event_cb(btnScanWifi, [](lv_event_t*) { startWifiScan(); }, LV_EVENT_CLICKED, nullptr);
+
+  lv_obj_t* btnSaveWifi = lv_btn_create(localWifiPanel);
+  lv_obj_set_size(btnSaveWifi, 80, 36);
+  lv_obj_align(btnSaveWifi, LV_ALIGN_TOP_RIGHT, -4, 94);
+  styleDarkObject(btnSaveWifi, COLOR_ACTION, 0x001B12);
+  lv_obj_t* lblSaveWifi = lv_label_create(btnSaveWifi);
+  lv_label_set_text(lblSaveWifi, "Save");
+  lv_obj_center(lblSaveWifi);
+  lv_obj_add_event_cb(btnSaveWifi, [](lv_event_t*) {
+    strlcpy(wifiLocalSsid, lv_textarea_get_text(taWifiSsid), sizeof(wifiLocalSsid));
+    strlcpy(wifiLocalPass, lv_textarea_get_text(taWifiPass), sizeof(wifiLocalPass));
+    prefs.putString("wifiLocalSsid", wifiLocalSsid);
+    prefs.putString("wifiLocalPass", wifiLocalPass);
+    if (!wifiIsApMode && wifiEnabled) { stopWifi(); startWifi(); }
+  }, LV_EVENT_CLICKED, nullptr);
 
   makePageTitle(pageWifiStats, "WiFi Stats");
   lv_obj_t* wifiStatsPanel = makePanel(pageWifiStats);
@@ -1879,7 +2029,7 @@ static void refreshScreenUi() {
 
     char wifiStatsText[520];
     snprintf(wifiStatsText, sizeof(wifiStatsText),
-             "Access point\n"
+             "%s mode\n"
              "State: %s\n"
              "SSID: %s\n"
              "IP: %s\n"
@@ -1892,11 +2042,12 @@ static void refreshScreenUi() {
              "Web server\n"
              "State: %s\n"
              "Port: 80",
+             wifiIsApMode ? "Access point" : "Station",
              wifiEnabled ? "on" : "off",
-             wifiEnabled ? INTERFACE_AP_SSID : "-",
-             wifiEnabled ? WiFi.softAPIP().toString().c_str() : "-",
-             wifiEnabled ? WiFi.softAPmacAddress().c_str() : "-",
-             wifiEnabled ? WiFi.softAPgetStationNum() : 0,
+             wifiEnabled ? (wifiIsApMode ? INTERFACE_AP_SSID : wifiLocalSsid) : "-",
+             wifiEnabled ? (wifiIsApMode ? WiFi.softAPIP().toString().c_str() : WiFi.localIP().toString().c_str()) : "-",
+             wifiEnabled ? (wifiIsApMode ? WiFi.softAPmacAddress().c_str() : WiFi.macAddress().c_str()) : "-",
+             wifiEnabled ? (wifiIsApMode ? WiFi.softAPgetStationNum() : 0) : 0,
              wifiEnabled ? WiFi.channel() : 0,
              wifiEnabled ? "On" : "Off",
              (unsigned long)wifiAge,
@@ -2533,7 +2684,17 @@ static String jsonEscape(const char* text) {
   return out;
 }
 
+static bool checkAuth() {
+  if (wifiIsApMode) return true;
+  if (!server.authenticate(webuiUser, webuiPass)) {
+    server.requestAuthentication();
+    return false;
+  }
+  return true;
+}
+
 static void handleStatus() {
+  if (!checkAuth()) return;
   sampleLocalBattery();
   refreshSdUsage();
   char rxAge[32];
@@ -2617,6 +2778,7 @@ static void handleStatus() {
 }
 
 static void handleSdDownload(const char* path, const char* downloadName, const char* contentType) {
+  if (!checkAuth()) return;
   if (!sdStorage.available) {
     server.send(503, "text/plain", "SD card not available");
     return;
@@ -2645,6 +2807,7 @@ static void handleSend() {
 }
 
 static void handleSerialCmd() {
+  if (!checkAuth()) return;
   if (!server.hasArg("cmd")) {
     server.send(400, "text/plain", "missing cmd");
     return;
@@ -2739,12 +2902,25 @@ void setup() {
     bool ok = sendConfigRequest();
     server.send(ok ? 200 : 500, "text/plain", ok ? "requested" : "request failed");
   });
-  startWifiAp();
+
+  prefs.begin("s3-lora", false);
+  wifiIsApMode = prefs.getBool("wifiIsApMode", true);
+  String savedSsid = prefs.getString("wifiLocalSsid", "");
+  String savedPass = prefs.getString("wifiLocalPass", "");
+  String savedWebUser = prefs.getString("webuiUser", "sintak");
+  String savedWebPass = prefs.getString("webuiPass", "Brielle!13");
+  strncpy(wifiLocalSsid, savedSsid.c_str(), sizeof(wifiLocalSsid) - 1);
+  strncpy(wifiLocalPass, savedPass.c_str(), sizeof(wifiLocalPass) - 1);
+  strncpy(webuiUser, savedWebUser.c_str(), sizeof(webuiUser) - 1);
+  strncpy(webuiPass, savedWebPass.c_str(), sizeof(webuiPass) - 1);
+
+  startWifi();
 
   char line[128];
-  snprintf(line, sizeof(line), "[boot] AP %s at %s\n",
-           wifiEnabled ? INTERFACE_AP_SSID : "off",
-           wifiEnabled ? WiFi.softAPIP().toString().c_str() : "0.0.0.0");
+  snprintf(line, sizeof(line), "[boot] %s %s at %s\n",
+           wifiEnabled ? (wifiIsApMode ? "AP" : "STA") : "off",
+           wifiEnabled ? (wifiIsApMode ? INTERFACE_AP_SSID : wifiLocalSsid) : "",
+           wifiEnabled ? (wifiIsApMode ? WiFi.softAPIP().toString().c_str() : WiFi.localIP().toString().c_str()) : "0.0.0.0");
   appendLine(eventLog, LOG_SIZE, line);
   sendConfigRequest();
 }
@@ -2752,6 +2928,7 @@ void setup() {
 void loop() {
   pollLocalGps();
   pollLoRa();
+  pollWifiScan();
   serviceConfigRequests();
   if (wifiEnabled) server.handleClient();
   serviceScreen();
