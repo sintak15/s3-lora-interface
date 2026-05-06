@@ -1365,8 +1365,6 @@ static void buildScreenUi() {
 }
 
 static void initScreen() {
-  initBacklight();
-
   Wire.begin(TOUCH_SDA, TOUCH_SCL);
   pinMode(TOUCH_RST, OUTPUT);
   digitalWrite(TOUCH_RST, LOW);
@@ -1378,6 +1376,8 @@ static void initScreen() {
   tft.setRotation(0);
   tft.invertDisplay(true);
   tft.fillScreen(TFT_BLACK);
+
+  initBacklight();
 
   lv_init();
   lv_disp_draw_buf_init(&drawBuf, lvBuf1, lvBuf2, SCREEN_W * 24);
@@ -1744,7 +1744,12 @@ static void refreshScreenUi() {
   refreshSdUsage();
 
   char status[48];
-  snprintf(status, sizeof(status), "%lu frames", (unsigned long)framesDecoded);
+  if (localGps.time.isValid()) {
+    int cdtHour = (localGps.time.hour() + 19) % 24;
+    snprintf(status, sizeof(status), "%02d:%02d CDT", cdtHour, localGps.time.minute());
+  } else {
+    snprintf(status, sizeof(status), "Wait GPS");
+  }
   lv_label_set_text(lblStatus, status);
 
   if (lblBatteryStatus) {
@@ -2639,6 +2644,16 @@ static void handleSend() {
   server.send(ok ? 200 : 500, "text/plain", ok ? "sent" : "send failed");
 }
 
+static void handleSerialCmd() {
+  if (!server.hasArg("cmd")) {
+    server.send(400, "text/plain", "missing cmd");
+    return;
+  }
+  String cmd = server.arg("cmd") + "\n";
+  SerialLoRa.write((const uint8_t*)cmd.c_str(), cmd.length());
+  server.send(200, "text/plain", "sent");
+}
+
 static void handleRoot() {
   server.send(200, "text/html", R"HTML(
 <!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -2669,7 +2684,7 @@ canvas{width:100%;height:260px;background:#07100d;border:1px solid #24483e;borde
 <section><h2>Map</h2><div id="realMap"></div><canvas id="mapFallback" class="hidden" width="640" height="360"></canvas><div class="mapMeta" id="mapMeta"></div></section>
 <section><h2>SD Storage</h2><div class="stats" id="storage"></div><button onclick="mountSd()">Mount SD</button><div class="links"><a href="/sd/events">Events</a><a href="/sd/public">Public Chat</a><a href="/sd/private">Private Chat</a><a href="/sd/positions">Positions CSV</a><a href="/sd/mapcache">Map Cache</a><a href="/sd/last-location">Last GPS</a></div></section>
 <section><h2>Nodes</h2><table><thead><tr><th>Node</th><th>Name</th><th>SNR</th><th>Age</th><th>GPS</th></tr></thead><tbody id="nodes"></tbody></table></section>
-<section><h2>Serial Link</h2><pre id="serial"></pre></section>
+<section><h2>Serial Link</h2><input id="cmd" placeholder="Serial command"><button onclick="sendCmd()">Send Command</button><pre id="serial" style="margin-top:6px"></pre></section>
 <section><h2>Event Log</h2><pre id="log"></pre></section>
 </main><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script>
 let leafletMap=null,markers={},realMapReady=false;
@@ -2685,6 +2700,7 @@ nodes.innerHTML=s.nodes.map(n=>`<tr><td>${n.num}</td><td>${n.name}</td><td>${n.s
 drawMap(s);
 }
 async function send(){const m=msg.value.trim();if(!m)return;await fetch('/send',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'msg='+encodeURIComponent(m)});msg.value='';refresh();}
+async function sendCmd(){const c=cmd.value.trim();if(!c)return;await fetch('/serial_cmd',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'cmd='+encodeURIComponent(c)});cmd.value='';refresh();}
 async function mountSd(){await fetch('/sd/mount',{method:'POST'});refresh();}
 function formatBytes(kb){if(!kb)return'0 KB';return kb>=1024?Math.ceil(kb/1024)+' MB':kb+' KB';}
 function drawMap(s){initRealMap();const pts=s.nodes.filter(n=>n.hasPosition);if(realMapReady){realMap.classList.remove('hidden');mapFallback.classList.add('hidden');drawRealMap(s,pts);return}realMap.classList.add('hidden');mapFallback.classList.remove('hidden');drawFallbackMap(s,pts);}
@@ -2708,6 +2724,7 @@ void setup() {
   server.on("/", HTTP_GET, handleRoot);
   server.on("/status", HTTP_GET, handleStatus);
   server.on("/send", HTTP_POST, handleSend);
+  server.on("/serial_cmd", HTTP_POST, handleSerialCmd);
   server.on("/sd/events", HTTP_GET, []() { handleSdDownload(SD_EVENTS_PATH, "events.log", "text/plain"); });
   server.on("/sd/public", HTTP_GET, []() { handleSdDownload(SD_PUBLIC_CHAT_PATH, "public_chat.log", "text/plain"); });
   server.on("/sd/private", HTTP_GET, []() { handleSdDownload(SD_PRIVATE_CHAT_PATH, "private_chat.log", "text/plain"); });
