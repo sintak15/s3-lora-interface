@@ -2,6 +2,8 @@
 #include <limits.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include <Preferences.h>
+#include <esp_wifi.h>
 #include <Wire.h>
 #include <SD_MMC.h>
 #include <FS.h>
@@ -12,6 +14,7 @@
 #include <pb_encode.h>
 
 #include "constants.h"
+#include "src/meshtastic/admin.pb.h"
 #include "src/meshtastic/mesh.pb.h"
 #include "src/meshtastic/telemetry.pb.h"
 #include "src/meshtastic/portnums.pb.h"
@@ -20,6 +23,7 @@
 HardwareSerial SerialLoRa(2);
 HardwareSerial SerialGPS(1);
 WebServer server(80);
+Preferences prefs;
 TFT_eSPI tft;
 TinyGPSPlus localGps;
 
@@ -38,6 +42,7 @@ struct NodeRecord {
 struct ChannelRecord {
   int8_t index = -1;
   char name[12] = "";
+  char role[16] = "";
   bool enabled = false;
 };
 
@@ -160,6 +165,8 @@ static const char* SD_PRIVATE_CHAT_PATH = "/s3-lora/private_chat.log";
 static const char* SD_POSITIONS_PATH = "/s3-lora/positions.csv";
 static const char* SD_MAP_CACHE_PATH = "/s3-lora/map_cache.bin";
 static const char* SD_LAST_LOCATION_PATH = "/s3-lora/last_location.txt";
+static const char* WEBUI_USER = "sintak";
+static const char* WEBUI_PASS = "Brielle!13";
 static constexpr uint32_t COLOR_BG = 0x050807;
 static constexpr uint32_t COLOR_PANEL = 0x101816;
 static constexpr uint32_t COLOR_INPUT = 0x07100D;
@@ -208,6 +215,22 @@ static uint32_t lastLocalGpsByteMs = 0;
 static uint32_t lastLocalGpsFixLogMs = 0;
 static bool localGpsHasFix = false;
 static bool wifiEnabled = true;
+static bool wifiApMode = true;
+static bool wifiScanActive = false;
+static bool wifiScanRequested = false;
+static bool wifiScanStoppedWifi = false;
+static uint32_t wifiScanRequestedMs = 0;
+static uint32_t wifiScanStartedMs = 0;
+static esp_err_t wifiScanStartResult = ESP_OK;
+static volatile bool wifiScanTaskRunning = false;
+static volatile bool wifiScanTaskDone = false;
+static volatile int16_t wifiScanTaskStatus = WIFI_SCAN_FAILED;
+static char wifiLocalSsid[33] = "SOB";
+static char wifiLocalPass[65] = "CestLaVie629!";
+static constexpr size_t WIFI_SCAN_MAX_RESULTS = 16;
+static char wifiScanSsids[WIFI_SCAN_MAX_RESULTS][33];
+static int32_t wifiScanRssi[WIFI_SCAN_MAX_RESULTS];
+static size_t wifiScanResultCount = 0;
 static uint32_t wifiStartedMs = 0;
 static uint32_t wifiStoppedMs = 0;
 static uint32_t wifiToggleCount = 0;
@@ -235,24 +258,8 @@ static lv_obj_t* pageSystemRadio = nullptr;
 static lv_obj_t* pageSystemGps = nullptr;
 static lv_obj_t* pageWifi = nullptr;
 static lv_obj_t* pageWifiStats = nullptr;
-<<<<<<< HEAD
 static lv_obj_t* pageWifiLocal = nullptr;
 static lv_obj_t* pageWifiScan = nullptr;
-static lv_obj_t* listWifiScan = nullptr;
-<<<<<<< HEAD
-static lv_obj_t* lblWifiScanStatus = nullptr;
-static lv_obj_t* lblWifiScanChoice = nullptr;
-static lv_obj_t* btnWifiScanPrev = nullptr;
-static lv_obj_t* btnWifiScanNext = nullptr;
-static lv_obj_t* btnWifiScanSelect = nullptr;
-static constexpr size_t WIFI_SCAN_MAX_RESULTS = 16;
-static char wifiScanSsids[WIFI_SCAN_MAX_RESULTS][33];
-static size_t wifiScanResultCount = 0;
-static size_t wifiScanSelectedIndex = 0;
-=======
->>>>>>> parent of e15b6d0 (Add configurable WiFi (AP/STA) UI & persistence)
-=======
->>>>>>> parent of 52b1028 (Add WiFi scan UI and optimize UI updates)
 static lv_obj_t* pageBacklight = nullptr;
 static lv_obj_t* pageBattery = nullptr;
 static lv_obj_t* currentPage = nullptr;
@@ -267,17 +274,12 @@ static lv_obj_t* lblSystemSerial = nullptr;
 static lv_obj_t* lblSystemRadio = nullptr;
 static lv_obj_t* lblWifiState = nullptr;
 static lv_obj_t* lblWifiStats = nullptr;
+static lv_obj_t* lblWifiScanStatus = nullptr;
 static lv_obj_t* swWifiEnabled = nullptr;
-<<<<<<< HEAD
 static lv_obj_t* swWifiApMode = nullptr;
 static lv_obj_t* taWifiSsid = nullptr;
 static lv_obj_t* taWifiPass = nullptr;
-<<<<<<< HEAD
-static lv_obj_t* btnWifiSave = nullptr;
-=======
->>>>>>> parent of e15b6d0 (Add configurable WiFi (AP/STA) UI & persistence)
-=======
->>>>>>> parent of 52b1028 (Add WiFi scan UI and optimize UI updates)
+static lv_obj_t* listWifiScan = nullptr;
 static lv_obj_t* sliderBacklight = nullptr;
 static lv_obj_t* lblBacklight = nullptr;
 static lv_obj_t* lblBatteryStats = nullptr;
@@ -300,6 +302,11 @@ static lv_obj_t* keyboardPrompt = nullptr;
 static lv_obj_t* keyboardText = nullptr;
 static lv_obj_t* landscapeKeyboard = nullptr;
 static bool landscapeKeyboardOpen = false;
+static bool landscapeKeyboardSendsMessage = true;
+static bool wifiLocalPageBuilt = false;
+static bool wifiScanPageBuilt = false;
+static uint8_t deferredWifiAction = 0;
+static uint32_t deferredWifiActionMs = 0;
 static uint32_t lastUiRefreshMs = 0;
 static uint32_t lastSerialDiagMs = 0;
 static uint32_t lastSdDiagMs = 0;
@@ -327,6 +334,10 @@ static void appendLine(char* buffer, size_t bufferSize, const char* line);
 static void refreshMapUi();
 static void loadMapCacheFromSd();
 static void refreshChatViews();
+static void styleDarkObject(lv_obj_t* obj, uint32_t bg, uint32_t text = COLOR_TEXT);
+static void styleDarkBorder(lv_obj_t* obj, uint32_t color = COLOR_BORDER);
+static void showPage(lv_obj_t* target, bool remember = true);
+static void ensureWifiScanPage();
 
 static void loadSdTextTail(const char* path, char* buffer, size_t bufferSize) {
   if (!sdStorage.available || !path || !buffer || bufferSize == 0 || !SD_MMC.exists(path)) return;
@@ -702,60 +713,6 @@ static void appendLine(char* buffer, size_t bufferSize, const char* line) {
   }
 }
 
-<<<<<<< HEAD
-static void startWifi() {
-  if (wifiIsApMode) {
-    WiFi.mode(WIFI_AP);
-    bool ok = WiFi.softAP(INTERFACE_AP_SSID, INTERFACE_AP_PASS);
-    if (ok) {
-      server.begin();
-      wifiEnabled = true;
-      wifiStartedMs = millis();
-      appendLine(eventLog, LOG_SIZE, "[wifi] AP enabled\n");
-    } else {
-      wifiEnabled = false;
-      appendLine(eventLog, LOG_SIZE, "[wifi] AP start failed\n");
-    }
-  } else {
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(wifiLocalSsid, wifiLocalPass);
-    server.begin();
-    wifiEnabled = true;
-    wifiStartedMs = millis();
-    appendLine(eventLog, LOG_SIZE, "[wifi] STA started\n");
-  }
-}
-
-static bool wifiScanActive = false;
-
-static void startWifiScan() {
-  if (wifiScanActive) return;
-  wifiScanActive = true;
-  if (listWifiScan) lv_obj_clean(listWifiScan);
-  lv_obj_t* lbl = lv_label_create(listWifiScan);
-  lv_label_set_text(lbl, "Scanning...");
-  showPage(pageWifiScan);
-  WiFi.scanNetworks(true); // async
-}
-
-static void pollWifiScan() {
-<<<<<<< HEAD
-  if (wifiScanPending) {
-    if (millis() - wifiScanStartedMs < 250) return;
-    wifiScanPending = false;
-    wifiScanActive = true;
-    wifiScanStartedMs = millis();
-    lastWifiScanStatusMs = 0;
-    WiFi.scanDelete();
-    int16_t started = WiFi.scanNetworks(true, false, false, 250);
-    Serial.printf("[wifi] scan started status=%d\n", started);
-    if (started != WIFI_SCAN_RUNNING) {
-      wifiScanStatus = started;
-      renderWifiScanResults(wifiScanStatus);
-      wifiScanActive = false;
-    }
-    return;
-=======
 static void startWifiAp() {
   WiFi.mode(WIFI_AP);
   bool ok = WiFi.softAP(INTERFACE_AP_SSID, INTERFACE_AP_PASS);
@@ -767,58 +724,283 @@ static void startWifiAp() {
   } else {
     wifiEnabled = false;
     appendLine(eventLog, LOG_SIZE, "[wifi] AP start failed\n");
->>>>>>> parent of e15b6d0 (Add configurable WiFi (AP/STA) UI & persistence)
-  }
-
-=======
->>>>>>> parent of 52b1028 (Add WiFi scan UI and optimize UI updates)
-  if (!wifiScanActive) return;
-  int16_t status = WiFi.scanComplete();
-  if (status == WIFI_SCAN_RUNNING) return;
-  
-  wifiScanActive = false;
-  if (listWifiScan) lv_obj_clean(listWifiScan);
-  if (status == WIFI_SCAN_FAILED || status == 0) {
-    lv_obj_t* lbl = lv_label_create(listWifiScan);
-    lv_label_set_text(lbl, status == 0 ? "No networks found" : "Scan failed");
-  } else {
-    for (int i = 0; i < status; ++i) {
-      String ssid = WiFi.SSID(i);
-      lv_obj_t* btn = lv_btn_create(listWifiScan);
-      lv_obj_set_size(btn, lv_pct(100), 44);
-      styleDarkObject(btn, COLOR_PANEL);
-      styleDarkBorder(btn, 0x2F705F);
-      lv_obj_t* blbl = lv_label_create(btn);
-      lv_label_set_text(blbl, ssid.c_str());
-      lv_obj_center(blbl);
-      
-      lv_obj_add_event_cb(btn, [](lv_event_t* e) {
-        lv_obj_t* target = lv_event_get_target(e);
-        lv_obj_t* label = lv_obj_get_child(target, 0);
-        if (label && taWifiSsid) {
-           lv_textarea_set_text(taWifiSsid, lv_label_get_text(label));
-        }
-        showPage(pageWifiLocal);
-      }, LV_EVENT_CLICKED, nullptr);
-    }
-    WiFi.scanDelete();
   }
 }
 
-static void stopWifiAp() {
+static void startWifiLocal() {
+  if (!wifiLocalSsid[0]) {
+    wifiEnabled = false;
+    appendLine(eventLog, LOG_SIZE, "[wifi] Local SSID not set\n");
+    return;
+  }
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(wifiLocalSsid, wifiLocalPass);
+  server.begin();
+  wifiEnabled = true;
+  wifiStartedMs = millis();
+  appendLine(eventLog, LOG_SIZE, "[wifi] Local WiFi connecting\n");
+}
+
+static void startWifi() {
+  if (wifiApMode) startWifiAp();
+  else startWifiLocal();
+}
+
+static void stopWifi() {
   server.stop();
   WiFi.softAPdisconnect(true);
+  WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
   wifiEnabled = false;
   wifiStoppedMs = millis();
-  appendLine(eventLog, LOG_SIZE, "[wifi] AP disabled\n");
+  wifiScanActive = false;
+  wifiScanRequested = false;
+  appendLine(eventLog, LOG_SIZE, "[wifi] radio disabled\n");
 }
 
 static void setWifiEnabled(bool enabled) {
   if (enabled == wifiEnabled) return;
   wifiToggleCount++;
-  if (enabled) startWifiAp();
-  else stopWifiAp();
+  if (enabled) startWifi();
+  else stopWifi();
+}
+
+static void setWifiApMode(bool apMode) {
+  if (wifiApMode == apMode) return;
+  bool wasEnabled = wifiEnabled;
+  if (wasEnabled) stopWifi();
+  wifiApMode = apMode;
+  prefs.putBool("wifiApMode", wifiApMode);
+  appendLine(eventLog, LOG_SIZE, wifiApMode ? "[wifi] mode set to AP\n" : "[wifi] mode set to Local\n");
+  if (wasEnabled) startWifi();
+}
+
+static void saveWifiCredentials() {
+  if (taWifiSsid) strlcpy(wifiLocalSsid, lv_textarea_get_text(taWifiSsid), sizeof(wifiLocalSsid));
+  if (taWifiPass) strlcpy(wifiLocalPass, lv_textarea_get_text(taWifiPass), sizeof(wifiLocalPass));
+  prefs.putString("wifiSsid", wifiLocalSsid);
+  prefs.putString("wifiPass", wifiLocalPass);
+  appendLine(eventLog, LOG_SIZE, "[wifi] Local credentials saved\n");
+  if (wifiEnabled && !wifiApMode) {
+    stopWifi();
+    startWifi();
+  }
+}
+
+static void renderWifiScanResults(int16_t status) {
+  if (!listWifiScan) return;
+  lv_obj_clean(listWifiScan);
+  wifiScanResultCount = 0;
+  if (status == WIFI_SCAN_RUNNING) {
+    if (lblWifiScanStatus) lv_label_set_text(lblWifiScanStatus, "Scanning...");
+    return;
+  }
+  if (status == WIFI_SCAN_FAILED || status <= 0) {
+    if (lblWifiScanStatus) lv_label_set_text(lblWifiScanStatus, status == 0 ? "No networks found" : "Scan failed");
+    return;
+  }
+
+  wifiScanResultCount = min((size_t)status, WIFI_SCAN_MAX_RESULTS);
+  if (lblWifiScanStatus) {
+    char statusText[48];
+    snprintf(statusText, sizeof(statusText), "%u network%s", (unsigned)wifiScanResultCount, wifiScanResultCount == 1 ? "" : "s");
+    lv_label_set_text(lblWifiScanStatus, statusText);
+  }
+  for (size_t i = 0; i < wifiScanResultCount; i++) {
+    strlcpy(wifiScanSsids[i], WiFi.SSID(i).c_str(), sizeof(wifiScanSsids[i]));
+    wifiScanRssi[i] = WiFi.RSSI(i);
+    lv_obj_t* btn = lv_btn_create(listWifiScan);
+    lv_obj_set_size(btn, lv_pct(100), 42);
+    styleDarkObject(btn, COLOR_PANEL);
+    styleDarkBorder(btn, 0x2F705F);
+    lv_obj_t* label = lv_label_create(btn);
+    char itemText[64];
+    snprintf(itemText, sizeof(itemText), "%s  %ld dBm", wifiScanSsids[i], (long)wifiScanRssi[i]);
+    lv_label_set_text(label, itemText);
+    lv_obj_center(label);
+    lv_obj_add_event_cb(btn, [](lv_event_t* e) {
+      size_t index = (size_t)lv_event_get_user_data(e);
+      if (index >= wifiScanResultCount) return;
+      if (taWifiSsid) lv_textarea_set_text(taWifiSsid, wifiScanSsids[index]);
+      setWifiApMode(false);
+      showPage(pageWifiLocal);
+    }, LV_EVENT_CLICKED, (void*)i);
+  }
+  WiFi.scanDelete();
+}
+
+static void renderIdfWifiScanResults(uint16_t count) {
+  if (!listWifiScan) return;
+  lv_obj_clean(listWifiScan);
+  wifiScanResultCount = min((size_t)count, WIFI_SCAN_MAX_RESULTS);
+  if (wifiScanResultCount == 0) {
+    if (lblWifiScanStatus) lv_label_set_text(lblWifiScanStatus, "No networks found");
+    return;
+  }
+
+  wifi_ap_record_t records[WIFI_SCAN_MAX_RESULTS] = {};
+  uint16_t readCount = (uint16_t)wifiScanResultCount;
+  esp_err_t err = esp_wifi_scan_get_ap_records(&readCount, records);
+  if (err != ESP_OK) {
+    if (lblWifiScanStatus) lv_label_set_text(lblWifiScanStatus, "Scan read failed");
+    Serial.printf("[wifi] scan read failed err=%d\n", (int)err);
+    return;
+  }
+
+  wifiScanResultCount = readCount;
+  if (lblWifiScanStatus) {
+    char statusText[48];
+    snprintf(statusText, sizeof(statusText), "%u network%s", (unsigned)wifiScanResultCount, wifiScanResultCount == 1 ? "" : "s");
+    lv_label_set_text(lblWifiScanStatus, statusText);
+  }
+
+  for (size_t i = 0; i < wifiScanResultCount; i++) {
+    strlcpy(wifiScanSsids[i], (const char*)records[i].ssid, sizeof(wifiScanSsids[i]));
+    wifiScanRssi[i] = records[i].rssi;
+    lv_obj_t* btn = lv_btn_create(listWifiScan);
+    lv_obj_set_size(btn, lv_pct(100), 42);
+    styleDarkObject(btn, COLOR_PANEL);
+    styleDarkBorder(btn, 0x2F705F);
+    lv_obj_t* label = lv_label_create(btn);
+    char itemText[64];
+    snprintf(itemText, sizeof(itemText), "%s  %ld dBm", wifiScanSsids[i], (long)wifiScanRssi[i]);
+    lv_label_set_text(label, itemText);
+    lv_obj_center(label);
+    lv_obj_add_event_cb(btn, [](lv_event_t* e) {
+      size_t index = (size_t)lv_event_get_user_data(e);
+      if (index >= wifiScanResultCount) return;
+      if (taWifiSsid) lv_textarea_set_text(taWifiSsid, wifiScanSsids[index]);
+      setWifiApMode(false);
+      showPage(pageWifiLocal);
+    }, LV_EVENT_CLICKED, (void*)i);
+  }
+}
+
+static void renderStoredWifiScanResults(int16_t status) {
+  if (!listWifiScan) return;
+  lv_obj_clean(listWifiScan);
+  if (status == WIFI_SCAN_FAILED || status <= 0 || wifiScanResultCount == 0) {
+    if (lblWifiScanStatus) lv_label_set_text(lblWifiScanStatus, status == 0 ? "No networks found" : "Scan failed");
+    return;
+  }
+
+  if (lblWifiScanStatus) {
+    char statusText[48];
+    snprintf(statusText, sizeof(statusText), "%u network%s", (unsigned)wifiScanResultCount, wifiScanResultCount == 1 ? "" : "s");
+    lv_label_set_text(lblWifiScanStatus, statusText);
+  }
+
+  for (size_t i = 0; i < wifiScanResultCount; i++) {
+    lv_obj_t* btn = lv_btn_create(listWifiScan);
+    lv_obj_set_size(btn, lv_pct(100), 42);
+    styleDarkObject(btn, COLOR_PANEL);
+    styleDarkBorder(btn, 0x2F705F);
+    lv_obj_t* label = lv_label_create(btn);
+    char itemText[64];
+    snprintf(itemText, sizeof(itemText), "%s  %ld dBm", wifiScanSsids[i], (long)wifiScanRssi[i]);
+    lv_label_set_text(label, itemText);
+    lv_obj_center(label);
+    lv_obj_add_event_cb(btn, [](lv_event_t* e) {
+      size_t index = (size_t)lv_event_get_user_data(e);
+      if (index >= wifiScanResultCount) return;
+      if (taWifiSsid) lv_textarea_set_text(taWifiSsid, wifiScanSsids[index]);
+      setWifiApMode(false);
+      showPage(pageWifiLocal);
+    }, LV_EVENT_CLICKED, (void*)i);
+  }
+}
+
+static void wifiScanTask(void*) {
+  int16_t status = WIFI_SCAN_FAILED;
+  size_t resultCount = 0;
+  Serial.println("[wifi] task scan starting");
+  WiFi.mode(WIFI_STA);
+  WiFi.scanDelete();
+  status = WiFi.scanNetworks(false, false, false, 180);
+  if (status > 0) {
+    resultCount = min((size_t)status, WIFI_SCAN_MAX_RESULTS);
+    for (size_t i = 0; i < resultCount; i++) {
+      strlcpy(wifiScanSsids[i], WiFi.SSID(i).c_str(), sizeof(wifiScanSsids[i]));
+      wifiScanRssi[i] = WiFi.RSSI(i);
+    }
+  }
+  WiFi.scanDelete();
+  wifiScanResultCount = resultCount;
+  wifiScanTaskStatus = status;
+  wifiScanTaskDone = true;
+  wifiScanTaskRunning = false;
+  Serial.printf("[wifi] task scan complete status=%d count=%u\n", status, (unsigned)resultCount);
+  vTaskDelete(nullptr);
+}
+
+static void requestWifiScan() {
+  wifiScanRequested = false;
+  wifiScanActive = false;
+  if (listWifiScan) lv_obj_clean(listWifiScan);
+  if (lblWifiScanStatus) {
+    lv_label_set_text(lblWifiScanStatus, "Scan disabled");
+  }
+  if (listWifiScan) {
+    lv_obj_t* note = lv_label_create(listWifiScan);
+    lv_label_set_text(note, "WiFi scanning freezes this board/core.\nUse AP mode for now.");
+    lv_obj_set_style_text_color(note, lv_color_hex(COLOR_TEXT), 0);
+    lv_obj_set_width(note, lv_pct(100));
+  }
+}
+
+static void startWifiScan() {
+  if (wifiScanActive || !wifiScanRequested) return;
+  wifiScanRequested = false;
+  wifiScanActive = true;
+  renderWifiScanResults(WIFI_SCAN_RUNNING);
+  wifiScanStartedMs = millis();
+  wifiScanTaskDone = false;
+  wifiScanTaskStatus = WIFI_SCAN_RUNNING;
+  wifiScanResultCount = 0;
+  if (wifiScanTaskRunning) {
+    if (lblWifiScanStatus) lv_label_set_text(lblWifiScanStatus, "Previous scan still running");
+    wifiScanActive = false;
+    return;
+  }
+  wifiScanTaskRunning = true;
+  BaseType_t ok = xTaskCreatePinnedToCore(wifiScanTask, "wifiScan", 8192, nullptr, 1, nullptr, 0);
+  Serial.printf("[wifi] scan task create=%ld\n", (long)ok);
+  if (ok != pdPASS) {
+    wifiScanTaskRunning = false;
+    wifiScanActive = false;
+    if (lblWifiScanStatus) lv_label_set_text(lblWifiScanStatus, "Scan task failed");
+  }
+}
+
+static void pollWifiScan() {
+  if (wifiScanRequested && wifiEnabled && !wifiScanStoppedWifi) {
+    server.stop();
+    WiFi.softAPdisconnect(true);
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    wifiEnabled = false;
+    wifiStoppedMs = millis();
+    wifiScanStoppedWifi = true;
+    wifiScanRequestedMs = millis();
+    appendLine(eventLog, LOG_SIZE, "[wifi] disabled for scan\n");
+    if (lblWifiScanStatus) lv_label_set_text(lblWifiScanStatus, "Starting scan...");
+    return;
+  }
+  if (wifiScanRequested && millis() - wifiScanRequestedMs >= 750) {
+    startWifiScan();
+  }
+  if (!wifiScanActive) return;
+  if (wifiScanTaskDone) {
+    wifiScanActive = false;
+    wifiScanTaskDone = false;
+    renderStoredWifiScanResults(wifiScanTaskStatus);
+    return;
+  }
+  if (millis() - wifiScanStartedMs > 9000) {
+    wifiScanActive = false;
+    Serial.println("[wifi] task scan timeout");
+    if (lblWifiScanStatus) lv_label_set_text(lblWifiScanStatus, "Scan timed out");
+  }
 }
 
 static void applyBacklight() {
@@ -894,14 +1076,14 @@ static void lvTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
   }
 }
 
-static void styleDarkObject(lv_obj_t* obj, uint32_t bg, uint32_t text = COLOR_TEXT) {
+static void styleDarkObject(lv_obj_t* obj, uint32_t bg, uint32_t text) {
   lv_obj_set_style_bg_color(obj, lv_color_hex(bg), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_text_color(obj, lv_color_hex(text), LV_PART_MAIN);
   lv_obj_set_style_shadow_width(obj, 0, LV_PART_MAIN);
 }
 
-static void styleDarkBorder(lv_obj_t* obj, uint32_t color = COLOR_BORDER) {
+static void styleDarkBorder(lv_obj_t* obj, uint32_t color) {
   lv_obj_set_style_border_color(obj, lv_color_hex(color), LV_PART_MAIN);
   lv_obj_set_style_border_width(obj, 1, LV_PART_MAIN);
 }
@@ -960,13 +1142,13 @@ static void buildStatusBar(lv_obj_t* screen) {
   lv_obj_align(lblBatteryStatus, LV_ALIGN_RIGHT_MID, 0, 0);
 }
 
-static void showPage(lv_obj_t* target, bool remember = true) {
+static void showPage(lv_obj_t* target, bool remember) {
   if (!target) return;
   if (remember && currentPage && currentPage != target) previousPage = currentPage;
   lv_obj_t* pages[] = {
     pageLauncher, pageLora, pagePublicChat, pagePrivateChat, pageGps,
     pageSystem, pageSystemInterface, pageSystemSerial, pageSystemRadio, pageSystemGps,
-    pageWifi, pageWifiStats, pageBacklight, pageBattery
+    pageWifi, pageWifiStats, pageWifiLocal, pageWifiScan, pageBacklight, pageBattery
   };
   for (lv_obj_t* page : pages) {
     if (!page) continue;
@@ -1132,7 +1314,7 @@ static void closeLandscapeKeyboard(bool send) {
   if (keyboardText && activeChatInput) {
     lv_textarea_set_text(activeChatInput, lv_textarea_get_text(keyboardText));
   }
-  if (send) {
+  if (send && landscapeKeyboardSendsMessage) {
     sendActiveFromScreen();
   }
   if (landscapeKeyboard) lv_keyboard_set_textarea(landscapeKeyboard, nullptr);
@@ -1150,11 +1332,13 @@ static void landscapeKeyboardEvent(lv_event_t* e) {
   }
 }
 
-static void openLandscapeKeyboard(lv_obj_t* input) {
+static void openLandscapeKeyboard(lv_obj_t* input, const char* prompt, size_t maxLength, bool sendsMessage) {
   if (!input || !keyboardScreen || !keyboardPrompt || !keyboardText || !landscapeKeyboard) return;
   activeChatInput = input;
-  lv_label_set_text(keyboardPrompt, input == taPrivateInput ? "Private message" : "Public message");
+  landscapeKeyboardSendsMessage = sendsMessage;
+  lv_label_set_text(keyboardPrompt, prompt ? prompt : "Text");
   lv_textarea_set_text(keyboardText, lv_textarea_get_text(input));
+  lv_textarea_set_max_length(keyboardText, maxLength);
   lv_keyboard_set_textarea(landscapeKeyboard, keyboardText);
   landscapeKeyboardOpen = true;
   lv_obj_clear_state(input, LV_STATE_FOCUSED);
@@ -1166,7 +1350,8 @@ static void openLandscapeKeyboard(lv_obj_t* input) {
 static void inputEvent(lv_event_t* e) {
   lv_event_code_t code = lv_event_get_code(e);
   if (code == LV_EVENT_FOCUSED) {
-    openLandscapeKeyboard((lv_obj_t*)lv_event_get_target(e));
+    lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
+    openLandscapeKeyboard(target, target == taPrivateInput ? "Private message" : "Public message", 233, true);
   } else if (code == LV_EVENT_DEFOCUSED) {
     if (!landscapeKeyboardOpen && keyboard) {
       lv_keyboard_set_textarea(keyboard, nullptr);
@@ -1179,6 +1364,82 @@ static void inputEvent(lv_event_t* e) {
   } else if (code == LV_EVENT_CANCEL) {
     if (keyboard) lv_obj_add_flag(keyboard, LV_OBJ_FLAG_HIDDEN);
     if (activeChatInput) lv_obj_clear_state(activeChatInput, LV_STATE_FOCUSED);
+  }
+}
+
+static void wifiInputEvent(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_FOCUSED) return;
+  lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
+  openLandscapeKeyboard(target, target == taWifiPass ? "WiFi password" : "WiFi SSID", target == taWifiPass ? 64 : 32, false);
+}
+
+static void deferWifiAction(uint8_t action) {
+  deferredWifiAction = action;
+  deferredWifiActionMs = millis();
+}
+
+static void ensureWifiLocalPage() {
+  if (wifiLocalPageBuilt || !pageWifiLocal) return;
+  wifiLocalPageBuilt = true;
+
+  makePageTitle(pageWifiLocal, "Local Network");
+  lv_obj_t* localWifiPanel = makePanel(pageWifiLocal);
+  lv_obj_set_size(localWifiPanel, SCREEN_W - 12, 126);
+  lv_obj_align(localWifiPanel, LV_ALIGN_TOP_MID, 0, 24);
+
+  lv_obj_t* btnScanWifi = lv_btn_create(localWifiPanel);
+  lv_obj_set_size(btnScanWifi, SCREEN_W - 40, 40);
+  lv_obj_align(btnScanWifi, LV_ALIGN_TOP_MID, 0, 8);
+  styleDarkObject(btnScanWifi, 0x2F705F, 0xFFFFFF);
+  lv_obj_t* lblScanWifi = lv_label_create(btnScanWifi);
+  lv_label_set_text(lblScanWifi, "Scan Networks");
+  lv_obj_center(lblScanWifi);
+  lv_obj_add_event_cb(btnScanWifi, [](lv_event_t*) {
+    deferWifiAction(2);
+  }, LV_EVENT_CLICKED, nullptr);
+
+  lv_obj_t* localHint = lv_label_create(localWifiPanel);
+  lv_label_set_text(localHint, "Password entry appears after selecting a network.");
+  lv_obj_set_style_text_color(localHint, lv_color_hex(COLOR_MUTED), 0);
+  lv_obj_set_width(localHint, lv_pct(100));
+  lv_obj_align(localHint, LV_ALIGN_TOP_LEFT, 4, 64);
+}
+
+static void ensureWifiScanPage() {
+  if (wifiScanPageBuilt || !pageWifiScan) return;
+  wifiScanPageBuilt = true;
+
+  makePageTitle(pageWifiScan, "Scan Networks");
+  lblWifiScanStatus = lv_label_create(pageWifiScan);
+  lv_label_set_text(lblWifiScanStatus, "Tap Refresh to scan");
+  lv_obj_set_style_text_color(lblWifiScanStatus, lv_color_hex(COLOR_MUTED), 0);
+  lv_obj_align(lblWifiScanStatus, LV_ALIGN_TOP_LEFT, 8, 24);
+  lv_obj_t* btnRefreshScan = lv_btn_create(pageWifiScan);
+  lv_obj_set_size(btnRefreshScan, 86, 30);
+  lv_obj_align(btnRefreshScan, LV_ALIGN_TOP_RIGHT, -8, 20);
+  styleDarkObject(btnRefreshScan, COLOR_ACTION, 0x001B12);
+  lv_obj_t* lblRefreshScan = lv_label_create(btnRefreshScan);
+  lv_label_set_text(lblRefreshScan, "Refresh");
+  lv_obj_set_style_text_color(lblRefreshScan, lv_color_hex(0x001B12), 0);
+  lv_obj_center(lblRefreshScan);
+  lv_obj_add_event_cb(btnRefreshScan, [](lv_event_t*) { requestWifiScan(); }, LV_EVENT_CLICKED, nullptr);
+  listWifiScan = lv_list_create(pageWifiScan);
+  lv_obj_set_size(listWifiScan, SCREEN_W - 12, 180);
+  lv_obj_align(listWifiScan, LV_ALIGN_TOP_MID, 0, 58);
+  styleDarkObject(listWifiScan, COLOR_PANEL);
+}
+
+static void processDeferredWifiAction() {
+  if (!deferredWifiAction || millis() - deferredWifiActionMs < 50) return;
+  uint8_t action = deferredWifiAction;
+  deferredWifiAction = 0;
+  if (action == 1) {
+    ensureWifiLocalPage();
+    showPage(pageWifiLocal);
+  } else if (action == 2) {
+    ensureWifiScanPage();
+    showPage(pageWifiScan);
+    requestWifiScan();
   }
 }
 
@@ -1233,6 +1494,8 @@ static void buildScreenUi() {
   pageSystemGps = makePage(screen);
   pageWifi = makePage(screen);
   pageWifiStats = makePage(screen);
+  pageWifiLocal = makePage(screen);
+  pageWifiScan = makePage(screen);
   pageBacklight = makePage(screen);
   pageBattery = makePage(screen);
 
@@ -1408,10 +1671,10 @@ static void buildScreenUi() {
 
   makePageTitle(pageWifi, "WiFi");
   lv_obj_t* wifiPanel = makePanel(pageWifi);
-  lv_obj_set_size(wifiPanel, SCREEN_W - 12, 112);
+  lv_obj_set_size(wifiPanel, SCREEN_W - 12, 150);
   lv_obj_align(wifiPanel, LV_ALIGN_TOP_MID, 0, 26);
   lv_obj_t* wifiToggleLabel = lv_label_create(wifiPanel);
-  lv_label_set_text(wifiToggleLabel, "Access point");
+  lv_label_set_text(wifiToggleLabel, "WiFi On/Off");
   lv_obj_set_style_text_color(wifiToggleLabel, lv_color_hex(COLOR_TEXT), 0);
   lv_obj_align(wifiToggleLabel, LV_ALIGN_TOP_LEFT, 2, 4);
   swWifiEnabled = lv_switch_create(wifiPanel);
@@ -1420,95 +1683,27 @@ static void buildScreenUi() {
   lv_obj_add_event_cb(swWifiEnabled, [](lv_event_t* e) {
     setWifiEnabled(lv_obj_has_state((lv_obj_t*)lv_event_get_target(e), LV_STATE_CHECKED));
   }, LV_EVENT_VALUE_CHANGED, nullptr);
-<<<<<<< HEAD
 
-  lv_obj_t* apModeLabel = lv_label_create(wifiPanel);
-  lv_label_set_text(apModeLabel, "Access Point Mode");
-  lv_obj_set_style_text_color(apModeLabel, lv_color_hex(COLOR_TEXT), 0);
-  lv_obj_align(apModeLabel, LV_ALIGN_TOP_LEFT, 2, 44);
+  lv_obj_t* wifiModeLabel = lv_label_create(wifiPanel);
+  lv_label_set_text(wifiModeLabel, "Local / AP");
+  lv_obj_set_style_text_color(wifiModeLabel, lv_color_hex(COLOR_TEXT), 0);
+  lv_obj_align(wifiModeLabel, LV_ALIGN_TOP_LEFT, 2, 42);
   swWifiApMode = lv_switch_create(wifiPanel);
-  lv_obj_align(swWifiApMode, LV_ALIGN_TOP_RIGHT, -2, 40);
-  if (wifiIsApMode) lv_obj_add_state(swWifiApMode, LV_STATE_CHECKED);
+  lv_obj_align(swWifiApMode, LV_ALIGN_TOP_RIGHT, -2, 38);
+  if (wifiApMode) lv_obj_add_state(swWifiApMode, LV_STATE_CHECKED);
   lv_obj_add_event_cb(swWifiApMode, [](lv_event_t* e) {
-    wifiIsApMode = lv_obj_has_state((lv_obj_t*)lv_event_get_target(e), LV_STATE_CHECKED);
-    prefs.putBool("wifiIsApMode", wifiIsApMode);
-    if (wifiEnabled) { stopWifi(); startWifi(); }
+    setWifiApMode(lv_obj_has_state((lv_obj_t*)lv_event_get_target(e), LV_STATE_CHECKED));
   }, LV_EVENT_VALUE_CHANGED, nullptr);
 
-=======
->>>>>>> parent of e15b6d0 (Add configurable WiFi (AP/STA) UI & persistence)
   lblWifiState = lv_label_create(wifiPanel);
   lv_label_set_text(lblWifiState, "WiFi starting...");
   lv_obj_set_style_text_color(lblWifiState, lv_color_hex(COLOR_MUTED), 0);
   lv_obj_set_width(lblWifiState, lv_pct(100));
-<<<<<<< HEAD
   lv_obj_align(lblWifiState, LV_ALIGN_TOP_LEFT, 2, 84);
-  makeActionButton(pageWifi, "WiFi Stats", 176, [](lv_event_t*) { showPage(pageWifiStats); });
-  makeActionButton(pageWifi, "Local Network", 228, [](lv_event_t*) { showPage(pageWifiLocal); });
-
-  makePageTitle(pageWifiScan, "Scan Networks");
-  listWifiScan = lv_list_create(pageWifiScan);
-  lv_obj_set_size(listWifiScan, SCREEN_W - 12, 226);
-  lv_obj_align(listWifiScan, LV_ALIGN_TOP_MID, 0, 24);
-  styleDarkObject(listWifiScan, COLOR_PANEL);
-
-  makePageTitle(pageWifiLocal, "Local Network");
-  lv_obj_t* localWifiPanel = makePanel(pageWifiLocal);
-  lv_obj_set_size(localWifiPanel, SCREEN_W - 12, 140);
-  lv_obj_align(localWifiPanel, LV_ALIGN_TOP_MID, 0, 24);
-
-  taWifiSsid = lv_textarea_create(localWifiPanel);
-  lv_obj_set_size(taWifiSsid, SCREEN_W - 40, 36);
-  lv_obj_align(taWifiSsid, LV_ALIGN_TOP_MID, 0, 6);
-  styleDarkTextArea(taWifiSsid);
-  lv_textarea_set_one_line(taWifiSsid, true);
-  lv_textarea_set_max_length(taWifiSsid, 32);
-  lv_textarea_set_placeholder_text(taWifiSsid, "SSID");
-  lv_textarea_set_text(taWifiSsid, wifiLocalSsid);
-  lv_obj_add_event_cb(taWifiSsid, inputEvent, LV_EVENT_ALL, nullptr);
-
-  taWifiPass = lv_textarea_create(localWifiPanel);
-  lv_obj_set_size(taWifiPass, SCREEN_W - 40, 36);
-  lv_obj_align(taWifiPass, LV_ALIGN_TOP_MID, 0, 50);
-  styleDarkTextArea(taWifiPass);
-  lv_textarea_set_one_line(taWifiPass, true);
-  lv_textarea_set_max_length(taWifiPass, 64);
-  lv_textarea_set_password_mode(taWifiPass, true);
-  lv_textarea_set_placeholder_text(taWifiPass, "Password");
-  lv_textarea_set_text(taWifiPass, wifiLocalPass);
-  lv_obj_add_event_cb(taWifiPass, inputEvent, LV_EVENT_ALL, nullptr);
-
-  lv_obj_t* btnScanWifi = lv_btn_create(localWifiPanel);
-  lv_obj_set_size(btnScanWifi, 80, 36);
-  lv_obj_align(btnScanWifi, LV_ALIGN_TOP_LEFT, 4, 94);
-  styleDarkObject(btnScanWifi, 0x2F705F, 0xFFFFFF);
-  lv_obj_t* lblScanWifi = lv_label_create(btnScanWifi);
-  lv_label_set_text(lblScanWifi, "Scan");
-  lv_obj_center(lblScanWifi);
-  lv_obj_add_event_cb(btnScanWifi, [](lv_event_t*) { startWifiScan(); }, LV_EVENT_CLICKED, nullptr);
-
-  lv_obj_t* btnSaveWifi = lv_btn_create(localWifiPanel);
-  lv_obj_set_size(btnSaveWifi, 80, 36);
-  lv_obj_align(btnSaveWifi, LV_ALIGN_TOP_RIGHT, -4, 94);
-  styleDarkObject(btnSaveWifi, COLOR_ACTION, 0x001B12);
-  lv_obj_t* lblSaveWifi = lv_label_create(btnSaveWifi);
-  lv_label_set_text(lblSaveWifi, "Save");
-  lv_obj_center(lblSaveWifi);
-  lv_obj_add_event_cb(btnSaveWifi, [](lv_event_t*) {
-    strlcpy(wifiLocalSsid, lv_textarea_get_text(taWifiSsid), sizeof(wifiLocalSsid));
-    strlcpy(wifiLocalPass, lv_textarea_get_text(taWifiPass), sizeof(wifiLocalPass));
-    prefs.putString("wifiLocalSsid", wifiLocalSsid);
-    prefs.putString("wifiLocalPass", wifiLocalPass);
-    if (!wifiIsApMode && wifiEnabled) { stopWifi(); startWifi(); }
-  }, LV_EVENT_CLICKED, nullptr);
-<<<<<<< HEAD
-  setWifiCredentialEditor(false);
-=======
-  lv_obj_align(lblWifiState, LV_ALIGN_TOP_LEFT, 2, 44);
-  makeActionButton(pageWifi, "WiFi Stats", 158, [](lv_event_t*) { showPage(pageWifiStats); });
->>>>>>> parent of e15b6d0 (Add configurable WiFi (AP/STA) UI & persistence)
-=======
->>>>>>> parent of 52b1028 (Add WiFi scan UI and optimize UI updates)
+  makeActionButton(pageWifi, "Local Network", 184, [](lv_event_t*) {
+    deferWifiAction(1);
+  });
+  makeActionButton(pageWifi, "WiFi Stats", 236, [](lv_event_t*) { showPage(pageWifiStats); });
 
   makePageTitle(pageWifiStats, "WiFi Stats");
   lv_obj_t* wifiStatsPanel = makePanel(pageWifiStats);
@@ -1971,12 +2166,12 @@ static void refreshScreenUi() {
   lv_label_set_text(lblStats, statsText);
 
   if (lblSystemInterface) {
-    String apIp = wifiEnabled ? WiFi.softAPIP().toString() : String("off");
+    String wifiIp = wifiEnabled ? (wifiApMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString()) : String("off");
     char interfaceText[360];
     snprintf(interfaceText, sizeof(interfaceText),
              "S3 interface\n"
              "Uptime: %lu s\n"
-             "AP: %s\n\n"
+             "WiFi: %s\n\n"
              "Memory\n"
              "Heap free/min: %lu/%lu KB\n"
              "PSRAM free: %lu KB\n\n"
@@ -1988,7 +2183,7 @@ static void refreshScreenUi() {
              "UI\n"
              "Frames decoded: %lu",
              (unsigned long)(millis() / 1000),
-             apIp.c_str(),
+              wifiIp.c_str(),
              (unsigned long)(ESP.getFreeHeap() / 1024),
              (unsigned long)(ESP.getMinFreeHeap() / 1024),
              (unsigned long)(ESP.getFreePsram() / 1024),
@@ -2061,14 +2256,23 @@ static void refreshScreenUi() {
     if (wifiEnabled) lv_obj_add_state(swWifiEnabled, LV_STATE_CHECKED);
     else lv_obj_clear_state(swWifiEnabled, LV_STATE_CHECKED);
   }
+  if (swWifiApMode) {
+    if (wifiApMode) lv_obj_add_state(swWifiApMode, LV_STATE_CHECKED);
+    else lv_obj_clear_state(swWifiApMode, LV_STATE_CHECKED);
+  }
 
   if (lblWifiState) {
-    char wifiStateText[160];
+    String wifiIp = wifiEnabled ? (wifiApMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString()) : String("-");
+    const char* wifiState = "off";
+    if (wifiEnabled && wifiApMode) wifiState = "AP on";
+    else if (wifiEnabled && WiFi.status() == WL_CONNECTED) wifiState = "Local connected";
+    else if (wifiEnabled) wifiState = "Local connecting";
+    char wifiStateText[180];
     snprintf(wifiStateText, sizeof(wifiStateText),
              "Status: %s\nSSID: %s\nIP: %s",
-             wifiEnabled ? "on" : "off",
-             wifiEnabled ? INTERFACE_AP_SSID : "-",
-             wifiEnabled ? WiFi.softAPIP().toString().c_str() : "-");
+             wifiState,
+             wifiEnabled ? (wifiApMode ? INTERFACE_AP_SSID : wifiLocalSsid) : "-",
+             wifiIp.c_str());
     lv_label_set_text(lblWifiState, wifiStateText);
   }
 
@@ -2077,14 +2281,18 @@ static void refreshScreenUi() {
     if (wifiEnabled && wifiStartedMs) wifiAge = (millis() - wifiStartedMs) / 1000;
     else if (!wifiEnabled && wifiStoppedMs) wifiAge = (millis() - wifiStoppedMs) / 1000;
 
-    char wifiStatsText[520];
+    String wifiIp = wifiEnabled ? (wifiApMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString()) : String("-");
+    String wifiMac = wifiEnabled ? (wifiApMode ? WiFi.softAPmacAddress() : WiFi.macAddress()) : String("-");
+    char wifiStatsText[560];
     snprintf(wifiStatsText, sizeof(wifiStatsText),
-             "Access point\n"
+             "WiFi\n"
+             "Mode: %s\n"
              "State: %s\n"
              "SSID: %s\n"
              "IP: %s\n"
              "MAC: %s\n"
              "Stations: %u\n"
+             "RSSI: %ld dBm\n"
              "Channel: %d\n\n"
              "Runtime\n"
              "%s for: %lu s\n"
@@ -2092,11 +2300,13 @@ static void refreshScreenUi() {
              "Web server\n"
              "State: %s\n"
              "Port: 80",
+             wifiApMode ? "AP" : "Local",
              wifiEnabled ? "on" : "off",
-             wifiEnabled ? INTERFACE_AP_SSID : "-",
-             wifiEnabled ? WiFi.softAPIP().toString().c_str() : "-",
-             wifiEnabled ? WiFi.softAPmacAddress().c_str() : "-",
-             wifiEnabled ? WiFi.softAPgetStationNum() : 0,
+             wifiEnabled ? (wifiApMode ? INTERFACE_AP_SSID : wifiLocalSsid) : "-",
+             wifiIp.c_str(),
+             wifiMac.c_str(),
+             (wifiEnabled && wifiApMode) ? WiFi.softAPgetStationNum() : 0,
+             (wifiEnabled && !wifiApMode && WiFi.status() == WL_CONNECTED) ? WiFi.RSSI() : 0,
              wifiEnabled ? WiFi.channel() : 0,
              wifiEnabled ? "On" : "Off",
              (unsigned long)wifiAge,
@@ -2280,6 +2490,8 @@ static void refreshScreenUi() {
 }
 
 static void serviceScreen() {
+  processDeferredWifiAction();
+  pollWifiScan();
   sampleLocalBattery();
   refreshScreenUi();
   lv_timer_handler();
@@ -2373,6 +2585,17 @@ static void updateChannelRecord(const meshtastic_Channel& channel) {
   ChannelRecord& record = channels[channel.index];
   record.index = channel.index;
   record.enabled = channel.role != meshtastic_Channel_Role_DISABLED;
+  switch (channel.role) {
+    case meshtastic_Channel_Role_PRIMARY:
+      strlcpy(record.role, "PRIMARY", sizeof(record.role));
+      break;
+    case meshtastic_Channel_Role_SECONDARY:
+      strlcpy(record.role, "SECONDARY", sizeof(record.role));
+      break;
+    default:
+      strlcpy(record.role, "DISABLED", sizeof(record.role));
+      break;
+  }
   if (channel.has_settings && channel.settings.name[0]) {
     strlcpy(record.name, channel.settings.name, sizeof(record.name));
   } else if (channel.index == PUBLIC_CHANNEL_INDEX) {
@@ -2509,6 +2732,149 @@ static bool sendTextMessage(const char* text, int8_t channelIndex) {
   snprintf(line, sizeof(line), "[local] text sent on %s\n", channelName(packet.channel));
   appendLine(eventLog, LOG_SIZE, line);
   return true;
+}
+
+static bool sendLocalAdmin(const meshtastic_AdminMessage& admin) {
+  meshtastic_ToRadio toRadio = meshtastic_ToRadio_init_zero;
+  toRadio.which_payload_variant = meshtastic_ToRadio_packet_tag;
+
+  meshtastic_MeshPacket& packet = toRadio.packet;
+  packet.to = stats.myNodeNum ? stats.myNodeNum : 0xFFFFFFFF;
+  packet.channel = PUBLIC_CHANNEL_INDEX;
+  packet.want_ack = false;
+  packet.which_payload_variant = meshtastic_MeshPacket_decoded_tag;
+
+  meshtastic_Data& data = packet.decoded;
+  data.portnum = meshtastic_PortNum_ADMIN_APP;
+  data.want_response = true;
+
+  pb_ostream_t adminStream = pb_ostream_from_buffer(data.payload.bytes, sizeof(data.payload.bytes));
+  if (!pb_encode(&adminStream, meshtastic_AdminMessage_fields, &admin)) return false;
+  data.payload.size = adminStream.bytes_written;
+
+  uint8_t out[512];
+  pb_ostream_t stream = pb_ostream_from_buffer(out, sizeof(out));
+  if (!pb_encode(&stream, meshtastic_ToRadio_fields, &toRadio)) return false;
+  writeStreamFrame(out, stream.bytes_written);
+  return true;
+}
+
+static bool sendHeltecReboot(uint8_t seconds) {
+  meshtastic_AdminMessage admin = meshtastic_AdminMessage_init_zero;
+  admin.which_payload_variant = meshtastic_AdminMessage_reboot_seconds_tag;
+  admin.reboot_seconds = seconds;
+  bool ok = sendLocalAdmin(admin);
+  appendLine(eventLog, LOG_SIZE, ok ? "[local] Heltec reboot requested\n" : "[local] Heltec reboot request failed\n");
+  return ok;
+}
+
+static meshtastic_Config_LoRaConfig_RegionCode parseRegion(const String& value) {
+  if (value == "US") return meshtastic_Config_LoRaConfig_RegionCode_US;
+  if (value == "EU_868") return meshtastic_Config_LoRaConfig_RegionCode_EU_868;
+  if (value == "CN") return meshtastic_Config_LoRaConfig_RegionCode_CN;
+  if (value == "JP") return meshtastic_Config_LoRaConfig_RegionCode_JP;
+  if (value == "ANZ") return meshtastic_Config_LoRaConfig_RegionCode_ANZ;
+  if (value == "KR") return meshtastic_Config_LoRaConfig_RegionCode_KR;
+  if (value == "TW") return meshtastic_Config_LoRaConfig_RegionCode_TW;
+  if (value == "RU") return meshtastic_Config_LoRaConfig_RegionCode_RU;
+  if (value == "IN") return meshtastic_Config_LoRaConfig_RegionCode_IN;
+  return meshtastic_Config_LoRaConfig_RegionCode_UNSET;
+}
+
+static meshtastic_Config_LoRaConfig_ModemPreset parseModemPreset(const String& value) {
+  if (value == "LONG_SLOW") return meshtastic_Config_LoRaConfig_ModemPreset_LONG_SLOW;
+  if (value == "MEDIUM_FAST") return meshtastic_Config_LoRaConfig_ModemPreset_MEDIUM_FAST;
+  if (value == "MEDIUM_SLOW") return meshtastic_Config_LoRaConfig_ModemPreset_MEDIUM_SLOW;
+  if (value == "SHORT_FAST") return meshtastic_Config_LoRaConfig_ModemPreset_SHORT_FAST;
+  if (value == "SHORT_SLOW") return meshtastic_Config_LoRaConfig_ModemPreset_SHORT_SLOW;
+  return meshtastic_Config_LoRaConfig_ModemPreset_LONG_FAST;
+}
+
+static meshtastic_Channel_Role parseChannelRole(const String& value) {
+  if (value == "PRIMARY") return meshtastic_Channel_Role_PRIMARY;
+  if (value == "SECONDARY") return meshtastic_Channel_Role_SECONDARY;
+  return meshtastic_Channel_Role_DISABLED;
+}
+
+static bool sendHeltecLoraConfig(const String& region, const String& preset, uint8_t hopLimit, int8_t txPower) {
+  meshtastic_AdminMessage admin = meshtastic_AdminMessage_init_zero;
+  admin.which_payload_variant = meshtastic_AdminMessage_set_config_tag;
+  admin.set_config.which_payload_variant = meshtastic_Config_lora_tag;
+  admin.set_config.payload_variant.lora.use_preset = true;
+  admin.set_config.payload_variant.lora.region = parseRegion(region);
+  admin.set_config.payload_variant.lora.modem_preset = parseModemPreset(preset);
+  admin.set_config.payload_variant.lora.hop_limit = min<uint8_t>(hopLimit, 7);
+  admin.set_config.payload_variant.lora.tx_enabled = true;
+  admin.set_config.payload_variant.lora.tx_power = txPower;
+  bool ok = sendLocalAdmin(admin);
+  appendLine(eventLog, LOG_SIZE, ok ? "[local] Heltec LoRa config sent\n" : "[local] Heltec LoRa config failed\n");
+  return ok;
+}
+
+static bool sendHeltecSerialConfig() {
+  meshtastic_AdminMessage admin = meshtastic_AdminMessage_init_zero;
+  admin.which_payload_variant = meshtastic_AdminMessage_set_module_config_tag;
+  admin.set_module_config.which_payload_variant = meshtastic_ModuleConfig_serial_tag;
+  admin.set_module_config.payload_variant.serial.enabled = true;
+  admin.set_module_config.payload_variant.serial.rxd = 38;
+  admin.set_module_config.payload_variant.serial.txd = 39;
+  admin.set_module_config.payload_variant.serial.baud = meshtastic_ModuleConfig_SerialConfig_Serial_Baud_BAUD_115200;
+  admin.set_module_config.payload_variant.serial.mode = meshtastic_ModuleConfig_SerialConfig_Serial_Mode_PROTO;
+  bool ok = sendLocalAdmin(admin);
+  appendLine(eventLog, LOG_SIZE, ok ? "[local] Heltec serial config sent\n" : "[local] Heltec serial config failed\n");
+  return ok;
+}
+
+static bool sendHeltecOwnerName(const String& name) {
+  if (!name.length()) return false;
+  meshtastic_AdminMessage admin = meshtastic_AdminMessage_init_zero;
+  admin.which_payload_variant = meshtastic_AdminMessage_set_owner_tag;
+  snprintf(admin.set_owner.id, sizeof(admin.set_owner.id), "!%08lX", (unsigned long)stats.myNodeNum);
+  strlcpy(admin.set_owner.long_name, name.c_str(), sizeof(admin.set_owner.long_name));
+  strlcpy(admin.set_owner.short_name, name.substring(0, min<size_t>(4, name.length())).c_str(), sizeof(admin.set_owner.short_name));
+  bool ok = sendLocalAdmin(admin);
+  appendLine(eventLog, LOG_SIZE, ok ? "[local] Heltec owner name sent\n" : "[local] Heltec owner name failed\n");
+  return ok;
+}
+
+static bool sendHeltecTimezone(const String& tz) {
+  if (!tz.length()) return false;
+  meshtastic_AdminMessage admin = meshtastic_AdminMessage_init_zero;
+  admin.which_payload_variant = meshtastic_AdminMessage_set_config_tag;
+  admin.set_config.which_payload_variant = meshtastic_Config_device_tag;
+  strlcpy(admin.set_config.payload_variant.device.tzdef, tz.c_str(), sizeof(admin.set_config.payload_variant.device.tzdef));
+  bool ok = sendLocalAdmin(admin);
+  appendLine(eventLog, LOG_SIZE, ok ? "[local] Heltec timezone sent\n" : "[local] Heltec timezone failed\n");
+  return ok;
+}
+
+static bool sendHeltecCommit() {
+  meshtastic_AdminMessage admin = meshtastic_AdminMessage_init_zero;
+  admin.which_payload_variant = meshtastic_AdminMessage_commit_edit_settings_tag;
+  admin.commit_edit_settings = true;
+  bool ok = sendLocalAdmin(admin);
+  appendLine(eventLog, LOG_SIZE, ok ? "[local] Heltec commit sent\n" : "[local] Heltec commit failed\n");
+  return ok;
+}
+
+static bool sendHeltecChannelConfig(uint8_t index, const String& role, const String& name, const String& psk, bool uplink, bool downlink) {
+  meshtastic_AdminMessage admin = meshtastic_AdminMessage_init_zero;
+  admin.which_payload_variant = meshtastic_AdminMessage_set_channel_tag;
+  admin.set_channel.index = min<uint8_t>(index, 7);
+  admin.set_channel.role = parseChannelRole(role);
+  admin.set_channel.has_settings = admin.set_channel.role != meshtastic_Channel_Role_DISABLED;
+  if (admin.set_channel.has_settings) {
+    strlcpy(admin.set_channel.settings.name, name.c_str(), sizeof(admin.set_channel.settings.name));
+    admin.set_channel.settings.uplink_enabled = uplink;
+    admin.set_channel.settings.downlink_enabled = downlink;
+    if (psk.length()) {
+      admin.set_channel.settings.psk.size = min<size_t>(psk.length(), sizeof(admin.set_channel.settings.psk.bytes));
+      memcpy(admin.set_channel.settings.psk.bytes, psk.c_str(), admin.set_channel.settings.psk.size);
+    }
+  }
+  bool ok = sendLocalAdmin(admin);
+  appendLine(eventLog, LOG_SIZE, ok ? "[local] Heltec channel config sent\n" : "[local] Heltec channel config failed\n");
+  return ok;
 }
 
 static void updateTelemetry(uint32_t from, const meshtastic_Data& data) {
@@ -2733,17 +3099,26 @@ static String jsonEscape(const char* text) {
   return out;
 }
 
+static bool requireWebAuth() {
+  if (server.authenticate(WEBUI_USER, WEBUI_PASS)) return true;
+  server.requestAuthentication(BASIC_AUTH, "Heltec LoRa Interface");
+  return false;
+}
+
 static void handleStatus() {
+  if (!requireWebAuth()) return;
   sampleLocalBattery();
   refreshSdUsage();
   char rxAge[32];
   if (lastByteMs) snprintf(rxAge, sizeof(rxAge), "%lus ago", (unsigned long)((millis() - lastByteMs) / 1000));
   else strlcpy(rxAge, "never", sizeof(rxAge));
+  String wifiIp = wifiEnabled ? (wifiApMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString()) : String("off");
   String json = "{";
   json += "\"title\":\"" + String(UI::Labels::AppTitle) + "\",";
-  json += "\"ip\":\"" + String(wifiEnabled ? WiFi.softAPIP().toString() : String("off")) + "\",";
+  json += "\"ip\":\"" + wifiIp + "\",";
   json += "\"wifiEnabled\":" + String(wifiEnabled ? "true" : "false") + ",";
-  json += "\"wifiStations\":" + String(wifiEnabled ? WiFi.softAPgetStationNum() : 0) + ",";
+  json += "\"wifiMode\":\"" + String(wifiApMode ? "AP" : "Local") + "\",";
+  json += "\"wifiStations\":" + String((wifiEnabled && wifiApMode) ? WiFi.softAPgetStationNum() : 0) + ",";
   json += "\"wifiToggles\":" + String(wifiToggleCount) + ",";
   json += "\"frames\":" + String(framesDecoded) + ",";
   json += "\"errors\":" + String(decodeErrors) + ",";
@@ -2799,6 +3174,18 @@ static void handleStatus() {
   json += "\"mapCacheStatus\":\"" + jsonEscape(mapCacheStatus) + "\",";
   json += "\"mapCacheLoaded\":" + String(mapCanvasCached ? "true" : "false") + ",";
   json += "\"log\":\"" + jsonEscape(eventLog) + "\",";
+  json += "\"channels\":[";
+  bool firstChannel = true;
+  for (size_t i = 0; i < MAX_CHANNELS; i++) {
+    if (channels[i].index < 0) continue;
+    if (!firstChannel) json += ",";
+    firstChannel = false;
+    json += "{\"index\":" + String(channels[i].index) + ",";
+    json += "\"enabled\":" + String(channels[i].enabled ? "true" : "false") + ",";
+    json += "\"role\":\"" + jsonEscape(channels[i].role) + "\",";
+    json += "\"name\":\"" + jsonEscape(channels[i].name) + "\"}";
+  }
+  json += "],";
   json += "\"nodes\":[";
   for (size_t i = 0; i < nodeCount; i++) {
     if (i) json += ",";
@@ -2817,6 +3204,7 @@ static void handleStatus() {
 }
 
 static void handleSdDownload(const char* path, const char* downloadName, const char* contentType) {
+  if (!requireWebAuth()) return;
   if (!sdStorage.available) {
     server.send(503, "text/plain", "SD card not available");
     return;
@@ -2836,6 +3224,7 @@ static void handleSdDownload(const char* path, const char* downloadName, const c
 }
 
 static void handleSend() {
+  if (!requireWebAuth()) return;
   if (!server.hasArg("msg")) {
     server.send(400, "text/plain", "missing msg");
     return;
@@ -2845,6 +3234,7 @@ static void handleSend() {
 }
 
 static void handleSerialCmd() {
+  if (!requireWebAuth()) return;
   if (!server.hasArg("cmd")) {
     server.send(400, "text/plain", "missing cmd");
     return;
@@ -2855,6 +3245,7 @@ static void handleSerialCmd() {
 }
 
 static void handleRoot() {
+  if (!requireWebAuth()) return;
   server.send(200, "text/html", R"HTML(
 <!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Heltec LoRa Interface</title>
@@ -2869,8 +3260,10 @@ h2{font-size:12px;line-height:1.1;margin:0 0 6px;color:#68ffc0;text-transform:up
 .stat{background:#07100d;color:#f4fff9;padding:6px;border-radius:4px}.label{color:#8ab7a6;font-size:11px}.value{font-size:15px;color:#f4fff9}
 pre{white-space:pre-wrap;overflow:auto;max-height:280px;margin:0;color:#e8fff5;background:#07100d;font:12px ui-monospace,Consolas,monospace}
 input{box-sizing:border-box;width:100%;padding:10px;background:#07100d!important;border:1px solid #2f705f;color:#fff!important;border-radius:6px}
-button{margin-top:6px;padding:9px 12px;border:0;border-radius:6px;background:#00c985;color:#001b12;font-weight:700}
-a{color:#68ffc0;text-decoration:none}.links{display:flex;flex-wrap:wrap;gap:6px}.links a{padding:7px 8px;border:1px solid #2f705f;border-radius:6px;background:#07100d}
+  button{margin-top:6px;padding:9px 12px;border:0;border-radius:6px;background:#00c985;color:#001b12;font-weight:700}
+  select{box-sizing:border-box;width:100%;padding:10px;background:#07100d!important;border:1px solid #2f705f;color:#fff!important;border-radius:6px}
+  .formgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.field{display:flex;flex-direction:column;gap:4px}.field label{color:#8ab7a6;font-size:11px;text-transform:uppercase}.full{grid-column:1/-1}.hint{color:#8ab7a6;font-size:12px;margin-top:8px}.statusbox{min-height:34px;background:#07100d;border:1px solid #24483e;border-radius:6px;padding:8px;color:#d9fff0}.checkrow{display:flex;align-items:center;gap:8px;color:#d9fff0;font-size:13px}.checkrow input{width:auto}.primaryAction{grid-column:1/-1}.dangerAction{background:#16332b;color:#d9fff0;border:1px solid #2f705f}
+  a{color:#68ffc0;text-decoration:none}.links{display:flex;flex-wrap:wrap;gap:6px}.links a{padding:7px 8px;border:1px solid #2f705f;border-radius:6px;background:#07100d}
 table{width:100%;border-collapse:collapse;font-size:12px;color:#f4fff9}td,th{border-bottom:1px solid #203b35;padding:4px;text-align:left}
 #realMap{width:100%;height:320px;background:#07100d;border:1px solid #24483e;border-radius:6px;box-sizing:border-box;overflow:hidden}
 canvas{width:100%;height:260px;background:#07100d;border:1px solid #24483e;border-radius:6px;box-sizing:border-box}
@@ -2879,6 +3272,30 @@ canvas{width:100%;height:260px;background:#07100d;border:1px solid #24483e;borde
 .leaflet-container{background:#07100d;color:#10231d}.leaflet-popup-content-wrapper,.leaflet-popup-tip{background:#101816;color:#e8fff5}
 </style></head><body><header><h1>Heltec LoRa Interface</h1><div id="ip"></div></header><main>
 <section><h2>Radio</h2><div class="stats" id="stats"></div><button onclick="fetch('/config',{method:'POST'})">Request Config</button></section>
+<section><h2>Heltec Config</h2><div class="formgrid">
+<div class="field"><label for="hcRegion">Region</label><select id="hcRegion"><option>US</option><option>EU_868</option><option>CN</option><option>JP</option><option>ANZ</option><option>KR</option><option>TW</option><option>RU</option><option>IN</option><option>UNSET</option></select></div>
+<div class="field"><label for="hcPreset">Radio preset</label><select id="hcPreset"><option>LONG_FAST</option><option>LONG_SLOW</option><option>MEDIUM_FAST</option><option>MEDIUM_SLOW</option><option>SHORT_FAST</option><option>SHORT_SLOW</option></select></div>
+<div class="field"><label for="hcHop">Hop limit</label><input id="hcHop" type="number" min="0" max="7" value="3"></div>
+<div class="field"><label for="hcTx">TX power</label><input id="hcTx" type="number" min="0" max="30" value="0"></div>
+<div class="field full"><label for="hcName">Node long name</label><input id="hcName" maxlength="39" placeholder="Optional"></div>
+<div class="field full"><label for="hcTz">Timezone</label><input id="hcTz" value="CST6CDT,M3.2.0,M11.1.0"></div>
+<button class="primaryAction" onclick="applyHeltecLora()">Apply Radio Settings</button>
+<button onclick="applyHeltecSerial()">Enable Serial Link</button><button onclick="applyHeltecName()">Update Name</button>
+<button onclick="applyHeltecTime()">Update Timezone</button><button onclick="heltecAction('/heltec/save','Save command sent')">Save Config</button>
+<button class="dangerAction" onclick="heltecAction('/heltec/reboot','Restart command sent')">Restart Heltec</button>
+</div><div class="hint statusbox" id="hcStatus">Ready</div></section>
+<section><h2>Channel Config</h2><div class="formgrid">
+<input id="hcChanIndex" type="number" min="0" max="7" value="0" placeholder="Channel index">
+<select id="hcChanRole"><option>PRIMARY</option><option>SECONDARY</option><option>DISABLED</option></select>
+<input id="hcChanName" maxlength="11" placeholder="Channel name">
+<input id="hcChanPsk" placeholder="PSK / key, blank to keep">
+<label class="checkrow"><input id="hcChanUplink" type="checkbox">Uplink enabled</label>
+<label class="checkrow"><input id="hcChanDownlink" type="checkbox">Downlink enabled</label>
+<button onclick="applyHeltecChannel()">Apply Channel</button><button onclick="disableHeltecChannel()">Disable Channel</button>
+<button onclick="heltecCmd('get channel')" class="full">Refresh Channel Config</button>
+</div><div class="hint">Choose an index, set role/name/key options, then save after applying.</div></section>
+<section><h2>Current Config</h2><div class="stats" id="configRef"></div>
+<table><thead><tr><th>Index</th><th>Role</th><th>Name</th><th>State</th></tr></thead><tbody id="channelRef"></tbody></table></section>
 <section><h2>Send Message</h2><input id="msg" maxlength="233" placeholder="Message to mesh"><button onclick="send()">Send</button></section>
 <section><h2>Chat</h2><pre id="chat"></pre></section>
 <section><h2>Map</h2><div id="realMap"></div><canvas id="mapFallback" class="hidden" width="640" height="360"></canvas><div class="mapMeta" id="mapMeta"></div></section>
@@ -2889,11 +3306,14 @@ canvas{width:100%;height:260px;background:#07100d;border:1px solid #24483e;borde
 </main><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script>
 let leafletMap=null,markers={},realMapReady=false;
 function initRealMap(){if(realMapReady||!window.L)return;leafletMap=L.map('realMap',{zoomControl:true,attributionControl:true});L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(leafletMap);leafletMap.setView([0,0],2);realMapReady=true;}
-async function refresh(){const s=await (await fetch('/status')).json();ip.textContent='AP '+s.ip;
+async function refresh(){const s=await (await fetch('/status')).json();ip.textContent=s.wifiMode+' '+s.ip;
 stats.innerHTML=[['Node',s.myNode],['S3 Battery',s.battery+'% '+s.voltage+'V'],['Power',s.powerState],['Frames',s.frames],['Errors',s.errors],['RX/TX',s.rx+'/'+s.tx],['Nodes',s.online+'/'+s.total],['SD',s.sdStatus]]
 .map(x=>`<div class=stat><div class=label>${x[0]}</div><div class=value>${x[1]}</div></div>`).join('');
 storage.innerHTML=[['Status',s.sdAvailable?'mounted':s.sdStatus],['Type',s.sdType],['Used',formatBytes(s.sdUsedKb)],['Total',formatBytes(s.sdTotalKb)],['Writes',s.sdWrites],['Errors',s.sdErrors],['Map Cache',s.mapCacheLoaded?'loaded':s.mapCacheStatus]]
 .map(x=>`<div class=stat><div class=label>${x[0]}</div><div class=value>${x[1]}</div></div>`).join('');
+configRef.innerHTML=[['Node',s.myNode],['Name',s.myNodeName],['Config frames',s.configFrames],['Private channel',s.privateChannel>=0?s.privateChannel:'none'],['Last port',s.lastPort],['WiFi',s.wifiEnabled?s.wifiMode:'off']]
+.map(x=>`<div class=stat><div class=label>${x[0]}</div><div class=value>${x[1]}</div></div>`).join('');
+channelRef.innerHTML=(s.channels&&s.channels.length?s.channels.map(c=>`<tr><td>${c.index}</td><td>${c.role||'-'}</td><td>${c.name||'-'}</td><td>${c.enabled?'enabled':'disabled'}</td></tr>`).join(''):'<tr><td colspan="4">No channel config received yet</td></tr>');
 chat.textContent=s.chat||'No chat yet';log.textContent=s.log||'Waiting for radio data';
 serial.textContent=`RX bytes: ${s.bytes}\nTX bytes: ${s.txBytes}\nLast byte: ${s.lastByte}\nMagic 94/C3: ${s.magic1}/${s.magic2}\nStream frames: ${s.streamFrames}\nBad lengths: ${s.badLengths}\nText/Tel/GPS/Node: ${s.textPackets}/${s.telemetryPackets}/${s.positionPackets}/${s.nodeInfoPackets}\nHeltec GPS ignored: ${s.remotePositionPackets}\nConfig/Other/Encrypted: ${s.configFrames}/${s.otherFrames}/${s.encryptedPackets}\nLast port: ${s.lastPort}\nASCII seen: ${s.serialPeek||''}`;
 nodes.innerHTML=s.nodes.map(n=>`<tr><td>${n.num}</td><td>${n.name}</td><td>${n.snr}</td><td>${n.age}s</td><td>${n.hasPosition?`${n.lat.toFixed(5)}, ${n.lon.toFixed(5)}`:'-'}</td></tr>`).join('');
@@ -2902,6 +3322,17 @@ drawMap(s);
 async function send(){const m=msg.value.trim();if(!m)return;await fetch('/send',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'msg='+encodeURIComponent(m)});msg.value='';refresh();}
 async function sendCmd(){const c=cmd.value.trim();if(!c)return;await fetch('/serial_cmd',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'cmd='+encodeURIComponent(c)});cmd.value='';refresh();}
 async function mountSd(){await fetch('/sd/mount',{method:'POST'});refresh();}
+async function heltecCmd(c,label){hcStatus.textContent='Sending...';const r=await fetch('/serial_cmd',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'cmd='+encodeURIComponent(c)});hcStatus.textContent=r.ok?(label||'Applied: '+c):'Failed: '+c;}
+async function heltecAction(url,label){hcStatus.textContent='Sending...';const r=await fetch(url,{method:'POST'});hcStatus.textContent=r.ok?label:'Failed';setTimeout(refresh,400);}
+async function heltecPost(url,fields,label){hcStatus.textContent='Sending...';const body=new URLSearchParams(fields);const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});hcStatus.textContent=r.ok?label:'Failed';setTimeout(refresh,400);}
+async function heltecBatch(cmds){for(const c of cmds){await heltecCmd(c);await new Promise(r=>setTimeout(r,180));}}
+function applyHeltecLora(){heltecPost('/heltec/lora',{region:hcRegion.value,preset:hcPreset.value,hop:hcHop.value,tx:hcTx.value},'Radio settings sent');}
+function applyHeltecSerial(){heltecAction('/heltec/serial','Serial link settings sent');}
+function applyHeltecName(){const n=hcName.value.trim();if(n)heltecPost('/heltec/name',{name:n},'Name update sent');}
+function applyHeltecTime(){const z=hcTz.value.trim();if(z)heltecPost('/heltec/timezone',{tz:z},'Timezone update sent');}
+function channelIndex(){let i=parseInt(hcChanIndex.value||'0',10);if(isNaN(i)||i<0)i=0;if(i>7)i=7;hcChanIndex.value=i;return i;}
+function applyHeltecChannel(){heltecPost('/heltec/channel',{index:channelIndex(),role:hcChanRole.value,name:hcChanName.value.trim(),psk:hcChanPsk.value.trim(),uplink:hcChanUplink.checked?'1':'0',downlink:hcChanDownlink.checked?'1':'0'},'Channel settings sent');}
+function disableHeltecChannel(){heltecPost('/heltec/channel',{index:channelIndex(),role:'DISABLED'},'Disable channel sent');}
 function formatBytes(kb){if(!kb)return'0 KB';return kb>=1024?Math.ceil(kb/1024)+' MB':kb+' KB';}
 function drawMap(s){initRealMap();const pts=s.nodes.filter(n=>n.hasPosition);if(realMapReady){realMap.classList.remove('hidden');mapFallback.classList.add('hidden');drawRealMap(s,pts);return}realMap.classList.add('hidden');mapFallback.classList.remove('hidden');drawFallbackMap(s,pts);}
 function drawRealMap(s,pts){if(!pts.length){mapMeta.textContent='No node positions yet';return}const seen={};for(const p of pts){seen[p.num]=true;const html=`<b>${p.name||p.num}</b><br>${p.num}<br>${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}<br>Alt ${p.alt} m<br>${p.positionAge}s old`;if(!markers[p.num])markers[p.num]=L.circleMarker([p.lat,p.lon],{radius:7,color:p.num===s.myNode?'#00c985':'#68ffc0',weight:2,fillColor:p.num===s.myNode?'#00c985':'#68ffc0',fillOpacity:.85}).addTo(leafletMap);else markers[p.num].setLatLng([p.lat,p.lon]);markers[p.num].setStyle({color:p.num===s.myNode?'#00c985':'#68ffc0',fillColor:p.num===s.myNode?'#00c985':'#68ffc0'});markers[p.num].bindPopup(html)}for(const id in markers){if(!seen[id]){leafletMap.removeLayer(markers[id]);delete markers[id]}}const bounds=L.latLngBounds(pts.map(p=>[p.lat,p.lon]));leafletMap.fitBounds(bounds.pad(.2),{maxZoom:15,animate:false});mapMeta.textContent=`OpenStreetMap | ${pts.length} positioned node${pts.length===1?'':'s'}`;}
@@ -2913,6 +3344,7 @@ setInterval(refresh,1000);refresh();
 
 void setup() {
   Serial.begin(115200);
+  Serial.println("[boot] serial ready");
   SerialLoRa.setRxBufferSize(4096);
   SerialLoRa.begin(LORA_BAUD, SERIAL_8N1, LORA_RX_PIN, LORA_TX_PIN);
   SerialGPS.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
@@ -2920,6 +3352,16 @@ void setup() {
   initSdStorage();
 
   appendLine(eventLog, LOG_SIZE, "[boot] Heltec LoRa interface starting\n");
+  prefs.begin("s3-lora", false);
+  wifiApMode = prefs.getBool("wifiApMode", true);
+  strlcpy(wifiLocalSsid, "SOB", sizeof(wifiLocalSsid));
+  strlcpy(wifiLocalPass, "CestLaVie629!", sizeof(wifiLocalPass));
+  if (taWifiSsid) lv_textarea_set_text(taWifiSsid, wifiLocalSsid);
+  if (taWifiPass) lv_textarea_set_text(taWifiPass, wifiLocalPass);
+  if (swWifiApMode) {
+    if (wifiApMode) lv_obj_add_state(swWifiApMode, LV_STATE_CHECKED);
+    else lv_obj_clear_state(swWifiApMode, LV_STATE_CHECKED);
+  }
 
   server.on("/", HTTP_GET, handleRoot);
   server.on("/status", HTTP_GET, handleStatus);
@@ -2932,35 +3374,63 @@ void setup() {
   server.on("/sd/mapcache", HTTP_GET, []() { handleSdDownload(SD_MAP_CACHE_PATH, "map_cache.bin", "application/octet-stream"); });
   server.on("/sd/last-location", HTTP_GET, []() { handleSdDownload(SD_LAST_LOCATION_PATH, "last_location.txt", "text/plain"); });
   server.on("/sd/mount", HTTP_POST, []() {
+    if (!requireWebAuth()) return;
     initSdStorage();
     server.send(sdStorage.available ? 200 : 503, "text/plain", sdStorage.status);
   });
   server.on("/config", HTTP_POST, []() {
+    if (!requireWebAuth()) return;
     bool ok = sendConfigRequest();
     server.send(ok ? 200 : 500, "text/plain", ok ? "requested" : "request failed");
   });
-<<<<<<< HEAD
-
-  prefs.begin("s3-lora", false);
-  wifiIsApMode = prefs.getBool("wifiIsApMode", true);
-  String savedSsid = prefs.getString("wifiLocalSsid", "");
-  String savedPass = prefs.getString("wifiLocalPass", "");
-  String savedWebUser = prefs.getString("webuiUser", "sintak");
-  String savedWebPass = prefs.getString("webuiPass", "Brielle!13");
-  strncpy(wifiLocalSsid, savedSsid.c_str(), sizeof(wifiLocalSsid) - 1);
-  strncpy(wifiLocalPass, savedPass.c_str(), sizeof(wifiLocalPass) - 1);
-  strncpy(webuiUser, savedWebUser.c_str(), sizeof(webuiUser) - 1);
-  strncpy(webuiPass, savedWebPass.c_str(), sizeof(webuiPass) - 1);
-
+  server.on("/heltec/reboot", HTTP_POST, []() {
+    if (!requireWebAuth()) return;
+    bool ok = sendHeltecReboot(1);
+    server.send(ok ? 200 : 500, "text/plain", ok ? "reboot requested" : "reboot request failed");
+  });
+  server.on("/heltec/lora", HTTP_POST, []() {
+    if (!requireWebAuth()) return;
+    bool ok = sendHeltecLoraConfig(server.arg("region"), server.arg("preset"), (uint8_t)server.arg("hop").toInt(), (int8_t)server.arg("tx").toInt());
+    server.send(ok ? 200 : 500, "text/plain", ok ? "lora config sent" : "lora config failed");
+  });
+  server.on("/heltec/serial", HTTP_POST, []() {
+    if (!requireWebAuth()) return;
+    bool ok = sendHeltecSerialConfig();
+    server.send(ok ? 200 : 500, "text/plain", ok ? "serial config sent" : "serial config failed");
+  });
+  server.on("/heltec/name", HTTP_POST, []() {
+    if (!requireWebAuth()) return;
+    bool ok = sendHeltecOwnerName(server.arg("name"));
+    server.send(ok ? 200 : 400, "text/plain", ok ? "name sent" : "missing name");
+  });
+  server.on("/heltec/timezone", HTTP_POST, []() {
+    if (!requireWebAuth()) return;
+    bool ok = sendHeltecTimezone(server.arg("tz"));
+    server.send(ok ? 200 : 400, "text/plain", ok ? "timezone sent" : "missing timezone");
+  });
+  server.on("/heltec/save", HTTP_POST, []() {
+    if (!requireWebAuth()) return;
+    bool ok = sendHeltecCommit();
+    server.send(ok ? 200 : 500, "text/plain", ok ? "save sent" : "save failed");
+  });
+  server.on("/heltec/channel", HTTP_POST, []() {
+    if (!requireWebAuth()) return;
+    bool ok = sendHeltecChannelConfig((uint8_t)server.arg("index").toInt(),
+                                      server.arg("role"),
+                                      server.arg("name"),
+                                      server.arg("psk"),
+                                      server.arg("uplink") == "1",
+                                      server.arg("downlink") == "1");
+    server.send(ok ? 200 : 500, "text/plain", ok ? "channel sent" : "channel failed");
+  });
   startWifi();
-=======
-  startWifiAp();
->>>>>>> parent of e15b6d0 (Add configurable WiFi (AP/STA) UI & persistence)
 
   char line[128];
-  snprintf(line, sizeof(line), "[boot] AP %s at %s\n",
-           wifiEnabled ? INTERFACE_AP_SSID : "off",
-           wifiEnabled ? WiFi.softAPIP().toString().c_str() : "0.0.0.0");
+  String wifiIp = wifiEnabled ? (wifiApMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString()) : String("0.0.0.0");
+  snprintf(line, sizeof(line), "[boot] WiFi %s %s at %s\n",
+           wifiEnabled ? "on" : "off",
+           wifiApMode ? "AP" : "Local",
+           wifiIp.c_str());
   appendLine(eventLog, LOG_SIZE, line);
   sendConfigRequest();
 }
