@@ -2,6 +2,21 @@
 
 This sketch turns an ESP32-S3 board into a browser-based interface for a Heltec LoRa unit running Meshtastic firmware.
 
+## Hardware target
+
+The display controller is an ESP32-S3 board with 16 MB flash and 8 MB PSRAM.
+Build it as `esp32:esp32:esp32s3` with:
+
+- Flash size: `16M`
+- PSRAM: `OPI PSRAM`
+- Partition scheme: `16M Flash (3MB APP/9.9MB FATFS)`
+
+The matching `arduino-cli` FQBN is:
+
+```powershell
+esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,PartitionScheme=app3M_fat9M_16MB
+```
+
 ## Wiring
 
 Cross the UART pins between the ESP32-S3 screen board and the Heltec serial module.
