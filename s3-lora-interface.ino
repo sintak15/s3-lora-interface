@@ -96,7 +96,10 @@ struct GpsStats {
 
 struct LocalBatteryStats {
   uint32_t rawMv = 0;
+  uint32_t rawPackMv = 0;
+  uint32_t filteredPackMv = 0;
   uint32_t batteryMv = 0;
+  uint32_t lastRawPackMv = 0;
   int32_t deltaMvPerMin = 0;
   int percent = 0;
   bool usbLikely = false;
@@ -169,6 +172,7 @@ static constexpr uint32_t COLOR_ACTION = 0x00C985;
 static char eventLog[LOG_SIZE];
 static char publicChatLog[CHAT_SIZE];
 static char privateChatLog[CHAT_SIZE];
+static char lastLocalSentText[234];
 static NodeRecord nodes[MAX_NODES];
 static ChannelRecord channels[MAX_CHANNELS];
 static size_t nodeCount = 0;
@@ -203,8 +207,16 @@ static uint32_t gpsBytesFromLocal = 0;
 static uint32_t lastLocalGpsByteMs = 0;
 static uint32_t lastLocalGpsFixLogMs = 0;
 static bool localGpsHasFix = false;
+static bool wifiEnabled = true;
+static uint32_t wifiStartedMs = 0;
+static uint32_t wifiStoppedMs = 0;
+static uint32_t wifiToggleCount = 0;
+static uint32_t lastLocalSentMs = 0;
+static uint8_t lastLocalSentChannel = PUBLIC_CHANNEL_INDEX;
 
 static lv_disp_draw_buf_t drawBuf;
+static lv_disp_drv_t dispDrv;
+static lv_disp_t* display = nullptr;
 static lv_color_t lvBuf1[SCREEN_W * 24];
 static lv_color_t lvBuf2[SCREEN_W * 24];
 static lv_color_t mapCanvasBuf[MAP_PLOT_W * MAP_PLOT_H];
@@ -219,6 +231,8 @@ static lv_obj_t* pageSystemInterface = nullptr;
 static lv_obj_t* pageSystemSerial = nullptr;
 static lv_obj_t* pageSystemRadio = nullptr;
 static lv_obj_t* pageSystemGps = nullptr;
+static lv_obj_t* pageWifi = nullptr;
+static lv_obj_t* pageWifiStats = nullptr;
 static lv_obj_t* pageBattery = nullptr;
 static lv_obj_t* currentPage = nullptr;
 static lv_obj_t* previousPage = nullptr;
@@ -230,6 +244,9 @@ static lv_obj_t* lblStats = nullptr;
 static lv_obj_t* lblSystemInterface = nullptr;
 static lv_obj_t* lblSystemSerial = nullptr;
 static lv_obj_t* lblSystemRadio = nullptr;
+static lv_obj_t* lblWifiState = nullptr;
+static lv_obj_t* lblWifiStats = nullptr;
+static lv_obj_t* swWifiEnabled = nullptr;
 static lv_obj_t* lblBatteryStats = nullptr;
 static lv_obj_t* lblGpsStats = nullptr;
 static lv_obj_t* lblMapStats = nullptr;
@@ -244,6 +261,12 @@ static lv_obj_t* taPublicInput = nullptr;
 static lv_obj_t* taPrivateInput = nullptr;
 static lv_obj_t* activeChatInput = nullptr;
 static lv_obj_t* keyboard = nullptr;
+static lv_obj_t* mainScreen = nullptr;
+static lv_obj_t* keyboardScreen = nullptr;
+static lv_obj_t* keyboardPrompt = nullptr;
+static lv_obj_t* keyboardText = nullptr;
+static lv_obj_t* landscapeKeyboard = nullptr;
+static bool landscapeKeyboardOpen = false;
 static uint32_t lastUiRefreshMs = 0;
 static uint32_t lastSerialDiagMs = 0;
 static uint32_t lastSdDiagMs = 0;
@@ -270,6 +293,35 @@ static NodeRecord* findOrCreateNode(uint32_t num);
 static void appendLine(char* buffer, size_t bufferSize, const char* line);
 static void refreshMapUi();
 static void loadMapCacheFromSd();
+static void refreshChatViews();
+
+static void loadSdTextTail(const char* path, char* buffer, size_t bufferSize) {
+  if (!sdStorage.available || !path || !buffer || bufferSize == 0 || !SD_MMC.exists(path)) return;
+  File file = SD_MMC.open(path, FILE_READ);
+  if (!file) return;
+  size_t fileSize = file.size();
+  size_t maxRead = bufferSize - 1;
+  size_t start = fileSize > maxRead ? fileSize - maxRead : 0;
+  if (start > 0) file.seek(start);
+  size_t bytesRead = file.read((uint8_t*)buffer, min(maxRead, fileSize - start));
+  file.close();
+  buffer[bytesRead] = '\0';
+
+  if (start > 0) {
+    char* firstNewline = strchr(buffer, '\n');
+    if (firstNewline && firstNewline[1]) {
+      memmove(buffer, firstNewline + 1, strlen(firstNewline + 1) + 1);
+    }
+  }
+}
+
+static void loadChatLogsFromSd() {
+  publicChatLog[0] = '\0';
+  privateChatLog[0] = '\0';
+  loadSdTextTail(SD_PUBLIC_CHAT_PATH, publicChatLog, sizeof(publicChatLog));
+  loadSdTextTail(SD_PRIVATE_CHAT_PATH, privateChatLog, sizeof(privateChatLog));
+  refreshChatViews();
+}
 
 static bool appendSdLine(const char* path, const char* line) {
   if (!sdStorage.available || !path || !line) return false;
@@ -355,6 +407,7 @@ static void initSdStorage() {
   if (!SD_MMC.exists(SD_POSITIONS_PATH)) {
     appendSdLine(SD_POSITIONS_PATH, "uptime_ms,node,name,source,lat,lon,alt_m\n");
   }
+  loadChatLogsFromSd();
   loadMapCacheFromSd();
 }
 
@@ -515,18 +568,54 @@ static int batteryPercentFromMv(uint32_t mv) {
   return curve[sizeof(curve) / sizeof(curve[0]) - 1].pct;
 }
 
+static uint32_t smoothBatteryEstimate(uint32_t currentMv, uint32_t targetMv, bool pluggedIn) {
+  if (currentMv == 0) return constrain(targetMv, 3300UL, 4200UL);
+  targetMv = constrain(targetMv, 3300UL, 4200UL);
+
+  if (pluggedIn) {
+    if (targetMv > currentMv) {
+      uint32_t rise = min<uint32_t>(targetMv - currentMv, 2);
+      return currentMv + rise;
+    }
+    return (currentMv * 31 + targetMv) / 32;
+  }
+
+  if (targetMv < currentMv) {
+    uint32_t fall = min<uint32_t>(currentMv - targetMv, 20);
+    return currentMv - fall;
+  }
+  return (currentMv * 7 + targetMv) / 8;
+}
+
 static void sampleLocalBattery() {
   if (millis() - localBattery.lastSampleMs < 1000) return;
   localBattery.lastSampleMs = millis();
 
   uint32_t adcMv = analogReadMilliVolts(BATT_ADC_PIN);
   uint32_t packMv = (uint32_t)(adcMv * BATT_ADC_MULTIPLIER + 0.5f);
-  if (localBattery.batteryMv == 0) {
-    localBattery.batteryMv = packMv;
-  } else {
-    localBattery.batteryMv = (localBattery.batteryMv * 7 + packMv) / 8;
-  }
+  int32_t rawStepMv = localBattery.lastRawPackMv ? (int32_t)packMv - (int32_t)localBattery.lastRawPackMv : 0;
+
   localBattery.rawMv = adcMv;
+  localBattery.rawPackMv = packMv;
+  if (localBattery.filteredPackMv == 0) {
+    localBattery.filteredPackMv = packMv;
+  } else {
+    localBattery.filteredPackMv = (localBattery.filteredPackMv * 3 + packMv) / 4;
+  }
+
+  bool overLipoVoltage = localBattery.filteredPackMv >= 4300 || packMv >= 4350;
+  bool unplugStep = rawStepMv < -120 && packMv < 4250;
+  bool keepUsbLatch = localBattery.usbLikely && localBattery.filteredPackMv >= 4240 && !unplugStep;
+  localBattery.usbLikely = overLipoVoltage || keepUsbLatch;
+
+  bool plausibleChargeVoltage = localBattery.filteredPackMv >= 4050 && localBattery.filteredPackMv <= 4240;
+  localBattery.chargingLikely = !localBattery.usbLikely && plausibleChargeVoltage && rawStepMv > 8;
+
+  uint32_t trustedPackMv = localBattery.filteredPackMv;
+  if (localBattery.usbLikely && trustedPackMv > 4200) {
+    trustedPackMv = localBattery.batteryMv ? localBattery.batteryMv : 4100;
+  }
+  localBattery.batteryMv = smoothBatteryEstimate(localBattery.batteryMv, trustedPackMv, localBattery.usbLikely);
   localBattery.percent = batteryPercentFromMv(localBattery.batteryMv);
 
   if (localBattery.lastTrendMs == 0) {
@@ -543,19 +632,16 @@ static void sampleLocalBattery() {
     localBattery.lastTrendMv = localBattery.batteryMv;
   }
 
-  bool fullAndSteady = localBattery.batteryMv >= 4180 && abs(localBattery.deltaMvPerMin) <= 4;
-  localBattery.usbLikely = localBattery.batteryMv >= 4300 || fullAndSteady;
-  localBattery.chargingLikely = !localBattery.usbLikely && localBattery.batteryMv >= 4100 && localBattery.deltaMvPerMin > 4;
-
   if (localBattery.usbLikely) {
-    strlcpy(localBattery.powerState, "USB/external", sizeof(localBattery.powerState));
+    strlcpy(localBattery.powerState, "plugged in", sizeof(localBattery.powerState));
   } else if (localBattery.chargingLikely) {
-    strlcpy(localBattery.powerState, "charging", sizeof(localBattery.powerState));
+    strlcpy(localBattery.powerState, "charging/plugged", sizeof(localBattery.powerState));
   } else if (localBattery.deltaMvPerMin < -4) {
     strlcpy(localBattery.powerState, "battery only", sizeof(localBattery.powerState));
   } else {
     strlcpy(localBattery.powerState, "battery/steady", sizeof(localBattery.powerState));
   }
+  localBattery.lastRawPackMv = packMv;
 }
 
 static void appendLine(char* buffer, size_t bufferSize, const char* line) {
@@ -583,6 +669,36 @@ static void appendLine(char* buffer, size_t bufferSize, const char* line) {
   }
 }
 
+static void startWifiAp() {
+  WiFi.mode(WIFI_AP);
+  bool ok = WiFi.softAP(INTERFACE_AP_SSID, INTERFACE_AP_PASS);
+  if (ok) {
+    server.begin();
+    wifiEnabled = true;
+    wifiStartedMs = millis();
+    appendLine(eventLog, LOG_SIZE, "[wifi] AP enabled\n");
+  } else {
+    wifiEnabled = false;
+    appendLine(eventLog, LOG_SIZE, "[wifi] AP start failed\n");
+  }
+}
+
+static void stopWifiAp() {
+  server.stop();
+  WiFi.softAPdisconnect(true);
+  WiFi.mode(WIFI_OFF);
+  wifiEnabled = false;
+  wifiStoppedMs = millis();
+  appendLine(eventLog, LOG_SIZE, "[wifi] AP disabled\n");
+}
+
+static void setWifiEnabled(bool enabled) {
+  if (enabled == wifiEnabled) return;
+  wifiToggleCount++;
+  if (enabled) startWifiAp();
+  else stopWifiAp();
+}
+
 static void lvFlush(lv_disp_drv_t* disp, const lv_area_t* area, lv_color_t* colors) {
   uint32_t w = area->x2 - area->x1 + 1;
   uint32_t h = area->y2 - area->y1 + 1;
@@ -606,8 +722,15 @@ static bool readTouch(uint16_t& x, uint16_t& y) {
   uint8_t yl = Wire.read();
   if (touches == 0 || touches > 2) return false;
 
-  x = constrain(((uint16_t)(xh & 0x0F) << 8) | xl, 0, SCREEN_W - 1);
-  y = constrain(((uint16_t)(yh & 0x0F) << 8) | yl, 0, SCREEN_H - 1);
+  uint16_t rawX = constrain(((uint16_t)(xh & 0x0F) << 8) | xl, 0, SCREEN_W - 1);
+  uint16_t rawY = constrain(((uint16_t)(yh & 0x0F) << 8) | yl, 0, SCREEN_H - 1);
+  if (landscapeKeyboardOpen) {
+    x = rawY;
+    y = SCREEN_W - 1 - rawX;
+  } else {
+    x = rawX;
+    y = rawY;
+  }
   return true;
 }
 
@@ -698,7 +821,8 @@ static void showPage(lv_obj_t* target, bool remember = true) {
   if (remember && currentPage && currentPage != target) previousPage = currentPage;
   lv_obj_t* pages[] = {
     pageLauncher, pageLora, pagePublicChat, pagePrivateChat, pageGps,
-    pageSystem, pageSystemInterface, pageSystemSerial, pageSystemRadio, pageSystemGps, pageBattery
+    pageSystem, pageSystemInterface, pageSystemSerial, pageSystemRadio, pageSystemGps,
+    pageWifi, pageWifiStats, pageBattery
   };
   for (lv_obj_t* page : pages) {
     if (!page) continue;
@@ -825,28 +949,106 @@ static void sendActiveFromScreen() {
   sendFromInput(activeChatInput, activeChatChannel());
 }
 
+static void setUiLandscape(bool landscape) {
+  if (!display) return;
+  tft.setRotation(landscape ? 1 : 0);
+  tft.invertDisplay(true);
+  dispDrv.hor_res = landscape ? SCREEN_H : SCREEN_W;
+  dispDrv.ver_res = landscape ? SCREEN_W : SCREEN_H;
+  lv_disp_drv_update(display, &dispDrv);
+  tft.fillScreen(TFT_BLACK);
+}
+
+static void closeLandscapeKeyboard(bool send) {
+  if (!landscapeKeyboardOpen) return;
+  if (keyboardText && activeChatInput) {
+    lv_textarea_set_text(activeChatInput, lv_textarea_get_text(keyboardText));
+  }
+  if (send) {
+    sendActiveFromScreen();
+  }
+  if (landscapeKeyboard) lv_keyboard_set_textarea(landscapeKeyboard, nullptr);
+  landscapeKeyboardOpen = false;
+  setUiLandscape(false);
+  if (mainScreen) lv_scr_load(mainScreen);
+}
+
+static void landscapeKeyboardEvent(lv_event_t* e) {
+  lv_event_code_t code = lv_event_get_code(e);
+  if (code == LV_EVENT_READY) {
+    closeLandscapeKeyboard(true);
+  } else if (code == LV_EVENT_CANCEL) {
+    closeLandscapeKeyboard(false);
+  }
+}
+
+static void openLandscapeKeyboard(lv_obj_t* input) {
+  if (!input || !keyboardScreen || !keyboardPrompt || !keyboardText || !landscapeKeyboard) return;
+  activeChatInput = input;
+  lv_label_set_text(keyboardPrompt, input == taPrivateInput ? "Private message" : "Public message");
+  lv_textarea_set_text(keyboardText, lv_textarea_get_text(input));
+  lv_keyboard_set_textarea(landscapeKeyboard, keyboardText);
+  landscapeKeyboardOpen = true;
+  lv_obj_clear_state(input, LV_STATE_FOCUSED);
+  setUiLandscape(true);
+  lv_scr_load(keyboardScreen);
+  lv_obj_add_state(keyboardText, LV_STATE_FOCUSED);
+}
+
 static void inputEvent(lv_event_t* e) {
   lv_event_code_t code = lv_event_get_code(e);
-  if (!keyboard) return;
   if (code == LV_EVENT_FOCUSED) {
-    activeChatInput = (lv_obj_t*)lv_event_get_target(e);
-    lv_keyboard_set_textarea(keyboard, activeChatInput);
-    lv_obj_clear_flag(keyboard, LV_OBJ_FLAG_HIDDEN);
+    openLandscapeKeyboard((lv_obj_t*)lv_event_get_target(e));
   } else if (code == LV_EVENT_DEFOCUSED) {
-    lv_keyboard_set_textarea(keyboard, nullptr);
-    lv_obj_add_flag(keyboard, LV_OBJ_FLAG_HIDDEN);
+    if (!landscapeKeyboardOpen && keyboard) {
+      lv_keyboard_set_textarea(keyboard, nullptr);
+      lv_obj_add_flag(keyboard, LV_OBJ_FLAG_HIDDEN);
+    }
   } else if (code == LV_EVENT_READY) {
     sendActiveFromScreen();
-    lv_obj_add_flag(keyboard, LV_OBJ_FLAG_HIDDEN);
+    if (keyboard) lv_obj_add_flag(keyboard, LV_OBJ_FLAG_HIDDEN);
     if (activeChatInput) lv_obj_clear_state(activeChatInput, LV_STATE_FOCUSED);
   } else if (code == LV_EVENT_CANCEL) {
-    lv_obj_add_flag(keyboard, LV_OBJ_FLAG_HIDDEN);
+    if (keyboard) lv_obj_add_flag(keyboard, LV_OBJ_FLAG_HIDDEN);
     if (activeChatInput) lv_obj_clear_state(activeChatInput, LV_STATE_FOCUSED);
   }
 }
 
+static void buildLandscapeKeyboardScreen() {
+  keyboardScreen = lv_obj_create(nullptr);
+  styleDarkObject(keyboardScreen, COLOR_BG);
+  lv_obj_set_style_border_width(keyboardScreen, 0, 0);
+  lv_obj_clear_flag(keyboardScreen, LV_OBJ_FLAG_SCROLLABLE);
+
+  keyboardPrompt = lv_label_create(keyboardScreen);
+  lv_label_set_text(keyboardPrompt, "Message");
+  lv_obj_set_style_text_color(keyboardPrompt, lv_color_hex(COLOR_ACCENT), 0);
+  lv_obj_align(keyboardPrompt, LV_ALIGN_TOP_LEFT, 8, 5);
+
+  keyboardText = lv_textarea_create(keyboardScreen);
+  lv_obj_set_size(keyboardText, SCREEN_H - 16, 50);
+  lv_obj_align(keyboardText, LV_ALIGN_TOP_MID, 0, 24);
+  styleDarkTextArea(keyboardText);
+  lv_textarea_set_one_line(keyboardText, true);
+  lv_textarea_set_max_length(keyboardText, 233);
+  lv_obj_add_event_cb(keyboardText, landscapeKeyboardEvent, LV_EVENT_READY, nullptr);
+  lv_obj_add_event_cb(keyboardText, landscapeKeyboardEvent, LV_EVENT_CANCEL, nullptr);
+
+  landscapeKeyboard = lv_keyboard_create(keyboardScreen);
+  lv_obj_set_size(landscapeKeyboard, SCREEN_H, 156);
+  lv_obj_align(landscapeKeyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
+  styleDarkObject(landscapeKeyboard, COLOR_PANEL);
+  lv_obj_set_style_bg_color(landscapeKeyboard, lv_color_hex(0x111A18), LV_PART_ITEMS);
+  lv_obj_set_style_text_color(landscapeKeyboard, lv_color_hex(COLOR_TEXT), LV_PART_ITEMS);
+  lv_obj_set_style_border_color(landscapeKeyboard, lv_color_hex(0x315B50), LV_PART_ITEMS);
+  lv_obj_set_style_border_width(landscapeKeyboard, 1, LV_PART_ITEMS);
+  lv_obj_add_event_cb(landscapeKeyboard, landscapeKeyboardEvent, LV_EVENT_READY, nullptr);
+  lv_obj_add_event_cb(landscapeKeyboard, landscapeKeyboardEvent, LV_EVENT_CANCEL, nullptr);
+}
+
 static void buildScreenUi() {
   lv_obj_t* screen = lv_scr_act();
+  mainScreen = screen;
   styleDarkObject(screen, COLOR_BG);
 
   buildStatusBar(screen);
@@ -861,6 +1063,8 @@ static void buildScreenUi() {
   pageSystemSerial = makePage(screen);
   pageSystemRadio = makePage(screen);
   pageSystemGps = makePage(screen);
+  pageWifi = makePage(screen);
+  pageWifiStats = makePage(screen);
   pageBattery = makePage(screen);
 
   currentPage = pageLauncher;
@@ -989,11 +1193,12 @@ static void buildScreenUi() {
   lv_obj_align(lblMapStats, LV_ALIGN_TOP_LEFT, 6, 164);
 
   makePageTitle(pageSystem, "System");
-  makeActionButton(pageSystem, "Interface", 24, [](lv_event_t*) { showPage(pageSystemInterface); });
-  makeActionButton(pageSystem, "Serial Link", 70, [](lv_event_t*) { showPage(pageSystemSerial); });
-  makeActionButton(pageSystem, "Radio Stats", 116, [](lv_event_t*) { showPage(pageSystemRadio); });
-  makeActionButton(pageSystem, "GPS Stats", 162, [](lv_event_t*) { showPage(pageSystemGps); });
-  makeActionButton(pageSystem, "Battery", 208, [](lv_event_t*) { showPage(pageBattery); });
+  lv_obj_set_height(makeActionButton(pageSystem, "Interface", 24, [](lv_event_t*) { showPage(pageSystemInterface); }), 36);
+  lv_obj_set_height(makeActionButton(pageSystem, "Serial Link", 62, [](lv_event_t*) { showPage(pageSystemSerial); }), 36);
+  lv_obj_set_height(makeActionButton(pageSystem, "Radio Stats", 100, [](lv_event_t*) { showPage(pageSystemRadio); }), 36);
+  lv_obj_set_height(makeActionButton(pageSystem, "GPS Stats", 138, [](lv_event_t*) { showPage(pageSystemGps); }), 36);
+  lv_obj_set_height(makeActionButton(pageSystem, "WiFi", 176, [](lv_event_t*) { showPage(pageWifi); }), 36);
+  lv_obj_set_height(makeActionButton(pageSystem, "Battery", 214, [](lv_event_t*) { showPage(pageBattery); }), 36);
 
   makePageTitle(pageSystemInterface, "Interface");
   lv_obj_t* interfacePanel = makePanel(pageSystemInterface);
@@ -1030,6 +1235,36 @@ static void buildScreenUi() {
   lv_label_set_text(lblGpsStats, "Waiting for CYD GPS UART...");
   lv_obj_set_style_text_color(lblGpsStats, lv_color_hex(COLOR_TEXT), 0);
   lv_obj_set_width(lblGpsStats, lv_pct(100));
+
+  makePageTitle(pageWifi, "WiFi");
+  lv_obj_t* wifiPanel = makePanel(pageWifi);
+  lv_obj_set_size(wifiPanel, SCREEN_W - 12, 112);
+  lv_obj_align(wifiPanel, LV_ALIGN_TOP_MID, 0, 26);
+  lv_obj_t* wifiToggleLabel = lv_label_create(wifiPanel);
+  lv_label_set_text(wifiToggleLabel, "Access point");
+  lv_obj_set_style_text_color(wifiToggleLabel, lv_color_hex(COLOR_TEXT), 0);
+  lv_obj_align(wifiToggleLabel, LV_ALIGN_TOP_LEFT, 2, 4);
+  swWifiEnabled = lv_switch_create(wifiPanel);
+  lv_obj_align(swWifiEnabled, LV_ALIGN_TOP_RIGHT, -2, 0);
+  if (wifiEnabled) lv_obj_add_state(swWifiEnabled, LV_STATE_CHECKED);
+  lv_obj_add_event_cb(swWifiEnabled, [](lv_event_t* e) {
+    setWifiEnabled(lv_obj_has_state((lv_obj_t*)lv_event_get_target(e), LV_STATE_CHECKED));
+  }, LV_EVENT_VALUE_CHANGED, nullptr);
+  lblWifiState = lv_label_create(wifiPanel);
+  lv_label_set_text(lblWifiState, "WiFi starting...");
+  lv_obj_set_style_text_color(lblWifiState, lv_color_hex(COLOR_MUTED), 0);
+  lv_obj_set_width(lblWifiState, lv_pct(100));
+  lv_obj_align(lblWifiState, LV_ALIGN_TOP_LEFT, 2, 44);
+  makeActionButton(pageWifi, "WiFi Stats", 158, [](lv_event_t*) { showPage(pageWifiStats); });
+
+  makePageTitle(pageWifiStats, "WiFi Stats");
+  lv_obj_t* wifiStatsPanel = makePanel(pageWifiStats);
+  lv_obj_set_size(wifiStatsPanel, SCREEN_W - 12, 226);
+  lv_obj_align(wifiStatsPanel, LV_ALIGN_TOP_MID, 0, 24);
+  lblWifiStats = lv_label_create(wifiStatsPanel);
+  lv_label_set_text(lblWifiStats, "WiFi stats unavailable");
+  lv_obj_set_style_text_color(lblWifiStats, lv_color_hex(COLOR_TEXT), 0);
+  lv_obj_set_width(lblWifiStats, lv_pct(100));
 
   makePageTitle(pageBattery, "Battery");
   lv_obj_t* batteryPanel = makePanel(pageBattery);
@@ -1072,13 +1307,12 @@ static void initScreen() {
   lv_init();
   lv_disp_draw_buf_init(&drawBuf, lvBuf1, lvBuf2, SCREEN_W * 24);
 
-  static lv_disp_drv_t dispDrv;
   lv_disp_drv_init(&dispDrv);
   dispDrv.hor_res = SCREEN_W;
   dispDrv.ver_res = SCREEN_H;
   dispDrv.flush_cb = lvFlush;
   dispDrv.draw_buf = &drawBuf;
-  lv_disp_drv_register(&dispDrv);
+  display = lv_disp_drv_register(&dispDrv);
 
   static lv_indev_drv_t indevDrv;
   lv_indev_drv_init(&indevDrv);
@@ -1087,6 +1321,7 @@ static void initScreen() {
   lv_indev_drv_register(&indevDrv);
 
   buildScreenUi();
+  buildLandscapeKeyboardScreen();
 }
 
 static size_t countPositionedNodes() {
@@ -1456,6 +1691,7 @@ static void refreshScreenUi() {
   lv_label_set_text(lblStats, statsText);
 
   if (lblSystemInterface) {
+    String apIp = wifiEnabled ? WiFi.softAPIP().toString() : String("off");
     char interfaceText[360];
     snprintf(interfaceText, sizeof(interfaceText),
              "S3 interface\n"
@@ -1472,7 +1708,7 @@ static void refreshScreenUi() {
              "UI\n"
              "Frames decoded: %lu",
              (unsigned long)(millis() / 1000),
-             WiFi.softAPIP().toString().c_str(),
+             apIp.c_str(),
              (unsigned long)(ESP.getFreeHeap() / 1024),
              (unsigned long)(ESP.getMinFreeHeap() / 1024),
              (unsigned long)(ESP.getFreePsram() / 1024),
@@ -1541,12 +1777,61 @@ static void refreshScreenUi() {
     lv_label_set_text(lblSystemRadio, radioText);
   }
 
+  if (swWifiEnabled) {
+    if (wifiEnabled) lv_obj_add_state(swWifiEnabled, LV_STATE_CHECKED);
+    else lv_obj_clear_state(swWifiEnabled, LV_STATE_CHECKED);
+  }
+
+  if (lblWifiState) {
+    char wifiStateText[160];
+    snprintf(wifiStateText, sizeof(wifiStateText),
+             "Status: %s\nSSID: %s\nIP: %s",
+             wifiEnabled ? "on" : "off",
+             wifiEnabled ? INTERFACE_AP_SSID : "-",
+             wifiEnabled ? WiFi.softAPIP().toString().c_str() : "-");
+    lv_label_set_text(lblWifiState, wifiStateText);
+  }
+
+  if (lblWifiStats) {
+    uint32_t wifiAge = 0;
+    if (wifiEnabled && wifiStartedMs) wifiAge = (millis() - wifiStartedMs) / 1000;
+    else if (!wifiEnabled && wifiStoppedMs) wifiAge = (millis() - wifiStoppedMs) / 1000;
+
+    char wifiStatsText[520];
+    snprintf(wifiStatsText, sizeof(wifiStatsText),
+             "Access point\n"
+             "State: %s\n"
+             "SSID: %s\n"
+             "IP: %s\n"
+             "MAC: %s\n"
+             "Stations: %u\n"
+             "Channel: %d\n\n"
+             "Runtime\n"
+             "%s for: %lu s\n"
+             "Toggles: %lu\n\n"
+             "Web server\n"
+             "State: %s\n"
+             "Port: 80",
+             wifiEnabled ? "on" : "off",
+             wifiEnabled ? INTERFACE_AP_SSID : "-",
+             wifiEnabled ? WiFi.softAPIP().toString().c_str() : "-",
+             wifiEnabled ? WiFi.softAPmacAddress().c_str() : "-",
+             wifiEnabled ? WiFi.softAPgetStationNum() : 0,
+             wifiEnabled ? WiFi.channel() : 0,
+             wifiEnabled ? "On" : "Off",
+             (unsigned long)wifiAge,
+             (unsigned long)wifiToggleCount,
+             wifiEnabled ? "listening" : "stopped");
+    lv_label_set_text(lblWifiStats, wifiStatsText);
+  }
+
   if (lblBatteryStats) {
     char batteryText[420];
     snprintf(batteryText, sizeof(batteryText),
              "S3 battery\n"
              "Level: %d%%\n"
-             "Voltage: %.2f V\n"
+             "Battery estimate: %.2f V\n"
+             "Sense voltage: %.2f V\n"
              "ADC pin: GPIO%d\n"
              "ADC reading: %lu mV\n"
              "Power: %s\n"
@@ -1561,6 +1846,7 @@ static void refreshScreenUi() {
              "Air TX use: %.2f%%",
              localBattery.percent,
              localBattery.batteryMv / 1000.0f,
+             localBattery.rawPackMv / 1000.0f,
              BATT_ADC_PIN,
              (unsigned long)localBattery.rawMv,
              localBattery.powerState,
@@ -1815,6 +2101,59 @@ static bool isPrivateChannel(uint8_t index) {
   return index == 1;
 }
 
+static void refreshChatViews() {
+  if (taPublicChat) lv_textarea_set_text(taPublicChat, publicChatLog[0] ? publicChatLog : "No public chat yet");
+  if (taPrivateChat) lv_textarea_set_text(taPrivateChat, privateChatLog[0] ? privateChatLog : "No private chat yet");
+}
+
+static void rememberLocalSentText(uint8_t channel, const char* text, size_t len) {
+  size_t copyLen = min(len, sizeof(lastLocalSentText) - 1);
+  memcpy(lastLocalSentText, text, copyLen);
+  lastLocalSentText[copyLen] = '\0';
+  lastLocalSentChannel = channel;
+  lastLocalSentMs = millis();
+}
+
+static bool isRecentLocalEcho(uint8_t channel, const uint8_t* text, size_t len) {
+  if (!lastLocalSentMs || channel != lastLocalSentChannel) return false;
+  if (millis() - lastLocalSentMs > 15000) return false;
+  if (len != strlen(lastLocalSentText)) return false;
+  return memcmp(text, lastLocalSentText, len) == 0;
+}
+
+static void formatChatTimestamp(char* out, size_t outSize) {
+  if (!out || outSize == 0) return;
+  if (localGps.date.isValid() && localGps.time.isValid()) {
+    snprintf(out, outSize, "%04d-%02d-%02d %02d:%02d:%02dZ",
+             localGps.date.year(),
+             localGps.date.month(),
+             localGps.date.day(),
+             localGps.time.hour(),
+             localGps.time.minute(),
+             localGps.time.second());
+    return;
+  }
+
+  uint32_t seconds = millis() / 1000;
+  uint32_t hours = seconds / 3600;
+  uint32_t minutes = (seconds / 60) % 60;
+  seconds %= 60;
+  snprintf(out, outSize, "up %lu:%02lu:%02lu",
+           (unsigned long)hours,
+           (unsigned long)minutes,
+           (unsigned long)seconds);
+}
+
+static void appendChatMessage(uint8_t channel, const char* sender, const uint8_t* text, size_t len) {
+  if (!text || len == 0) return;
+  char stamp[28];
+  formatChatTimestamp(stamp, sizeof(stamp));
+  char line[320];
+  snprintf(line, sizeof(line), "[%s] [%s] %.*s\n", stamp, sender && sender[0] ? sender : "unknown", (int)len, text);
+  appendLine(isPrivateChannel(channel) ? privateChatLog : publicChatLog, CHAT_SIZE, line);
+  refreshChatViews();
+}
+
 static void writeStreamFrame(const uint8_t* payload, size_t len) {
   SerialLoRa.write(0x94);
   SerialLoRa.write(0xC3);
@@ -1870,9 +2209,10 @@ static bool sendTextMessage(const char* text, int8_t channelIndex) {
   if (!pb_encode(&stream, meshtastic_ToRadio_fields, &toRadio)) return false;
   writeStreamFrame(out, stream.bytes_written);
 
-  char line[300];
-  snprintf(line, sizeof(line), "[me] %.*s\n", (int)data.payload.size, text);
-  appendLine(isPrivateChannel(packet.channel) ? privateChatLog : publicChatLog, CHAT_SIZE, line);
+  rememberLocalSentText(packet.channel, text, data.payload.size);
+  appendChatMessage(packet.channel, "me", data.payload.bytes, data.payload.size);
+
+  char line[96];
   snprintf(line, sizeof(line), "[local] text sent on %s\n", channelName(packet.channel));
   appendLine(eventLog, LOG_SIZE, line);
   return true;
@@ -1927,9 +2267,12 @@ static void handleDecodedPacket(const meshtastic_MeshPacket& packet) {
   if (data.portnum == meshtastic_PortNum_TEXT_MESSAGE_APP) {
     textPackets++;
     lastPortNum = data.portnum;
-    snprintf(line, sizeof(line), "[%s] %.*s\n", nodeName(packet.from),
+    bool fromThisNode = stats.myNodeNum != 0 && packet.from == stats.myNodeNum;
+    if (!(fromThisNode && isRecentLocalEcho(packet.channel, data.payload.bytes, data.payload.size))) {
+      appendChatMessage(packet.channel, fromThisNode ? "me" : nodeName(packet.from), data.payload.bytes, data.payload.size);
+    }
+    snprintf(line, sizeof(line), "[%s] %.*s\n", fromThisNode ? "me" : nodeName(packet.from),
              (int)data.payload.size, data.payload.bytes);
-    appendLine(isPrivateChannel(packet.channel) ? privateChatLog : publicChatLog, CHAT_SIZE, line);
     appendLine(eventLog, LOG_SIZE, line);
   } else if (data.portnum == meshtastic_PortNum_TELEMETRY_APP) {
     telemetryPackets++;
@@ -2105,7 +2448,10 @@ static void handleStatus() {
   else strlcpy(rxAge, "never", sizeof(rxAge));
   String json = "{";
   json += "\"title\":\"" + String(UI::Labels::AppTitle) + "\",";
-  json += "\"ip\":\"" + WiFi.softAPIP().toString() + "\",";
+  json += "\"ip\":\"" + String(wifiEnabled ? WiFi.softAPIP().toString() : String("off")) + "\",";
+  json += "\"wifiEnabled\":" + String(wifiEnabled ? "true" : "false") + ",";
+  json += "\"wifiStations\":" + String(wifiEnabled ? WiFi.softAPgetStationNum() : 0) + ",";
+  json += "\"wifiToggles\":" + String(wifiToggleCount) + ",";
   json += "\"frames\":" + String(framesDecoded) + ",";
   json += "\"errors\":" + String(decodeErrors) + ",";
   json += "\"bytes\":" + String(bytesFromRadio) + ",";
@@ -2129,6 +2475,7 @@ static void handleStatus() {
   json += "\"myNodeName\":\"" + jsonEscape(nodeName(stats.myNodeNum)) + "\",";
   json += "\"battery\":" + String(localBattery.percent) + ",";
   json += "\"voltage\":" + String(localBattery.batteryMv / 1000.0f, 2) + ",";
+  json += "\"senseVoltage\":" + String(localBattery.rawPackMv / 1000.0f, 2) + ",";
   json += "\"batterySource\":\"S3\",";
   json += "\"powerState\":\"" + jsonEscape(localBattery.powerState) + "\",";
   json += "\"batteryTrend\":" + String(localBattery.deltaMvPerMin) + ",";
@@ -2270,9 +2617,6 @@ void setup() {
 
   appendLine(eventLog, LOG_SIZE, "[boot] Heltec LoRa interface starting\n");
 
-  WiFi.mode(WIFI_AP);
-  WiFi.softAP(INTERFACE_AP_SSID, INTERFACE_AP_PASS);
-
   server.on("/", HTTP_GET, handleRoot);
   server.on("/status", HTTP_GET, handleStatus);
   server.on("/send", HTTP_POST, handleSend);
@@ -2290,10 +2634,12 @@ void setup() {
     bool ok = sendConfigRequest();
     server.send(ok ? 200 : 500, "text/plain", ok ? "requested" : "request failed");
   });
-  server.begin();
+  startWifiAp();
 
   char line[128];
-  snprintf(line, sizeof(line), "[boot] AP %s at %s\n", INTERFACE_AP_SSID, WiFi.softAPIP().toString().c_str());
+  snprintf(line, sizeof(line), "[boot] AP %s at %s\n",
+           wifiEnabled ? INTERFACE_AP_SSID : "off",
+           wifiEnabled ? WiFi.softAPIP().toString().c_str() : "0.0.0.0");
   appendLine(eventLog, LOG_SIZE, line);
   sendConfigRequest();
 }
@@ -2302,7 +2648,7 @@ void loop() {
   pollLocalGps();
   pollLoRa();
   serviceConfigRequests();
-  server.handleClient();
+  if (wifiEnabled) server.handleClient();
   serviceScreen();
   printSerialDiagnostics();
   delay(2);
