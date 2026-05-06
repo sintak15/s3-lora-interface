@@ -76,18 +76,7 @@ caching or bulk tile creation. The public `tile.openstreetmap.org` service is
 for live map viewing and should not be used to predownload larger offline packs.
 
 You can also render simple street maps directly from an OpenStreetMap `.osm.pbf`
-file, with no web tile downloading. Download regional extracts from Geofabrik:
-
-- Minnesota: `https://download.geofabrik.de/north-america/us/minnesota.html`
-- Wisconsin: `https://download.geofabrik.de/north-america/us/wisconsin.html`
-
-For the default Minnesota plus western Wisconsin bounds, run both `.pbf` files
-in the same command so roads from both states are rendered into the same tiles:
-
-```powershell
-python -m pip install pillow osmium
-python tools/osm_pbf_to_cyd_tiles.py --pbf C:\Maps\minnesota-latest.osm.pbf C:\Maps\wisconsin-latest.osm.pbf --out E:\ --zoom 10-14 --dry-run
-python tools/osm_pbf_to_cyd_tiles.py --pbf C:\Maps\minnesota-latest.osm.pbf C:\Maps\wisconsin-latest.osm.pbf --out E:\ --zoom 10-14
+file, with no web tile downloading. 
 ```
 
 Use `--bounds SOUTH WEST NORTH EAST` to narrow or expand the render area. The
