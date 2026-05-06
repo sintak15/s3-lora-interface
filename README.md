@@ -42,45 +42,7 @@ Optional SD card storage uses the built-in MicroSD socket:
 
 These are configured in `constants.h` for the LCDWiki board's SDMMC/SDIO slot.
 
-Offline on-device map tiles can be copied to the SD card as raw RGB565 files:
-
-- Tile size: 256 x 256 pixels
-- Format: raw little-endian RGB565, no header
-- Path: `/s3-lora/tiles/<zoom>/<x>/<y>.rgb565`
-
-When the current GPS tile is present, the Node Map page draws it under the node
-dots. The firmware checks zoom 14 down through zoom 10 and uses the most
-detailed local tile available. If no tile is present, the page still shows GPS
-status and plotted dots.
-
-To build a larger offline map pack, use the helper script from this repo:
-
-```powershell
-python -m pip install pillow
-python tools/make_sd_tiles.py --center 35.1234 -90.1234 --radius-km 5 --zoom 10-14 --out E:\ --source-dir C:\path\to\xyz_tiles
-```
-
-`--out` should be the SD card drive root, or any folder you want to copy from.
-The script writes the firmware's required `/s3-lora/tiles/...` structure.
-
-You can also pass `--bounds SOUTH WEST NORTH EAST` instead of `--center` and
-`--radius-km`. Use `--dry-run` first for large areas to estimate tile count and
-raw RGB565 storage:
-
-```powershell
-python tools/make_sd_tiles.py --bounds 24.396308 -124.848974 49.384358 -66.885444 --zoom 10-14 --out E:\ --dry-run
-```
-
-If using `--tile-url`, only use a tile service that explicitly allows offline
-caching or bulk tile creation. The public `tile.openstreetmap.org` service is
-for live map viewing and should not be used to predownload larger offline packs.
-
-You can also render simple street maps directly from an OpenStreetMap `.osm.pbf`
-file, with no web tile downloading. 
-```
-
-Use `--bounds SOUTH WEST NORTH EAST` to narrow or expand the render area. The
-script writes directly to `/s3-lora/tiles/...` on the SD card.
+Offline on-device map tiles can be copied to the SD card as raw RGB565 files.
 
 ## Use
 
