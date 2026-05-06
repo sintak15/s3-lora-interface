@@ -5,7 +5,6 @@
 #include <Wire.h>
 #include <SD_MMC.h>
 #include <FS.h>
-#include <Preferences.h>
 #include <TFT_eSPI.h>
 #include <lvgl.h>
 #include <TinyGPSPlus.h>
@@ -23,10 +22,6 @@ HardwareSerial SerialGPS(1);
 WebServer server(80);
 TFT_eSPI tft;
 TinyGPSPlus localGps;
-
-static void showPage(lv_obj_t* target, bool remember = true);
-static void styleDarkObject(lv_obj_t* obj, uint32_t bgColor, uint32_t textColor = 0xF4FFF9);
-static void styleDarkBorder(lv_obj_t* obj, uint32_t borderColor);
 
 struct NodeRecord {
   uint32_t num = 0;
@@ -213,12 +208,6 @@ static uint32_t lastLocalGpsByteMs = 0;
 static uint32_t lastLocalGpsFixLogMs = 0;
 static bool localGpsHasFix = false;
 static bool wifiEnabled = true;
-static bool wifiIsApMode = true;
-static char wifiLocalSsid[33] = "";
-static char wifiLocalPass[65] = "";
-static char webuiUser[33] = "sintak";
-static char webuiPass[65] = "Brielle!13";
-static Preferences prefs;
 static uint32_t wifiStartedMs = 0;
 static uint32_t wifiStoppedMs = 0;
 static uint32_t wifiToggleCount = 0;
@@ -246,6 +235,7 @@ static lv_obj_t* pageSystemRadio = nullptr;
 static lv_obj_t* pageSystemGps = nullptr;
 static lv_obj_t* pageWifi = nullptr;
 static lv_obj_t* pageWifiStats = nullptr;
+<<<<<<< HEAD
 static lv_obj_t* pageWifiLocal = nullptr;
 static lv_obj_t* pageWifiScan = nullptr;
 static lv_obj_t* listWifiScan = nullptr;
@@ -258,6 +248,8 @@ static constexpr size_t WIFI_SCAN_MAX_RESULTS = 16;
 static char wifiScanSsids[WIFI_SCAN_MAX_RESULTS][33];
 static size_t wifiScanResultCount = 0;
 static size_t wifiScanSelectedIndex = 0;
+=======
+>>>>>>> parent of e15b6d0 (Add configurable WiFi (AP/STA) UI & persistence)
 static lv_obj_t* pageBacklight = nullptr;
 static lv_obj_t* pageBattery = nullptr;
 static lv_obj_t* currentPage = nullptr;
@@ -274,11 +266,14 @@ static lv_obj_t* lblWifiState = nullptr;
 static lv_obj_t* lblWifiStats = nullptr;
 static lv_obj_t* lblWifiModeToggle = nullptr;
 static lv_obj_t* swWifiEnabled = nullptr;
+<<<<<<< HEAD
 static lv_obj_t* swWifiApMode = nullptr;
 static lv_obj_t* lblWifiCredentialTarget = nullptr;
 static lv_obj_t* taWifiSsid = nullptr;
 static lv_obj_t* taWifiPass = nullptr;
 static lv_obj_t* btnWifiSave = nullptr;
+=======
+>>>>>>> parent of e15b6d0 (Add configurable WiFi (AP/STA) UI & persistence)
 static lv_obj_t* sliderBacklight = nullptr;
 static lv_obj_t* lblBacklight = nullptr;
 static lv_obj_t* lblBatteryStats = nullptr;
@@ -750,6 +745,7 @@ static void appendLine(char* buffer, size_t bufferSize, const char* line) {
   }
 }
 
+<<<<<<< HEAD
 static void startWifi() {
   if (!wifiIsApMode && !wifiLocalSsid[0]) {
     wifiIsApMode = true;
@@ -879,6 +875,19 @@ static void pollWifiScan() {
       wifiScanActive = false;
     }
     return;
+=======
+static void startWifiAp() {
+  WiFi.mode(WIFI_AP);
+  bool ok = WiFi.softAP(INTERFACE_AP_SSID, INTERFACE_AP_PASS);
+  if (ok) {
+    server.begin();
+    wifiEnabled = true;
+    wifiStartedMs = millis();
+    appendLine(eventLog, LOG_SIZE, "[wifi] AP enabled\n");
+  } else {
+    wifiEnabled = false;
+    appendLine(eventLog, LOG_SIZE, "[wifi] AP start failed\n");
+>>>>>>> parent of e15b6d0 (Add configurable WiFi (AP/STA) UI & persistence)
   }
 
   if (!wifiScanActive) return;
@@ -905,24 +914,20 @@ static void pollWifiScan() {
   wifiScanActive = false;
 }
 
-static void stopWifi() {
+static void stopWifiAp() {
   server.stop();
-  if (wifiIsApMode) {
-    WiFi.softAPdisconnect(true);
-  } else {
-    WiFi.disconnect(true);
-  }
+  WiFi.softAPdisconnect(true);
   WiFi.mode(WIFI_OFF);
   wifiEnabled = false;
   wifiStoppedMs = millis();
-  appendLine(eventLog, LOG_SIZE, "[wifi] Disabled\n");
+  appendLine(eventLog, LOG_SIZE, "[wifi] AP disabled\n");
 }
 
 static void setWifiEnabled(bool enabled) {
   if (enabled == wifiEnabled) return;
   wifiToggleCount++;
-  if (enabled) startWifi();
-  else stopWifi();
+  if (enabled) startWifiAp();
+  else stopWifiAp();
 }
 
 static void applyBacklight() {
@@ -998,7 +1003,7 @@ static void lvTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
   }
 }
 
-static void styleDarkObject(lv_obj_t* obj, uint32_t bg, uint32_t text) {
+static void styleDarkObject(lv_obj_t* obj, uint32_t bg, uint32_t text = COLOR_TEXT) {
   lv_obj_set_style_bg_color(obj, lv_color_hex(bg), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_text_color(obj, lv_color_hex(text), LV_PART_MAIN);
@@ -1064,13 +1069,13 @@ static void buildStatusBar(lv_obj_t* screen) {
   lv_obj_align(lblBatteryStatus, LV_ALIGN_RIGHT_MID, 0, 0);
 }
 
-static void showPage(lv_obj_t* target, bool remember) {
+static void showPage(lv_obj_t* target, bool remember = true) {
   if (!target) return;
   if (remember && currentPage && currentPage != target) previousPage = currentPage;
   lv_obj_t* pages[] = {
     pageLauncher, pageLora, pagePublicChat, pagePrivateChat, pageGps,
     pageSystem, pageSystemInterface, pageSystemSerial, pageSystemRadio, pageSystemGps,
-    pageWifi, pageWifiStats, pageWifiLocal, pageWifiScan, pageBacklight, pageBattery
+    pageWifi, pageWifiStats, pageBacklight, pageBattery
   };
   for (lv_obj_t* page : pages) {
     if (!page) continue;
@@ -1361,8 +1366,6 @@ static void buildScreenUi() {
   pageSystemGps = makePage(screen);
   pageWifi = makePage(screen);
   pageWifiStats = makePage(screen);
-  pageWifiLocal = makePage(screen);
-  pageWifiScan = makePage(screen);
   pageBacklight = makePage(screen);
   pageBattery = makePage(screen);
 
@@ -1538,11 +1541,10 @@ static void buildScreenUi() {
 
   makePageTitle(pageWifi, "WiFi");
   lv_obj_t* wifiPanel = makePanel(pageWifi);
-  lv_obj_set_size(wifiPanel, SCREEN_W - 12, 140);
+  lv_obj_set_size(wifiPanel, SCREEN_W - 12, 112);
   lv_obj_align(wifiPanel, LV_ALIGN_TOP_MID, 0, 26);
-  
   lv_obj_t* wifiToggleLabel = lv_label_create(wifiPanel);
-  lv_label_set_text(wifiToggleLabel, "Enable WiFi");
+  lv_label_set_text(wifiToggleLabel, "Access point");
   lv_obj_set_style_text_color(wifiToggleLabel, lv_color_hex(COLOR_TEXT), 0);
   lv_obj_align(wifiToggleLabel, LV_ALIGN_TOP_LEFT, 2, 4);
   swWifiEnabled = lv_switch_create(wifiPanel);
@@ -1551,6 +1553,7 @@ static void buildScreenUi() {
   lv_obj_add_event_cb(swWifiEnabled, [](lv_event_t* e) {
     setWifiEnabled(lv_obj_has_state((lv_obj_t*)lv_event_get_target(e), LV_STATE_CHECKED));
   }, LV_EVENT_VALUE_CHANGED, nullptr);
+<<<<<<< HEAD
 
   lblWifiModeToggle = lv_label_create(wifiPanel);
   lv_label_set_text(lblWifiModeToggle, wifiIsApMode ? "Mode: AP" : "Mode: Local");
@@ -1565,10 +1568,13 @@ static void buildScreenUi() {
     if (wifiEnabled) { stopWifi(); startWifi(); }
   }, LV_EVENT_VALUE_CHANGED, nullptr);
 
+=======
+>>>>>>> parent of e15b6d0 (Add configurable WiFi (AP/STA) UI & persistence)
   lblWifiState = lv_label_create(wifiPanel);
   lv_label_set_text(lblWifiState, "WiFi starting...");
   lv_obj_set_style_text_color(lblWifiState, lv_color_hex(COLOR_MUTED), 0);
   lv_obj_set_width(lblWifiState, lv_pct(100));
+<<<<<<< HEAD
   lv_obj_align(lblWifiState, LV_ALIGN_TOP_LEFT, 2, 84);
   makeActionButton(pageWifi, "WiFi Stats", 176, [](lv_event_t*) { showPage(pageWifiStats); });
   makeActionButton(pageWifi, "Local Network", 228, [](lv_event_t*) { showPage(pageWifiLocal); });
@@ -1698,6 +1704,10 @@ static void buildScreenUi() {
     if (!wifiIsApMode && wifiEnabled) { stopWifi(); startWifi(); }
   }, LV_EVENT_CLICKED, nullptr);
   setWifiCredentialEditor(false);
+=======
+  lv_obj_align(lblWifiState, LV_ALIGN_TOP_LEFT, 2, 44);
+  makeActionButton(pageWifi, "WiFi Stats", 158, [](lv_event_t*) { showPage(pageWifiStats); });
+>>>>>>> parent of e15b6d0 (Add configurable WiFi (AP/STA) UI & persistence)
 
   makePageTitle(pageWifiStats, "WiFi Stats");
   lv_obj_t* wifiStatsPanel = makePanel(pageWifiStats);
@@ -2277,7 +2287,7 @@ static void refreshScreenUi() {
 
     char wifiStatsText[520];
     snprintf(wifiStatsText, sizeof(wifiStatsText),
-             "%s mode\n"
+             "Access point\n"
              "State: %s\n"
              "SSID: %s\n"
              "IP: %s\n"
@@ -2290,12 +2300,11 @@ static void refreshScreenUi() {
              "Web server\n"
              "State: %s\n"
              "Port: 80",
-             wifiIsApMode ? "Access point" : "Station",
              wifiEnabled ? "on" : "off",
-             wifiEnabled ? (wifiIsApMode ? INTERFACE_AP_SSID : wifiLocalSsid) : "-",
-             wifiEnabled ? (wifiIsApMode ? WiFi.softAPIP().toString().c_str() : WiFi.localIP().toString().c_str()) : "-",
-             wifiEnabled ? (wifiIsApMode ? WiFi.softAPmacAddress().c_str() : WiFi.macAddress().c_str()) : "-",
-             wifiEnabled ? (wifiIsApMode ? WiFi.softAPgetStationNum() : 0) : 0,
+             wifiEnabled ? INTERFACE_AP_SSID : "-",
+             wifiEnabled ? WiFi.softAPIP().toString().c_str() : "-",
+             wifiEnabled ? WiFi.softAPmacAddress().c_str() : "-",
+             wifiEnabled ? WiFi.softAPgetStationNum() : 0,
              wifiEnabled ? WiFi.channel() : 0,
              wifiEnabled ? "On" : "Off",
              (unsigned long)wifiAge,
@@ -2945,17 +2954,7 @@ static String jsonEscape(const char* text) {
   return out;
 }
 
-static bool checkAuth() {
-  if (wifiIsApMode) return true;
-  if (!server.authenticate(webuiUser, webuiPass)) {
-    server.requestAuthentication();
-    return false;
-  }
-  return true;
-}
-
 static void handleStatus() {
-  if (!checkAuth()) return;
   sampleLocalBattery();
   refreshSdUsage();
   char rxAge[32];
@@ -3039,7 +3038,6 @@ static void handleStatus() {
 }
 
 static void handleSdDownload(const char* path, const char* downloadName, const char* contentType) {
-  if (!checkAuth()) return;
   if (!sdStorage.available) {
     server.send(503, "text/plain", "SD card not available");
     return;
@@ -3068,7 +3066,6 @@ static void handleSend() {
 }
 
 static void handleSerialCmd() {
-  if (!checkAuth()) return;
   if (!server.hasArg("cmd")) {
     server.send(400, "text/plain", "missing cmd");
     return;
@@ -3175,14 +3172,17 @@ void setup() {
     bool ok = sendConfigRequest();
     server.send(ok ? 200 : 500, "text/plain", ok ? "requested" : "request failed");
   });
+<<<<<<< HEAD
 
   startWifi();
+=======
+  startWifiAp();
+>>>>>>> parent of e15b6d0 (Add configurable WiFi (AP/STA) UI & persistence)
 
   char line[128];
-  snprintf(line, sizeof(line), "[boot] %s %s at %s\n",
-           wifiEnabled ? (wifiIsApMode ? "AP" : "STA") : "off",
-           wifiEnabled ? (wifiIsApMode ? INTERFACE_AP_SSID : wifiLocalSsid) : "",
-           wifiEnabled ? (wifiIsApMode ? WiFi.softAPIP().toString().c_str() : WiFi.localIP().toString().c_str()) : "0.0.0.0");
+  snprintf(line, sizeof(line), "[boot] AP %s at %s\n",
+           wifiEnabled ? INTERFACE_AP_SSID : "off",
+           wifiEnabled ? WiFi.softAPIP().toString().c_str() : "0.0.0.0");
   appendLine(eventLog, LOG_SIZE, line);
   sendConfigRequest();
 }
@@ -3190,7 +3190,6 @@ void setup() {
 void loop() {
   pollLocalGps();
   pollLoRa();
-  pollWifiScan();
   serviceConfigRequests();
   if (wifiEnabled && !wifiScanPending && !wifiScanActive) server.handleClient();
   serviceScreen();
