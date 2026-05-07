@@ -251,6 +251,8 @@ static lv_obj_t* pageLora = nullptr;
 static lv_obj_t* pagePublicChat = nullptr;
 static lv_obj_t* pagePrivateChat = nullptr;
 static lv_obj_t* pageGps = nullptr;
+static lv_obj_t* pageGames = nullptr;
+static lv_obj_t* pageGameBoy = nullptr;
 static lv_obj_t* pageSystem = nullptr;
 static lv_obj_t* pageSystemInterface = nullptr;
 static lv_obj_t* pageSystemSerial = nullptr;
@@ -283,6 +285,7 @@ static lv_obj_t* listWifiScan = nullptr;
 static lv_obj_t* sliderBacklight = nullptr;
 static lv_obj_t* lblBacklight = nullptr;
 static lv_obj_t* lblBatteryStats = nullptr;
+static lv_obj_t* lblGameBoyStatus = nullptr;
 static lv_obj_t* lblGpsStats = nullptr;
 static lv_obj_t* lblMapStats = nullptr;
 static lv_obj_t* mapPlot = nullptr;
@@ -328,6 +331,7 @@ static uint16_t lastTouchX = 0;
 static uint16_t lastTouchY = 0;
 
 static bool sendTextMessage(const char* text, int8_t channelIndex = PUBLIC_CHANNEL_INDEX);
+static uint8_t privateChatChannel();
 static const char* nodeName(uint32_t num);
 static NodeRecord* findOrCreateNode(uint32_t num);
 static void appendLine(char* buffer, size_t bufferSize, const char* line);
@@ -1147,6 +1151,7 @@ static void showPage(lv_obj_t* target, bool remember) {
   if (remember && currentPage && currentPage != target) previousPage = currentPage;
   lv_obj_t* pages[] = {
     pageLauncher, pageLora, pagePublicChat, pagePrivateChat, pageGps,
+    pageGames, pageGameBoy,
     pageSystem, pageSystemInterface, pageSystemSerial, pageSystemRadio, pageSystemGps,
     pageWifi, pageWifiStats, pageWifiLocal, pageWifiScan, pageBacklight, pageBattery
   };
@@ -1282,7 +1287,7 @@ static lv_obj_t* makeReadonlyText(lv_obj_t* parent, int y, int h) {
 
 static int8_t activeChatChannel() {
   if (activeChatInput == taPrivateInput) {
-    return privateChannelIndex >= 0 ? privateChannelIndex : 1;
+    return privateChatChannel();
   }
   return PUBLIC_CHANNEL_INDEX;
 }
@@ -1475,6 +1480,54 @@ static void buildLandscapeKeyboardScreen() {
   lv_obj_add_event_cb(landscapeKeyboard, landscapeKeyboardEvent, LV_EVENT_CANCEL, nullptr);
 }
 
+static void ensureGameBoyPage() {
+  if (pageGameBoy || !mainScreen) return;
+  pageGameBoy = makePage(mainScreen);
+
+  makePageTitle(pageGameBoy, "Peanut GB");
+  makeActionButton(pageGameBoy, "ROM Browser", 34, [](lv_event_t*) {
+    if (lblGameBoyStatus) lv_label_set_text(lblGameBoyStatus, "ROM browser needs Peanut GB SD loader port");
+    appendLine(eventLog, LOG_SIZE, "[gameboy] ROM browser selected\n");
+  });
+  makeActionButton(pageGameBoy, "Controls", 86, [](lv_event_t*) {
+    if (lblGameBoyStatus) lv_label_set_text(lblGameBoyStatus, "Controls need mapping to touch or external buttons");
+    appendLine(eventLog, LOG_SIZE, "[gameboy] controls selected\n");
+  });
+  makeActionButton(pageGameBoy, "Start Emulator", 138, [](lv_event_t*) {
+    if (lblGameBoyStatus) lv_label_set_text(lblGameBoyStatus, "Peanut GB launch path not wired yet");
+    appendLine(eventLog, LOG_SIZE, "[gameboy] emulator launch requested\n");
+  });
+  lv_obj_t* gameBoyPanel = makePanel(pageGameBoy);
+  lv_obj_set_size(gameBoyPanel, SCREEN_W - 12, 70);
+  lv_obj_align(gameBoyPanel, LV_ALIGN_TOP_MID, 0, 190);
+  lblGameBoyStatus = lv_label_create(gameBoyPanel);
+  lv_label_set_text(lblGameBoyStatus, "Ready to port upstream Peanut-GB");
+  lv_obj_set_style_text_color(lblGameBoyStatus, lv_color_hex(COLOR_TEXT), 0);
+  lv_obj_set_width(lblGameBoyStatus, lv_pct(100));
+}
+
+static void ensureGamesPage() {
+  if (pageGames || !mainScreen) return;
+  pageGames = makePage(mainScreen);
+
+  makePageTitle(pageGames, "Games");
+  makeActionButton(pageGames, "Peanut GB", 34, [](lv_event_t*) {
+    ensureGameBoyPage();
+    showPage(pageGameBoy);
+  });
+  lv_obj_t* gamesPanel = makePanel(pageGames);
+  lv_obj_set_size(gamesPanel, SCREEN_W - 12, 146);
+  lv_obj_align(gamesPanel, LV_ALIGN_TOP_MID, 0, 94);
+  lv_obj_t* gamesLabel = lv_label_create(gamesPanel);
+  lv_label_set_text(gamesLabel,
+                    "Game Boy\n"
+                    "Peanut-GB test area\n"
+                    "ROMs: SD card\n"
+                    "Display: pending port");
+  lv_obj_set_style_text_color(gamesLabel, lv_color_hex(COLOR_TEXT), 0);
+  lv_obj_set_width(gamesLabel, lv_pct(100));
+}
+
 static void buildScreenUi() {
   lv_obj_t* screen = lv_scr_act();
   mainScreen = screen;
@@ -1582,7 +1635,7 @@ static void buildScreenUi() {
   lv_obj_align(privateSendBtn, LV_ALIGN_TOP_RIGHT, -6, 192);
   styleDarkObject(privateSendBtn, COLOR_ACTION, 0x001B12);
   lv_obj_set_style_shadow_width(privateSendBtn, 0, 0);
-  lv_obj_add_event_cb(privateSendBtn, [](lv_event_t*) { sendFromInput(taPrivateInput, privateChannelIndex >= 0 ? privateChannelIndex : 1); }, LV_EVENT_CLICKED, nullptr);
+  lv_obj_add_event_cb(privateSendBtn, [](lv_event_t*) { sendFromInput(taPrivateInput, privateChatChannel()); }, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_flag(privateSendBtn, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_t* privateSendLbl = lv_label_create(privateSendBtn);
   lv_label_set_text(privateSendLbl, "Send");
@@ -1760,6 +1813,7 @@ static void buildScreenUi() {
 }
 
 static void initScreen() {
+  Serial.printf("[boot] initScreen heap=%lu\n", (unsigned long)ESP.getFreeHeap());
   Wire.begin(TOUCH_SDA, TOUCH_SCL);
   pinMode(TOUCH_RST, OUTPUT);
   digitalWrite(TOUCH_RST, LOW);
@@ -1771,8 +1825,13 @@ static void initScreen() {
   tft.setRotation(0);
   tft.invertDisplay(true);
   tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_GREEN, TFT_BLACK);
+  tft.setTextSize(1);
+  tft.setCursor(4, 4);
+  tft.println("Booting UI...");
 
   initBacklight();
+  Serial.printf("[boot] display ready heap=%lu\n", (unsigned long)ESP.getFreeHeap());
 
   lv_init();
   lv_disp_draw_buf_init(&drawBuf, lvBuf1, lvBuf2, SCREEN_W * 24);
@@ -1790,8 +1849,11 @@ static void initScreen() {
   indevDrv.read_cb = lvTouchRead;
   lv_indev_drv_register(&indevDrv);
 
+  Serial.printf("[boot] building LVGL heap=%lu\n", (unsigned long)ESP.getFreeHeap());
   buildScreenUi();
+  Serial.printf("[boot] main UI built heap=%lu\n", (unsigned long)ESP.getFreeHeap());
   buildLandscapeKeyboardScreen();
+  Serial.printf("[boot] keyboard UI built heap=%lu\n", (unsigned long)ESP.getFreeHeap());
 }
 
 static size_t countPositionedNodes() {
@@ -2580,6 +2642,25 @@ static const char* channelName(uint8_t index) {
   return index == PUBLIC_CHANNEL_INDEX ? "primary" : "unknown";
 }
 
+static bool channelNameIsPrivate(const char* name) {
+  if (!name) return false;
+  return (name[0] == 'p' || name[0] == 'P') &&
+         (name[1] == 'r' || name[1] == 'R') &&
+         (name[2] == 'i' || name[2] == 'I') &&
+         (name[3] == 'v' || name[3] == 'V') &&
+         name[4] == '\0';
+}
+
+static void refreshPrivateChannelIndex() {
+  privateChannelIndex = -1;
+  for (size_t i = 0; i < MAX_CHANNELS; i++) {
+    if (channels[i].enabled && channelNameIsPrivate(channels[i].name)) {
+      privateChannelIndex = channels[i].index;
+      return;
+    }
+  }
+}
+
 static void updateChannelRecord(const meshtastic_Channel& channel) {
   if (channel.index < 0 || channel.index >= (int8_t)MAX_CHANNELS) return;
   ChannelRecord& record = channels[channel.index];
@@ -2603,9 +2684,7 @@ static void updateChannelRecord(const meshtastic_Channel& channel) {
   } else {
     record.name[0] = '\0';
   }
-  if (record.enabled && strcmp(record.name, "priv") == 0) {
-    privateChannelIndex = record.index;
-  }
+  refreshPrivateChannelIndex();
 
   char line[96];
   snprintf(line, sizeof(line), "[radio] channel %d: %s\n", record.index, record.name[0] ? record.name : "(unnamed)");
@@ -2615,6 +2694,10 @@ static void updateChannelRecord(const meshtastic_Channel& channel) {
 static bool isPrivateChannel(uint8_t index) {
   if (privateChannelIndex >= 0) return index == privateChannelIndex;
   return index == 1;
+}
+
+static uint8_t privateChatChannel() {
+  return privateChannelIndex >= 0 ? (uint8_t)privateChannelIndex : 1;
 }
 
 static void refreshChatViews() {
@@ -3223,13 +3306,182 @@ static void handleSdDownload(const char* path, const char* downloadName, const c
   file.close();
 }
 
+static bool normalizeSdPath(const String& input, String& out, bool allowRoot = true) {
+  out = input;
+  out.trim();
+  out.replace("\\", "/");
+  if (!out.length()) out = "/";
+  if (!out.startsWith("/")) out = "/" + out;
+  while (out.indexOf("//") >= 0) out.replace("//", "/");
+  if (out.indexOf("/../") >= 0 || out.endsWith("/..") || out.indexOf("/./") >= 0 || out.endsWith("/.")) return false;
+  if (!allowRoot && out == "/") return false;
+  return true;
+}
+
+static String sdBasename(const String& path) {
+  int slash = path.lastIndexOf('/');
+  if (slash < 0) return path;
+  return path.substring(slash + 1);
+}
+
+static String cleanUploadFilename(String name) {
+  name.replace("\\", "/");
+  int slash = name.lastIndexOf('/');
+  if (slash >= 0) name = name.substring(slash + 1);
+  name.trim();
+  name.replace("\"", "");
+  name.replace("'", "");
+  return name;
+}
+
+static bool makeSdDirectoryPath(const String& path) {
+  if (path == "/" || SD_MMC.exists(path)) return true;
+  int pos = 1;
+  while (true) {
+    int next = path.indexOf('/', pos);
+    String part = next < 0 ? path : path.substring(0, next);
+    if (part.length() > 1 && !SD_MMC.exists(part) && !SD_MMC.mkdir(part)) return false;
+    if (next < 0) break;
+    pos = next + 1;
+  }
+  return true;
+}
+
+static void handleSdList() {
+  if (!requireWebAuth()) return;
+  if (!sdStorage.available) {
+    server.send(503, "application/json", "{\"error\":\"SD card not available\"}");
+    return;
+  }
+  String path;
+  if (!normalizeSdPath(server.hasArg("path") ? server.arg("path") : "/", path)) {
+    server.send(400, "application/json", "{\"error\":\"invalid path\"}");
+    return;
+  }
+  File dir = SD_MMC.open(path, FILE_READ);
+  if (!dir) {
+    server.send(404, "application/json", "{\"error\":\"path not found\"}");
+    return;
+  }
+  if (!dir.isDirectory()) {
+    dir.close();
+    server.send(400, "application/json", "{\"error\":\"not a directory\"}");
+    return;
+  }
+
+  String json = "{\"path\":\"" + jsonEscape(path.c_str()) + "\",\"entries\":[";
+  bool first = true;
+  File entry = dir.openNextFile();
+  while (entry) {
+    if (!first) json += ",";
+    first = false;
+    String entryName = String(entry.name());
+    String fullPath = entryName.startsWith("/") ? entryName : (path == "/" ? "/" + entryName : path + "/" + entryName);
+    json += "{\"name\":\"" + jsonEscape(sdBasename(entryName).c_str()) + "\",";
+    json += "\"path\":\"" + jsonEscape(fullPath.c_str()) + "\",";
+    json += "\"dir\":" + String(entry.isDirectory() ? "true" : "false") + ",";
+    json += "\"size\":" + String((uint32_t)entry.size()) + "}";
+    entry.close();
+    entry = dir.openNextFile();
+  }
+  dir.close();
+  json += "]}";
+  server.send(200, "application/json", json);
+}
+
+static void handleSdFileDownload() {
+  if (!server.hasArg("path")) {
+    if (!requireWebAuth()) return;
+    server.send(400, "text/plain", "missing path");
+    return;
+  }
+  String path;
+  if (!normalizeSdPath(server.arg("path"), path, false)) {
+    if (!requireWebAuth()) return;
+    server.send(400, "text/plain", "invalid path");
+    return;
+  }
+  handleSdDownload(path.c_str(), sdBasename(path).c_str(), "application/octet-stream");
+}
+
+static void handleSdMkdir() {
+  if (!requireWebAuth()) return;
+  if (!sdStorage.available) {
+    server.send(503, "text/plain", "SD card not available");
+    return;
+  }
+  String path;
+  if (!normalizeSdPath(server.arg("path"), path, false)) {
+    server.send(400, "text/plain", "invalid path");
+    return;
+  }
+  bool ok = makeSdDirectoryPath(path);
+  server.send(ok ? 200 : 500, "text/plain", ok ? "created" : "mkdir failed");
+}
+
+static void handleSdDelete() {
+  if (!requireWebAuth()) return;
+  if (!sdStorage.available) {
+    server.send(503, "text/plain", "SD card not available");
+    return;
+  }
+  String path;
+  if (!normalizeSdPath(server.arg("path"), path, false)) {
+    server.send(400, "text/plain", "invalid path");
+    return;
+  }
+  File target = SD_MMC.open(path, FILE_READ);
+  if (!target) {
+    server.send(404, "text/plain", "not found");
+    return;
+  }
+  bool isDir = target.isDirectory();
+  target.close();
+  bool ok = isDir ? SD_MMC.rmdir(path) : SD_MMC.remove(path);
+  server.send(ok ? 200 : 500, "text/plain", ok ? "deleted" : "delete failed");
+}
+
+static void handleSdUploadDone() {
+  if (!requireWebAuth()) return;
+  refreshSdUsage();
+  server.send(200, "text/plain", "uploaded");
+}
+
+static void handleSdUploadStream() {
+  static File sdUploadFile;
+  HTTPUpload& upload = server.upload();
+  if (!server.authenticate(WEBUI_USER, WEBUI_PASS)) return;
+  if (!sdStorage.available) return;
+  if (upload.status == UPLOAD_FILE_START) {
+    String dir;
+    if (!normalizeSdPath(server.hasArg("dir") ? server.arg("dir") : "/", dir)) return;
+    if (!makeSdDirectoryPath(dir)) return;
+    String filename = cleanUploadFilename(upload.filename);
+    if (!filename.length() || filename.indexOf("..") >= 0) return;
+    String path = dir == "/" ? "/" + filename : dir + "/" + filename;
+    if (sdUploadFile) sdUploadFile.close();
+    sdUploadFile = SD_MMC.open(path, FILE_WRITE);
+  } else if (upload.status == UPLOAD_FILE_WRITE) {
+    if (sdUploadFile) sdUploadFile.write(upload.buf, upload.currentSize);
+  } else if (upload.status == UPLOAD_FILE_END || upload.status == UPLOAD_FILE_ABORTED) {
+    if (sdUploadFile) {
+      sdUploadFile.close();
+      sdStorage.writes++;
+      strlcpy(sdStorage.status, upload.status == UPLOAD_FILE_END ? "uploaded" : "upload aborted", sizeof(sdStorage.status));
+    }
+  }
+}
+
 static void handleSend() {
   if (!requireWebAuth()) return;
   if (!server.hasArg("msg")) {
     server.send(400, "text/plain", "missing msg");
     return;
   }
-  bool ok = sendTextMessage(server.arg("msg").c_str(), PUBLIC_CHANNEL_INDEX);
+  String channel = server.hasArg("channel") ? server.arg("channel") : "public";
+  channel.toLowerCase();
+  uint8_t channelIndex = (channel == "private" || channel == "priv") ? privateChatChannel() : PUBLIC_CHANNEL_INDEX;
+  bool ok = sendTextMessage(server.arg("msg").c_str(), channelIndex);
   server.send(ok ? 200 : 500, "text/plain", ok ? "sent" : "send failed");
 }
 
@@ -3242,6 +3494,39 @@ static void handleSerialCmd() {
   String cmd = server.arg("cmd") + "\n";
   SerialLoRa.write((const uint8_t*)cmd.c_str(), cmd.length());
   server.send(200, "text/plain", "sent");
+}
+
+static void handleChatWindow(bool privateChat) {
+  if (!requireWebAuth()) return;
+  const char* title = privateChat ? "Private Chat" : "Public Chat";
+  const char* channel = privateChat ? "private" : "public";
+  String html = R"HTML(
+<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>)HTML";
+  html += title;
+  html += R"HTML(</title><style>
+*{box-sizing:border-box}html,body{height:100%;margin:0;background:#050807;color:#f4fff9;font-family:system-ui,Segoe UI,sans-serif}
+body{display:grid;grid-template-rows:auto 1fr auto}
+header{padding:10px;background:#080d0b;border-bottom:1px solid #24483e}
+h1{font-size:16px;margin:0;color:#68ffc0}.meta{color:#8ab7a6;font-size:12px;margin-top:3px}
+pre{margin:0;padding:10px;white-space:pre-wrap;overflow:auto;background:#07100d;color:#e8fff5;font:13px ui-monospace,Consolas,monospace}
+form{display:grid;grid-template-columns:1fr auto;gap:8px;padding:10px;background:#101816;border-top:1px solid #24483e}
+input{min-width:0;padding:10px;background:#07100d;border:1px solid #2f705f;border-radius:6px;color:#fff}
+button{padding:10px 14px;border:0;border-radius:6px;background:#00c985;color:#001b12;font-weight:700}
+</style></head><body><header><h1>)HTML";
+  html += title;
+  html += R"HTML(</h1><div class="meta" id="meta">Connecting...</div></header><pre id="chat"></pre>
+<form onsubmit="sendMsg(event)"><input id="msg" maxlength="233" autocomplete="off" placeholder="Message"><button>Send</button></form>
+<script>
+const channel=')HTML";
+  html += channel;
+  html += R"HTML(';
+async function refresh(){const s=await (await fetch('/status')).json();chat.textContent=(channel==='private'?s.privateChat:s.publicChat)||('No '+channel+' chat yet');meta.textContent=(channel==='private'?'Channel index '+(s.privateChannel>=0?s.privateChannel:'fallback 1'):'Channel primary');chat.scrollTop=chat.scrollHeight;}
+async function sendMsg(e){e.preventDefault();const m=msg.value.trim();if(!m)return;await fetch('/send',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'channel='+encodeURIComponent(channel)+'&msg='+encodeURIComponent(m)});msg.value='';refresh();}
+setInterval(refresh,1000);refresh();
+</script></body></html>
+)HTML";
+  server.send(200, "text/html", html);
 }
 
 static void handleRoot() {
@@ -3263,6 +3548,8 @@ input{box-sizing:border-box;width:100%;padding:10px;background:#07100d!important
   button{margin-top:6px;padding:9px 12px;border:0;border-radius:6px;background:#00c985;color:#001b12;font-weight:700}
   select{box-sizing:border-box;width:100%;padding:10px;background:#07100d!important;border:1px solid #2f705f;color:#fff!important;border-radius:6px}
   .formgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.field{display:flex;flex-direction:column;gap:4px}.field label{color:#8ab7a6;font-size:11px;text-transform:uppercase}.full{grid-column:1/-1}.hint{color:#8ab7a6;font-size:12px;margin-top:8px}.statusbox{min-height:34px;background:#07100d;border:1px solid #24483e;border-radius:6px;padding:8px;color:#d9fff0}.checkrow{display:flex;align-items:center;gap:8px;color:#d9fff0;font-size:13px}.checkrow input{width:auto}.primaryAction{grid-column:1/-1}.dangerAction{background:#16332b;color:#d9fff0;border:1px solid #2f705f}
+  .chatActions{display:grid;grid-template-columns:1fr 1fr;gap:8px}.chatActions button{width:100%;min-height:44px}.chatLog{min-height:150px}.windowAction{background:#16332b;color:#d9fff0;border:1px solid #2f705f}
+  .filebar{display:grid;grid-template-columns:1fr auto auto;gap:6px;margin-bottom:8px}.filetable button{margin:0;padding:5px 7px}.filetable td:last-child{white-space:nowrap}.uploadrow{display:grid;grid-template-columns:1fr auto;gap:6px;margin-top:8px}.smallAction{background:#16332b;color:#d9fff0;border:1px solid #2f705f}.pathText{font:12px ui-monospace,Consolas,monospace;color:#d9fff0;overflow-wrap:anywhere}
   a{color:#68ffc0;text-decoration:none}.links{display:flex;flex-wrap:wrap;gap:6px}.links a{padding:7px 8px;border:1px solid #2f705f;border-radius:6px;background:#07100d}
 table{width:100%;border-collapse:collapse;font-size:12px;color:#f4fff9}td,th{border-bottom:1px solid #203b35;padding:4px;text-align:left}
 #realMap{width:100%;height:320px;background:#07100d;border:1px solid #24483e;border-radius:6px;box-sizing:border-box;overflow:hidden}
@@ -3296,15 +3583,22 @@ canvas{width:100%;height:260px;background:#07100d;border:1px solid #24483e;borde
 </div><div class="hint">Choose an index, set role/name/key options, then save after applying.</div></section>
 <section><h2>Current Config</h2><div class="stats" id="configRef"></div>
 <table><thead><tr><th>Index</th><th>Role</th><th>Name</th><th>State</th></tr></thead><tbody id="channelRef"></tbody></table></section>
-<section><h2>Send Message</h2><input id="msg" maxlength="233" placeholder="Message to mesh"><button onclick="send()">Send</button></section>
-<section><h2>Chat</h2><pre id="chat"></pre></section>
+<section><h2>Send Public</h2><input id="publicMsg" maxlength="233" placeholder="Public message"><button onclick="send('public')">Send Public</button></section>
+<section><h2>Send Private</h2><input id="privateMsg" maxlength="233" placeholder="Private message"><button onclick="send('private')">Send Private</button></section>
+<section><h2>Chat Windows</h2><div class="chatActions"><button class="windowAction" onclick="openChatWindow('public')">Open Public</button><button class="windowAction" onclick="openChatWindow('private')">Open Private</button></div></section>
+<section><h2>Public Chat</h2><pre id="publicChat" class="chatLog"></pre></section>
+<section><h2>Private Chat</h2><pre id="privateChat" class="chatLog"></pre></section>
 <section><h2>Map</h2><div id="realMap"></div><canvas id="mapFallback" class="hidden" width="640" height="360"></canvas><div class="mapMeta" id="mapMeta"></div></section>
 <section><h2>SD Storage</h2><div class="stats" id="storage"></div><button onclick="mountSd()">Mount SD</button><div class="links"><a href="/sd/events">Events</a><a href="/sd/public">Public Chat</a><a href="/sd/private">Private Chat</a><a href="/sd/positions">Positions CSV</a><a href="/sd/mapcache">Map Cache</a><a href="/sd/last-location">Last GPS</a></div></section>
+<section><h2>SD File Browser</h2><div class="filebar"><input id="sdPath" value="/" class="pathText"><button onclick="loadSdPath(sdPath.value)">Open</button><button class="smallAction" onclick="loadSdParent()">Up</button></div>
+<table class="filetable"><thead><tr><th>Name</th><th>Size</th><th>Actions</th></tr></thead><tbody id="sdFiles"><tr><td colspan="3">Mount SD to browse files</td></tr></tbody></table>
+<div class="uploadrow"><input id="sdNewDir" placeholder="New folder name"><button class="smallAction" onclick="makeSdDir()">Create Folder</button></div>
+<form id="sdUploadForm" class="uploadrow" onsubmit="uploadSdFile(event)"><input id="sdUpload" type="file"><button>Upload</button></form><div class="hint statusbox" id="sdFileStatus">Ready</div></section>
 <section><h2>Nodes</h2><table><thead><tr><th>Node</th><th>Name</th><th>SNR</th><th>Age</th><th>GPS</th></tr></thead><tbody id="nodes"></tbody></table></section>
 <section><h2>Serial Link</h2><input id="cmd" placeholder="Serial command"><button onclick="sendCmd()">Send Command</button><pre id="serial" style="margin-top:6px"></pre></section>
 <section><h2>Event Log</h2><pre id="log"></pre></section>
 </main><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script>
-let leafletMap=null,markers={},realMapReady=false;
+let leafletMap=null,markers={},realMapReady=false,sdCurrentPath='/';
 function initRealMap(){if(realMapReady||!window.L)return;leafletMap=L.map('realMap',{zoomControl:true,attributionControl:true});L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(leafletMap);leafletMap.setView([0,0],2);realMapReady=true;}
 async function refresh(){const s=await (await fetch('/status')).json();ip.textContent=s.wifiMode+' '+s.ip;
 stats.innerHTML=[['Node',s.myNode],['S3 Battery',s.battery+'% '+s.voltage+'V'],['Power',s.powerState],['Frames',s.frames],['Errors',s.errors],['RX/TX',s.rx+'/'+s.tx],['Nodes',s.online+'/'+s.total],['SD',s.sdStatus]]
@@ -3314,14 +3608,25 @@ storage.innerHTML=[['Status',s.sdAvailable?'mounted':s.sdStatus],['Type',s.sdTyp
 configRef.innerHTML=[['Node',s.myNode],['Name',s.myNodeName],['Config frames',s.configFrames],['Private channel',s.privateChannel>=0?s.privateChannel:'none'],['Last port',s.lastPort],['WiFi',s.wifiEnabled?s.wifiMode:'off']]
 .map(x=>`<div class=stat><div class=label>${x[0]}</div><div class=value>${x[1]}</div></div>`).join('');
 channelRef.innerHTML=(s.channels&&s.channels.length?s.channels.map(c=>`<tr><td>${c.index}</td><td>${c.role||'-'}</td><td>${c.name||'-'}</td><td>${c.enabled?'enabled':'disabled'}</td></tr>`).join(''):'<tr><td colspan="4">No channel config received yet</td></tr>');
-chat.textContent=s.chat||'No chat yet';log.textContent=s.log||'Waiting for radio data';
+publicChat.textContent=s.publicChat||'No public chat yet';privateChat.textContent=s.privateChat||'No private chat yet';log.textContent=s.log||'Waiting for radio data';
 serial.textContent=`RX bytes: ${s.bytes}\nTX bytes: ${s.txBytes}\nLast byte: ${s.lastByte}\nMagic 94/C3: ${s.magic1}/${s.magic2}\nStream frames: ${s.streamFrames}\nBad lengths: ${s.badLengths}\nText/Tel/GPS/Node: ${s.textPackets}/${s.telemetryPackets}/${s.positionPackets}/${s.nodeInfoPackets}\nHeltec GPS ignored: ${s.remotePositionPackets}\nConfig/Other/Encrypted: ${s.configFrames}/${s.otherFrames}/${s.encryptedPackets}\nLast port: ${s.lastPort}\nASCII seen: ${s.serialPeek||''}`;
 nodes.innerHTML=s.nodes.map(n=>`<tr><td>${n.num}</td><td>${n.name}</td><td>${n.snr}</td><td>${n.age}s</td><td>${n.hasPosition?`${n.lat.toFixed(5)}, ${n.lon.toFixed(5)}`:'-'}</td></tr>`).join('');
 drawMap(s);
 }
-async function send(){const m=msg.value.trim();if(!m)return;await fetch('/send',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'msg='+encodeURIComponent(m)});msg.value='';refresh();}
+function openChatWindow(channel){window.open('/chat/'+channel,'s3_lora_'+channel,'width=520,height=720');}
+async function send(channel){const input=channel==='private'?privateMsg:publicMsg;const m=input.value.trim();if(!m)return;await fetch('/send',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'channel='+encodeURIComponent(channel)+'&msg='+encodeURIComponent(m)});input.value='';refresh();}
 async function sendCmd(){const c=cmd.value.trim();if(!c)return;await fetch('/serial_cmd',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'cmd='+encodeURIComponent(c)});cmd.value='';refresh();}
 async function mountSd(){await fetch('/sd/mount',{method:'POST'});refresh();}
+function parentPath(p){if(!p||p==='/')return'/';p=p.replace(/\/+$/,'');const i=p.lastIndexOf('/');return i<=0?'/':p.slice(0,i);}
+function joinPath(dir,name){return(dir==='/'?'/':dir.replace(/\/+$/,'')+'/')+name;}
+function fileSize(n){if(!n)return'';return n>=1048576?Math.ceil(n/1048576)+' MB':n>=1024?Math.ceil(n/1024)+' KB':n+' B';}
+function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function jsArg(s){return esc(String(s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\r|\n/g,''));}
+async function loadSdPath(path='/'){sdFileStatus.textContent='Loading...';const r=await fetch('/sd/list?path='+encodeURIComponent(path));if(!r.ok){sdFileStatus.textContent=await r.text();return}const data=await r.json();sdCurrentPath=data.path||'/';sdPath.value=sdCurrentPath;const rows=[];if(sdCurrentPath!=='/')rows.push(`<tr><td colspan="2"><button class="smallAction" onclick="loadSdParent()">..</button></td><td></td></tr>`);for(const f of data.entries||[]){const name=esc(f.name),pathArg=jsArg(f.path);if(f.dir)rows.push(`<tr><td>${name}/</td><td>folder</td><td><button onclick="loadSdPath('${pathArg}')">Open</button><button class="smallAction" onclick="deleteSdPath('${pathArg}')">Delete</button></td></tr>`);else rows.push(`<tr><td>${name}</td><td>${fileSize(f.size)}</td><td><button onclick="location.href='/sd/download?path='+encodeURIComponent('${pathArg}')">Download</button><button class="smallAction" onclick="deleteSdPath('${pathArg}')">Delete</button></td></tr>`)}sdFiles.innerHTML=rows.join('')||'<tr><td colspan="3">Folder is empty</td></tr>';sdFileStatus.textContent='Ready';}
+function loadSdParent(){loadSdPath(parentPath(sdCurrentPath));}
+async function makeSdDir(){const name=sdNewDir.value.trim();if(!name)return;const body=new URLSearchParams({path:joinPath(sdCurrentPath,name)});const r=await fetch('/sd/mkdir',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});sdFileStatus.textContent=await r.text();sdNewDir.value='';loadSdPath(sdCurrentPath);}
+async function deleteSdPath(path){if(!confirm('Delete '+path+'?'))return;const body=new URLSearchParams({path});const r=await fetch('/sd/delete',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});sdFileStatus.textContent=await r.text();loadSdPath(sdCurrentPath);}
+async function uploadSdFile(e){e.preventDefault();if(!sdUpload.files.length)return;const body=new FormData();body.append('dir',sdCurrentPath);body.append('file',sdUpload.files[0]);sdFileStatus.textContent='Uploading...';const r=await fetch('/sd/upload?dir='+encodeURIComponent(sdCurrentPath),{method:'POST',body});sdFileStatus.textContent=await r.text();sdUploadForm.reset();loadSdPath(sdCurrentPath);refresh();}
 async function heltecCmd(c,label){hcStatus.textContent='Sending...';const r=await fetch('/serial_cmd',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'cmd='+encodeURIComponent(c)});hcStatus.textContent=r.ok?(label||'Applied: '+c):'Failed: '+c;}
 async function heltecAction(url,label){hcStatus.textContent='Sending...';const r=await fetch(url,{method:'POST'});hcStatus.textContent=r.ok?label:'Failed';setTimeout(refresh,400);}
 async function heltecPost(url,fields,label){hcStatus.textContent='Sending...';const body=new URLSearchParams(fields);const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});hcStatus.textContent=r.ok?label:'Failed';setTimeout(refresh,400);}
@@ -3337,7 +3642,7 @@ function formatBytes(kb){if(!kb)return'0 KB';return kb>=1024?Math.ceil(kb/1024)+
 function drawMap(s){initRealMap();const pts=s.nodes.filter(n=>n.hasPosition);if(realMapReady){realMap.classList.remove('hidden');mapFallback.classList.add('hidden');drawRealMap(s,pts);return}realMap.classList.add('hidden');mapFallback.classList.remove('hidden');drawFallbackMap(s,pts);}
 function drawRealMap(s,pts){if(!pts.length){mapMeta.textContent='No node positions yet';return}const seen={};for(const p of pts){seen[p.num]=true;const html=`<b>${p.name||p.num}</b><br>${p.num}<br>${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}<br>Alt ${p.alt} m<br>${p.positionAge}s old`;if(!markers[p.num])markers[p.num]=L.circleMarker([p.lat,p.lon],{radius:7,color:p.num===s.myNode?'#00c985':'#68ffc0',weight:2,fillColor:p.num===s.myNode?'#00c985':'#68ffc0',fillOpacity:.85}).addTo(leafletMap);else markers[p.num].setLatLng([p.lat,p.lon]);markers[p.num].setStyle({color:p.num===s.myNode?'#00c985':'#68ffc0',fillColor:p.num===s.myNode?'#00c985':'#68ffc0'});markers[p.num].bindPopup(html)}for(const id in markers){if(!seen[id]){leafletMap.removeLayer(markers[id]);delete markers[id]}}const bounds=L.latLngBounds(pts.map(p=>[p.lat,p.lon]));leafletMap.fitBounds(bounds.pad(.2),{maxZoom:15,animate:false});mapMeta.textContent=`OpenStreetMap | ${pts.length} positioned node${pts.length===1?'':'s'}`;}
 function drawFallbackMap(s,pts){const c=mapFallback,ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);ctx.fillStyle='#07100d';ctx.fillRect(0,0,c.width,c.height);ctx.strokeStyle='#1f3d35';ctx.lineWidth=1;for(let x=40;x<c.width;x+=80){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,c.height);ctx.stroke()}for(let y=40;y<c.height;y+=80){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(c.width,y);ctx.stroke()}if(!pts.length){ctx.fillStyle='#8ab7a6';ctx.font='16px system-ui';ctx.fillText('Waiting for position packets',24,40);mapMeta.textContent='No node positions yet';return}let minLat=Math.min(...pts.map(p=>p.lat)),maxLat=Math.max(...pts.map(p=>p.lat)),minLon=Math.min(...pts.map(p=>p.lon)),maxLon=Math.max(...pts.map(p=>p.lon));let latSpan=Math.max(maxLat-minLat,0.000001),lonSpan=Math.max(maxLon-minLon,0.000001),pad=28;for(const p of pts){let x=pad+(p.lon-minLon)*(c.width-pad*2)/lonSpan,y=pad+(maxLat-p.lat)*(c.height-pad*2)/latSpan;ctx.fillStyle=p.num===s.myNode?'#00c985':'#68ffc0';ctx.beginPath();ctx.arc(x,y,6,0,Math.PI*2);ctx.fill();ctx.fillStyle='#e8fff5';ctx.font='12px system-ui';ctx.fillText(p.name||p.num,x+9,y+4)}mapMeta.textContent=`Offline plot | ${pts.length} positioned node${pts.length===1?'':'s'} | center ${((minLat+maxLat)/2).toFixed(5)}, ${((minLon+maxLon)/2).toFixed(5)}`;}
-setInterval(refresh,1000);refresh();
+setInterval(refresh,1000);refresh();loadSdPath('/');
 </script></body></html>
 )HTML");
 }
@@ -3364,6 +3669,8 @@ void setup() {
   }
 
   server.on("/", HTTP_GET, handleRoot);
+  server.on("/chat/public", HTTP_GET, []() { handleChatWindow(false); });
+  server.on("/chat/private", HTTP_GET, []() { handleChatWindow(true); });
   server.on("/status", HTTP_GET, handleStatus);
   server.on("/send", HTTP_POST, handleSend);
   server.on("/serial_cmd", HTTP_POST, handleSerialCmd);
@@ -3373,6 +3680,11 @@ void setup() {
   server.on("/sd/positions", HTTP_GET, []() { handleSdDownload(SD_POSITIONS_PATH, "positions.csv", "text/csv"); });
   server.on("/sd/mapcache", HTTP_GET, []() { handleSdDownload(SD_MAP_CACHE_PATH, "map_cache.bin", "application/octet-stream"); });
   server.on("/sd/last-location", HTTP_GET, []() { handleSdDownload(SD_LAST_LOCATION_PATH, "last_location.txt", "text/plain"); });
+  server.on("/sd/list", HTTP_GET, handleSdList);
+  server.on("/sd/download", HTTP_GET, handleSdFileDownload);
+  server.on("/sd/mkdir", HTTP_POST, handleSdMkdir);
+  server.on("/sd/delete", HTTP_POST, handleSdDelete);
+  server.on("/sd/upload", HTTP_POST, handleSdUploadDone, handleSdUploadStream);
   server.on("/sd/mount", HTTP_POST, []() {
     if (!requireWebAuth()) return;
     initSdStorage();

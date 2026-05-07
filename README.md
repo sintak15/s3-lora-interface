@@ -51,4 +51,8 @@ Offline on-device map tiles can be copied to the SD card as raw RGB565 files.
 3. Use password `12345678`.
 4. Open `http://192.168.4.1/`.
 
-The page shows radio stats, decoded events, chat messages, an OpenStreetMap node map with an offline fallback plot, SD log downloads, and known nodes. The send box broadcasts a Meshtastic text message to the mesh.
+The page shows radio stats, decoded events, separate public/private chat panes, an OpenStreetMap node map with an offline fallback plot, SD log downloads, and known nodes. Public and private messages have separate send boxes, and each chat can open in its own dedicated browser window.
+
+The Web UI also includes an SD file browser. Mount the SD card, browse folders, download files, create folders, delete files or empty folders, and upload a file into the currently open directory.
+
+The `test-gameboy-submenu` branch adds a Games launcher section with a Peanut GB submenu for experimenting with a future port of `https://github.com/diegopap/peanut_gb_esp32`.
