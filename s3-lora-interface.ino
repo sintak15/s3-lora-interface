@@ -19,6 +19,9 @@
 #include "src/meshtastic/telemetry.pb.h"
 #include "src/meshtastic/portnums.pb.h"
 #include "src/UIConfig.h"
+#define ENABLE_SOUND 0
+#define PEANUT_GB_HIGH_LCD_ACCURACY 0
+#include "src/peanut_gb.h"
 
 HardwareSerial SerialLoRa(2);
 HardwareSerial SerialGPS(1);
@@ -109,6 +112,7 @@ struct LocalBatteryStats {
   int percent = 0;
   bool usbLikely = false;
   bool chargingLikely = false;
+  bool highVoltageCharging = false;
   uint32_t lastSampleMs = 0;
   uint32_t lastTrendMs = 0;
   uint32_t lastTrendMv = 0;
@@ -194,6 +198,16 @@ static uint32_t gameBoySelectedSize = 0;
 static uint8_t gameBoySelectedCartType = 0;
 static uint8_t gameBoySelectedRomSizeCode = 0;
 static uint8_t gameBoySelectedRamSizeCode = 0;
+static uint8_t* gameBoyRomData = nullptr;
+static uint32_t gameBoyRomSize = 0;
+static char gameBoyLoadedRom[128] = "";
+static uint8_t* gameBoyCartRam = nullptr;
+static size_t gameBoyCartRamSize = 0;
+static gb_s gameBoyCore;
+static bool gameBoyCoreReady = false;
+static bool gameBoyRunning = false;
+static uint32_t gameBoyFrames = 0;
+static char gameBoyRuntimeStatus[96] = "idle";
 static uint32_t framesDecoded = 0;
 static uint32_t decodeErrors = 0;
 static uint32_t bytesFromRadio = 0;
@@ -292,6 +306,8 @@ static lv_obj_t* sliderBacklight = nullptr;
 static lv_obj_t* lblBacklight = nullptr;
 static lv_obj_t* lblBatteryStats = nullptr;
 static lv_obj_t* lblGameBoyStatus = nullptr;
+static lv_obj_t* canvasGameBoy = nullptr;
+static lv_color_t* gameBoyCanvasBuffer = nullptr;
 static lv_obj_t* lblGpsStats = nullptr;
 static lv_obj_t* lblMapStats = nullptr;
 static lv_obj_t* mapPlot = nullptr;
@@ -622,6 +638,31 @@ static int batteryPercentFromMv(uint32_t mv) {
   return curve[sizeof(curve) / sizeof(curve[0]) - 1].pct;
 }
 
+static void updateBatteryRgbIndicator() {
+  if (localBattery.highVoltageCharging || localBattery.chargingLikely) {
+    neopixelWrite(BATTERY_RGB_PIN, 0, 24, 0);
+  } else if (localBattery.batteryMv > 0 && localBattery.batteryMv < 3500) {
+    neopixelWrite(BATTERY_RGB_PIN, 24, 0, 0);
+  } else {
+    neopixelWrite(BATTERY_RGB_PIN, 0, 0, 0);
+  }
+}
+
+static bool isBatteryChargingDisplayActive() {
+  return localBattery.highVoltageCharging || localBattery.chargingLikely;
+}
+
+static void formatBatteryDisplay(char* out, size_t outSize) {
+  if (!out || outSize == 0) return;
+  if (isBatteryChargingDisplayActive()) {
+    strlcpy(out, "Charging", outSize);
+  } else if (localBattery.batteryMv > 0) {
+    snprintf(out, outSize, "%d%%", localBattery.percent);
+  } else {
+    strlcpy(out, "--", outSize);
+  }
+}
+
 static uint32_t smoothBatteryEstimate(uint32_t currentMv, uint32_t targetMv, bool pluggedIn) {
   if (currentMv == 0) return constrain(targetMv, 3300UL, 4200UL);
   targetMv = constrain(targetMv, 3300UL, 4200UL);
@@ -657,20 +698,22 @@ static void sampleLocalBattery() {
     localBattery.filteredPackMv = (localBattery.filteredPackMv * 3 + packMv) / 4;
   }
 
-  bool overLipoVoltage = localBattery.filteredPackMv >= 4300 || packMv >= 4350;
-  bool unplugStep = rawStepMv < -120 && packMv < 4250;
-  bool keepUsbLatch = localBattery.usbLikely && localBattery.filteredPackMv >= 4240 && !unplugStep;
-  localBattery.usbLikely = overLipoVoltage || keepUsbLatch;
+  bool highChargeVoltage = localBattery.filteredPackMv >= 4200 || packMv >= 4220;
+  bool unplugStep = rawStepMv < -120 && packMv < 4150;
+  bool keepUsbLatch = localBattery.usbLikely && localBattery.filteredPackMv >= 4150 && !unplugStep;
+  localBattery.usbLikely = highChargeVoltage || keepUsbLatch;
+  localBattery.highVoltageCharging = localBattery.usbLikely && (localBattery.filteredPackMv >= 4200 || packMv >= 4200);
 
-  bool plausibleChargeVoltage = localBattery.filteredPackMv >= 4050 && localBattery.filteredPackMv <= 4240;
+  bool plausibleChargeVoltage = localBattery.filteredPackMv >= 4050 && localBattery.filteredPackMv <= 4200;
   localBattery.chargingLikely = !localBattery.usbLikely && plausibleChargeVoltage && rawStepMv > 8;
 
   uint32_t trustedPackMv = localBattery.filteredPackMv;
-  if (localBattery.usbLikely && trustedPackMv > 4200) {
+  if (localBattery.highVoltageCharging && trustedPackMv >= 4200) {
     trustedPackMv = localBattery.batteryMv ? localBattery.batteryMv : 4100;
   }
   localBattery.batteryMv = smoothBatteryEstimate(localBattery.batteryMv, trustedPackMv, localBattery.usbLikely);
   localBattery.percent = batteryPercentFromMv(localBattery.batteryMv);
+  if (localBattery.highVoltageCharging && localBattery.percent >= 100) localBattery.percent = 99;
 
   if (localBattery.lastTrendMs == 0) {
     localBattery.lastTrendMs = millis();
@@ -686,7 +729,9 @@ static void sampleLocalBattery() {
     localBattery.lastTrendMv = localBattery.batteryMv;
   }
 
-  if (localBattery.usbLikely) {
+  if (localBattery.highVoltageCharging) {
+    strlcpy(localBattery.powerState, "charging", sizeof(localBattery.powerState));
+  } else if (localBattery.usbLikely) {
     strlcpy(localBattery.powerState, "plugged in", sizeof(localBattery.powerState));
   } else if (localBattery.chargingLikely) {
     strlcpy(localBattery.powerState, "charging/plugged", sizeof(localBattery.powerState));
@@ -695,6 +740,7 @@ static void sampleLocalBattery() {
   } else {
     strlcpy(localBattery.powerState, "battery/steady", sizeof(localBattery.powerState));
   }
+  updateBatteryRgbIndicator();
   localBattery.lastRawPackMv = packMv;
 }
 
@@ -1486,30 +1532,287 @@ static void buildLandscapeKeyboardScreen() {
   lv_obj_add_event_cb(landscapeKeyboard, landscapeKeyboardEvent, LV_EVENT_CANCEL, nullptr);
 }
 
+static void ensureGameBoyPage();
+static bool gameBoyStartSelectedRom();
+static void gameBoyStop();
+
+static const char* gameBoyInitErrorName(gb_init_error_e err) {
+  switch (err) {
+    case GB_INIT_NO_ERROR: return "ready";
+    case GB_INIT_INVALID_CHECKSUM: return "bad checksum";
+    case GB_INIT_CARTRIDGE_UNSUPPORTED: return "cart unsupported";
+    default: return "init failed";
+  }
+}
+
+static uint8_t gameBoyRomRead(gb_s*, const uint_fast32_t addr) {
+  if (!gameBoyRomData || addr >= gameBoyRomSize) return 0xFF;
+  return gameBoyRomData[addr];
+}
+
+static uint8_t gameBoyCartRamRead(gb_s*, const uint_fast32_t addr) {
+  if (!gameBoyCartRam || addr >= gameBoyCartRamSize) return 0xFF;
+  return gameBoyCartRam[addr];
+}
+
+static void gameBoyCartRamWrite(gb_s*, const uint_fast32_t addr, const uint8_t val) {
+  if (!gameBoyCartRam || addr >= gameBoyCartRamSize) return;
+  gameBoyCartRam[addr] = val;
+}
+
+static void gameBoyError(gb_s*, const gb_error_e err, const uint16_t addr) {
+  gameBoyRunning = false;
+  snprintf(gameBoyRuntimeStatus, sizeof(gameBoyRuntimeStatus), "emulator error %d @ %04X", (int)err, addr);
+  if (lblGameBoyStatus) lv_label_set_text(lblGameBoyStatus, gameBoyRuntimeStatus);
+  appendLine(eventLog, LOG_SIZE, "[gameboy] emulator error\n");
+}
+
+static void gameBoyDrawLine(gb_s*, const uint8_t* pixels, const uint_fast8_t line) {
+  if (!gameBoyCanvasBuffer || line >= LCD_HEIGHT) return;
+  static const lv_color_t palette[4] = {
+    LV_COLOR_MAKE(0xE8, 0xF8, 0xD0),
+    LV_COLOR_MAKE(0x88, 0xC0, 0x70),
+    LV_COLOR_MAKE(0x34, 0x68, 0x56),
+    LV_COLOR_MAKE(0x08, 0x18, 0x20),
+  };
+  lv_color_t* out = gameBoyCanvasBuffer + (line * LCD_WIDTH);
+  for (uint16_t x = 0; x < LCD_WIDTH; ++x) out[x] = palette[pixels[x] & 0x03];
+}
+
+static void gameBoySetButton(uint8_t mask, bool pressed) {
+  if (!gameBoyCoreReady) return;
+  if (pressed) gameBoyCore.direct.joypad &= ~mask;
+  else gameBoyCore.direct.joypad |= mask;
+}
+
+static uint8_t gameBoyControlMask(const char* control) {
+  if (!control) return 0;
+  if (strcmp(control, "A") == 0) return JOYPAD_A;
+  if (strcmp(control, "B") == 0) return JOYPAD_B;
+  if (strcmp(control, "SELECT") == 0) return JOYPAD_SELECT;
+  if (strcmp(control, "START") == 0) return JOYPAD_START;
+  if (strcmp(control, "RIGHT") == 0) return JOYPAD_RIGHT;
+  if (strcmp(control, "LEFT") == 0) return JOYPAD_LEFT;
+  if (strcmp(control, "UP") == 0) return JOYPAD_UP;
+  if (strcmp(control, "DOWN") == 0) return JOYPAD_DOWN;
+  return 0;
+}
+
+static bool ensureGameBoyCanvas() {
+  if (!pageGameBoy) return false;
+  if (!gameBoyCanvasBuffer) {
+    gameBoyCanvasBuffer = (lv_color_t*)ps_malloc(LCD_WIDTH * LCD_HEIGHT * sizeof(lv_color_t));
+    if (!gameBoyCanvasBuffer) {
+      strlcpy(gameBoyRuntimeStatus, "canvas alloc failed", sizeof(gameBoyRuntimeStatus));
+      return false;
+    }
+    for (uint32_t i = 0; i < LCD_WIDTH * LCD_HEIGHT; ++i) gameBoyCanvasBuffer[i] = LV_COLOR_MAKE(0x08, 0x18, 0x20);
+  }
+  if (!canvasGameBoy) {
+    canvasGameBoy = lv_canvas_create(pageGameBoy);
+    lv_canvas_set_buffer(canvasGameBoy, gameBoyCanvasBuffer, LCD_WIDTH, LCD_HEIGHT, LV_IMG_CF_TRUE_COLOR);
+    lv_obj_align(canvasGameBoy, LV_ALIGN_TOP_MID, 0, 20);
+    lv_obj_set_style_border_color(canvasGameBoy, lv_color_hex(0x68FFC0), 0);
+    lv_obj_set_style_border_width(canvasGameBoy, 1, 0);
+  }
+  return true;
+}
+
+static void gameBoyControlEvent(lv_event_t* e) {
+  const char* control = (const char*)lv_event_get_user_data(e);
+  if (!control) control = "control";
+  uint8_t mask = gameBoyControlMask(control);
+  lv_event_code_t code = lv_event_get_code(e);
+  if (!mask) return;
+  if (code == LV_EVENT_PRESSED) gameBoySetButton(mask, true);
+  else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) gameBoySetButton(mask, false);
+}
+
+static lv_obj_t* makeGameBoyControl(lv_obj_t* parent, const char* text, int x, int y, int w, int h) {
+  lv_obj_t* btn = lv_btn_create(parent);
+  lv_obj_set_size(btn, w, h);
+  lv_obj_align(btn, LV_ALIGN_TOP_LEFT, x, y);
+  styleDarkObject(btn, COLOR_PANEL);
+  styleDarkBorder(btn, 0x2F705F);
+  lv_obj_set_style_radius(btn, 8, 0);
+  lv_obj_set_style_shadow_width(btn, 0, 0);
+  lv_obj_add_event_cb(btn, gameBoyControlEvent, LV_EVENT_PRESSED, (void*)text);
+  lv_obj_add_event_cb(btn, gameBoyControlEvent, LV_EVENT_RELEASED, (void*)text);
+  lv_obj_add_event_cb(btn, gameBoyControlEvent, LV_EVENT_PRESS_LOST, (void*)text);
+  lv_obj_t* label = lv_label_create(btn);
+  lv_label_set_text(label, text);
+  lv_obj_set_style_text_color(label, lv_color_hex(COLOR_TEXT), 0);
+  lv_obj_center(label);
+  return btn;
+}
+
 static void ensureGameBoyPage() {
   if (pageGameBoy || !mainScreen) return;
   pageGameBoy = makePage(mainScreen);
 
-  makePageTitle(pageGameBoy, "Peanut GB");
-  makeActionButton(pageGameBoy, "ROM Browser", 34, [](lv_event_t*) {
-    if (lblGameBoyStatus) lv_label_set_text(lblGameBoyStatus, "ROM browser needs Peanut GB SD loader port");
-    appendLine(eventLog, LOG_SIZE, "[gameboy] ROM browser selected\n");
-  });
-  makeActionButton(pageGameBoy, "Controls", 86, [](lv_event_t*) {
-    if (lblGameBoyStatus) lv_label_set_text(lblGameBoyStatus, "Controls need mapping to touch or external buttons");
-    appendLine(eventLog, LOG_SIZE, "[gameboy] controls selected\n");
-  });
-  makeActionButton(pageGameBoy, "Start Emulator", 138, [](lv_event_t*) {
-    if (lblGameBoyStatus) lv_label_set_text(lblGameBoyStatus, "Peanut GB launch path not wired yet");
-    appendLine(eventLog, LOG_SIZE, "[gameboy] emulator launch requested\n");
-  });
-  lv_obj_t* gameBoyPanel = makePanel(pageGameBoy);
-  lv_obj_set_size(gameBoyPanel, SCREEN_W - 12, 70);
-  lv_obj_align(gameBoyPanel, LV_ALIGN_TOP_MID, 0, 190);
-  lblGameBoyStatus = lv_label_create(gameBoyPanel);
-  lv_label_set_text(lblGameBoyStatus, "Ready to port upstream Peanut-GB");
+  makePageTitle(pageGameBoy, "Game Boy");
+
+  lv_obj_t* viewport = makePanel(pageGameBoy);
+  lv_obj_set_size(viewport, LCD_WIDTH + 12, LCD_HEIGHT + 12);
+  lv_obj_align(viewport, LV_ALIGN_TOP_MID, 0, 18);
+  lv_obj_set_style_bg_color(viewport, lv_color_hex(0x06110E), 0);
+
+  lblGameBoyStatus = lv_label_create(viewport);
+  lv_label_set_text(lblGameBoyStatus, "No ROM selected\nUse Web UI Games / ROMs");
   lv_obj_set_style_text_color(lblGameBoyStatus, lv_color_hex(COLOR_TEXT), 0);
   lv_obj_set_width(lblGameBoyStatus, lv_pct(100));
+  lv_obj_align(lblGameBoyStatus, LV_ALIGN_TOP_LEFT, 2, 2);
+  ensureGameBoyCanvas();
+
+  makeGameBoyControl(pageGameBoy, "UP", 50, 178, 42, 28);
+  makeGameBoyControl(pageGameBoy, "LEFT", 4, 208, 54, 28);
+  makeGameBoyControl(pageGameBoy, "RIGHT", 82, 208, 54, 28);
+  makeGameBoyControl(pageGameBoy, "DOWN", 50, 238, 42, 28);
+  makeGameBoyControl(pageGameBoy, "B", 154, 198, 34, 34);
+  makeGameBoyControl(pageGameBoy, "A", 198, 180, 34, 34);
+  makeGameBoyControl(pageGameBoy, "SELECT", 104, 238, 58, 28);
+  makeGameBoyControl(pageGameBoy, "START", 170, 238, 58, 28);
+
+  lv_obj_t* exitBtn = makeGameBoyControl(pageGameBoy, "EXIT", 184, 0, 48, 24);
+  lv_obj_add_event_cb(exitBtn, [](lv_event_t*) {
+    gameBoyStop();
+    showPage(previousPage ? previousPage : pageLauncher, false);
+  }, LV_EVENT_CLICKED, nullptr);
+}
+
+static void showGameBoyOverlay() {
+  ensureGameBoyPage();
+  if (!pageGameBoy) return;
+  showPage(pageGameBoy);
+  gameBoyStartSelectedRom();
+  appendLine(eventLog, LOG_SIZE, "[gameboy] device overlay opened\n");
+}
+
+static void gameBoyStop() {
+  gameBoyRunning = false;
+  if (gameBoyCoreReady) gameBoyCore.direct.joypad = 0xFF;
+  strlcpy(gameBoyRuntimeStatus, "stopped", sizeof(gameBoyRuntimeStatus));
+  if (lblGameBoyStatus) lv_label_set_text(lblGameBoyStatus, gameBoyRuntimeStatus);
+}
+
+static bool gameBoyLoadSelectedRom() {
+  if (!sdStorage.available || !gameBoySelectedRom[0]) {
+    strlcpy(gameBoyRuntimeStatus, "select a ROM first", sizeof(gameBoyRuntimeStatus));
+    return false;
+  }
+  File file = SD_MMC.open(gameBoySelectedRom, FILE_READ);
+  if (!file || file.isDirectory()) {
+    strlcpy(gameBoyRuntimeStatus, "ROM open failed", sizeof(gameBoyRuntimeStatus));
+    return false;
+  }
+
+  uint32_t size = (uint32_t)file.size();
+  if (size < 0x150 || size > 4UL * 1024UL * 1024UL) {
+    file.close();
+    strlcpy(gameBoyRuntimeStatus, "ROM size unsupported", sizeof(gameBoyRuntimeStatus));
+    return false;
+  }
+
+  if (gameBoyRomData && gameBoyRomSize == size && strcmp(gameBoyLoadedRom, gameBoySelectedRom) == 0) {
+    file.close();
+    return true;
+  }
+
+  if (gameBoyRomData) {
+    free(gameBoyRomData);
+    gameBoyRomData = nullptr;
+    gameBoyRomSize = 0;
+    gameBoyLoadedRom[0] = '\0';
+  }
+
+  gameBoyRomData = (uint8_t*)ps_malloc(size);
+  if (!gameBoyRomData) {
+    file.close();
+    strlcpy(gameBoyRuntimeStatus, "ROM alloc failed", sizeof(gameBoyRuntimeStatus));
+    return false;
+  }
+
+  uint32_t offset = 0;
+  while (offset < size) {
+    int n = file.read(gameBoyRomData + offset, min<uint32_t>(4096, size - offset));
+    if (n <= 0) break;
+    offset += (uint32_t)n;
+    yield();
+  }
+  file.close();
+
+  if (offset != size) {
+    free(gameBoyRomData);
+    gameBoyRomData = nullptr;
+    gameBoyRomSize = 0;
+    gameBoyLoadedRom[0] = '\0';
+    strlcpy(gameBoyRuntimeStatus, "ROM read failed", sizeof(gameBoyRuntimeStatus));
+    return false;
+  }
+
+  gameBoyRomSize = size;
+  strlcpy(gameBoyLoadedRom, gameBoySelectedRom, sizeof(gameBoyLoadedRom));
+  return true;
+}
+
+static bool gameBoyStartSelectedRom() {
+  ensureGameBoyPage();
+  if (!ensureGameBoyCanvas()) {
+    if (lblGameBoyStatus) lv_label_set_text(lblGameBoyStatus, gameBoyRuntimeStatus);
+    return false;
+  }
+  if (!gameBoyLoadSelectedRom()) {
+    if (lblGameBoyStatus) lv_label_set_text(lblGameBoyStatus, gameBoyRuntimeStatus);
+    return false;
+  }
+
+  memset(&gameBoyCore, 0, sizeof(gameBoyCore));
+  gb_init_error_e initErr = gb_init(&gameBoyCore, gameBoyRomRead, gameBoyCartRamRead, gameBoyCartRamWrite, gameBoyError, nullptr);
+  if (initErr != GB_INIT_NO_ERROR) {
+    gameBoyCoreReady = false;
+    gameBoyRunning = false;
+    snprintf(gameBoyRuntimeStatus, sizeof(gameBoyRuntimeStatus), "init: %s", gameBoyInitErrorName(initErr));
+    if (lblGameBoyStatus) lv_label_set_text(lblGameBoyStatus, gameBoyRuntimeStatus);
+    return false;
+  }
+
+  size_t saveSize = 0;
+  gb_get_save_size_s(&gameBoyCore, &saveSize);
+  if (gameBoyCartRamSize != saveSize) {
+    if (gameBoyCartRam) {
+      free(gameBoyCartRam);
+      gameBoyCartRam = nullptr;
+      gameBoyCartRamSize = 0;
+    }
+    if (saveSize > 0) {
+      gameBoyCartRam = (uint8_t*)ps_malloc(saveSize);
+      if (!gameBoyCartRam) {
+        gameBoyCoreReady = false;
+        strlcpy(gameBoyRuntimeStatus, "save RAM alloc failed", sizeof(gameBoyRuntimeStatus));
+        if (lblGameBoyStatus) lv_label_set_text(lblGameBoyStatus, gameBoyRuntimeStatus);
+        return false;
+      }
+      memset(gameBoyCartRam, 0xFF, saveSize);
+      gameBoyCartRamSize = saveSize;
+    }
+  }
+
+  gb_init_lcd(&gameBoyCore, gameBoyDrawLine);
+  gameBoyCore.direct.joypad = 0xFF;
+  gameBoyCoreReady = true;
+  gameBoyRunning = true;
+  gameBoyFrames = 0;
+  snprintf(gameBoyRuntimeStatus, sizeof(gameBoyRuntimeStatus), "running %s", gameBoySelectedTitle[0] ? gameBoySelectedTitle : "ROM");
+  if (lblGameBoyStatus) lv_label_set_text(lblGameBoyStatus, gameBoyRuntimeStatus);
+  appendLine(eventLog, LOG_SIZE, "[gameboy] emulator started\n");
+  return true;
+}
+
+static void serviceGameBoy() {
+  if (!gameBoyRunning || !gameBoyCoreReady || currentPage != pageGameBoy) return;
+  gb_run_frame(&gameBoyCore);
+  gameBoyFrames++;
+  if (canvasGameBoy) lv_obj_invalidate(canvasGameBoy);
 }
 
 static void ensureGamesPage() {
@@ -2217,7 +2520,9 @@ static void refreshScreenUi() {
 
   if (lblBatteryStatus) {
     char batteryStatus[24];
-    snprintf(batteryStatus, sizeof(batteryStatus), "Batt %d%%", localBattery.percent);
+    char batteryDisplay[16];
+    formatBatteryDisplay(batteryDisplay, sizeof(batteryDisplay));
+    snprintf(batteryStatus, sizeof(batteryStatus), "Batt %s", batteryDisplay);
     lv_label_set_text(lblBatteryStatus, batteryStatus);
   }
 
@@ -2398,9 +2703,11 @@ static void refreshScreenUi() {
 
   if (lblBatteryStats) {
     char batteryText[420];
+    char batteryDisplay[16];
+    formatBatteryDisplay(batteryDisplay, sizeof(batteryDisplay));
     snprintf(batteryText, sizeof(batteryText),
              "S3 battery\n"
-             "Level: %d%%\n"
+             "Level: %s\n"
              "Battery estimate: %.2f V\n"
              "Sense voltage: %.2f V\n"
              "ADC pin: GPIO%d\n"
@@ -2415,7 +2722,7 @@ static void refreshScreenUi() {
              "Packets RX/TX: %lu/%lu\n"
              "Channel use: %.2f%%\n"
              "Air TX use: %.2f%%",
-             localBattery.percent,
+             batteryDisplay,
              localBattery.batteryMv / 1000.0f,
              localBattery.rawPackMv / 1000.0f,
              BATT_ADC_PIN,
@@ -2562,6 +2869,7 @@ static void serviceScreen() {
   pollWifiScan();
   sampleLocalBattery();
   refreshScreenUi();
+  serviceGameBoy();
   lv_timer_handler();
 }
 
@@ -3202,6 +3510,8 @@ static void handleStatus() {
   if (lastByteMs) snprintf(rxAge, sizeof(rxAge), "%lus ago", (unsigned long)((millis() - lastByteMs) / 1000));
   else strlcpy(rxAge, "never", sizeof(rxAge));
   String wifiIp = wifiEnabled ? (wifiApMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString()) : String("off");
+  char batteryDisplay[16];
+  formatBatteryDisplay(batteryDisplay, sizeof(batteryDisplay));
   String json = "{";
   json += "\"title\":\"" + String(UI::Labels::AppTitle) + "\",";
   json += "\"ip\":\"" + wifiIp + "\",";
@@ -3231,6 +3541,8 @@ static void handleStatus() {
   json += "\"myNode\":\"!" + String(stats.myNodeNum, HEX) + "\",";
   json += "\"myNodeName\":\"" + jsonEscape(nodeName(stats.myNodeNum)) + "\",";
   json += "\"battery\":" + String(localBattery.percent) + ",";
+  json += "\"batteryDisplay\":\"" + jsonEscape(batteryDisplay) + "\",";
+  json += "\"batteryCharging\":" + String(isBatteryChargingDisplayActive() ? "true" : "false") + ",";
   json += "\"voltage\":" + String(localBattery.batteryMv / 1000.0f, 2) + ",";
   json += "\"senseVoltage\":" + String(localBattery.rawPackMv / 1000.0f, 2) + ",";
   json += "\"batterySource\":\"S3\",";
@@ -3603,7 +3915,9 @@ static void handleGameBoyStatus() {
   if (!requireWebAuth()) return;
   String json = "{";
   json += "\"core\":\"Peanut-GB\",";
-  json += "\"runtime\":\"metadata only\",";
+  json += "\"runtime\":\"" + jsonEscape(gameBoyRuntimeStatus) + "\",";
+  json += "\"running\":" + String(gameBoyRunning ? "true" : "false") + ",";
+  json += "\"frames\":" + String(gameBoyFrames) + ",";
   json += "\"vendored\":true,";
   json += "\"selectedPath\":\"" + jsonEscape(gameBoySelectedRom) + "\",";
   json += "\"selectedTitle\":\"" + jsonEscape(gameBoySelectedTitle) + "\",";
@@ -3612,6 +3926,12 @@ static void handleGameBoyStatus() {
   json += "\"romSizeCode\":" + String(gameBoySelectedRomSizeCode) + ",";
   json += "\"ramSizeCode\":" + String(gameBoySelectedRamSizeCode) + "}";
   server.send(200, "application/json", json);
+}
+
+static void handleGameBoyDeviceOverlay() {
+  if (!requireWebAuth()) return;
+  showGameBoyOverlay();
+  server.send(200, "text/plain", "device overlay opened");
 }
 
 static void handleSend() {
@@ -3737,10 +4057,10 @@ canvas{width:100%;height:260px;background:#07100d;border:1px solid #24483e;borde
 <table class="filetable"><thead><tr><th>Name</th><th>Size</th><th>Actions</th></tr></thead><tbody id="sdFiles"><tr><td colspan="3">Mount SD to browse files</td></tr></tbody></table>
 <div class="uploadrow"><input id="sdNewDir" placeholder="New folder name"><button class="smallAction" onclick="makeSdDir()">Create Folder</button></div>
 <form id="sdUploadForm" class="uploadrow" onsubmit="uploadSdFile(event)"><input id="sdUpload" type="file"><button>Upload</button></form><div class="hint statusbox" id="sdFileStatus">Ready</div></section>
-<section><h2>Games / ROMs</h2><div class="romActions"><button onclick="loadGameRoms()">Scan ROMs</button><button class="smallAction" onclick="openRomsFolder()">Open /roms</button></div>
+<section><h2>Games / ROMs</h2><div class="romActions"><button onclick="loadGameRoms()">Scan ROMs</button><button class="smallAction" onclick="openRomsFolder()">Open /roms</button><button class="smallAction" onclick="openDeviceOverlay()">Device Overlay</button></div>
 <form id="romUploadForm" class="uploadrow" onsubmit="uploadRomFile(event)"><input id="romUpload" type="file" accept=".gb,.gbc"><button>Upload ROM</button></form>
 <table class="filetable"><thead><tr><th>ROM</th><th>Size</th><th>Action</th></tr></thead><tbody id="romFiles"><tr><td colspan="3">Scan SD for ROMs</td></tr></tbody></table>
-<div class="hint statusbox romStatus" id="romStatus">Peanut-GB core vendored; runtime adapter not enabled.</div></section>
+<div class="hint statusbox romStatus" id="romStatus">Peanut-GB runtime ready. Select a ROM, then open Device Overlay.</div></section>
 <section><h2>Nodes</h2><table><thead><tr><th>Node</th><th>Name</th><th>SNR</th><th>Age</th><th>GPS</th></tr></thead><tbody id="nodes"></tbody></table></section>
 <section><h2>Serial Link</h2><input id="cmd" placeholder="Serial command"><button onclick="sendCmd()">Send Command</button><pre id="serial" style="margin-top:6px"></pre></section>
 <section><h2>Event Log</h2><pre id="log"></pre></section>
@@ -3748,7 +4068,8 @@ canvas{width:100%;height:260px;background:#07100d;border:1px solid #24483e;borde
 let leafletMap=null,markers={},realMapReady=false,sdCurrentPath='/';
 function initRealMap(){if(realMapReady||!window.L)return;leafletMap=L.map('realMap',{zoomControl:true,attributionControl:true});L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(leafletMap);leafletMap.setView([0,0],2);realMapReady=true;}
 async function refresh(){const s=await (await fetch('/status')).json();ip.textContent=s.wifiMode+' '+s.ip;
-stats.innerHTML=[['Node',s.myNode],['S3 Battery',s.battery+'% '+s.voltage+'V'],['Power',s.powerState],['Frames',s.frames],['Errors',s.errors],['RX/TX',s.rx+'/'+s.tx],['Nodes',s.online+'/'+s.total],['SD',s.sdStatus]]
+const batteryLabel=(s.batteryDisplay||s.battery+'%')+' '+(s.batteryCharging?s.senseVoltage:s.voltage)+'V';
+stats.innerHTML=[['Node',s.myNode],['S3 Battery',batteryLabel],['Power',s.powerState],['Frames',s.frames],['Errors',s.errors],['RX/TX',s.rx+'/'+s.tx],['Nodes',s.online+'/'+s.total],['SD',s.sdStatus]]
 .map(x=>`<div class=stat><div class=label>${x[0]}</div><div class=value>${x[1]}</div></div>`).join('');
 storage.innerHTML=[['Status',s.sdAvailable?'mounted':s.sdStatus],['Type',s.sdType],['Used',formatBytes(s.sdUsedKb)],['Total',formatBytes(s.sdTotalKb)],['Writes',s.sdWrites],['Errors',s.sdErrors],['Map Cache',s.mapCacheLoaded?'loaded':s.mapCacheStatus]]
 .map(x=>`<div class=stat><div class=label>${x[0]}</div><div class=value>${x[1]}</div></div>`).join('');
@@ -3774,9 +4095,10 @@ function loadSdParent(){loadSdPath(parentPath(sdCurrentPath));}
 async function makeSdDir(){const name=sdNewDir.value.trim();if(!name)return;const body=new URLSearchParams({path:joinPath(sdCurrentPath,name)});const r=await fetch('/sd/mkdir',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});sdFileStatus.textContent=await r.text();sdNewDir.value='';loadSdPath(sdCurrentPath);}
 async function deleteSdPath(path){if(!confirm('Delete '+path+'?'))return;const body=new URLSearchParams({path});const r=await fetch('/sd/delete',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});sdFileStatus.textContent=await r.text();loadSdPath(sdCurrentPath);}
 async function uploadSdFile(e){e.preventDefault();if(!sdUpload.files.length)return;const body=new FormData();body.append('dir',sdCurrentPath);body.append('file',sdUpload.files[0]);sdFileStatus.textContent='Uploading...';const r=await fetch('/sd/upload?dir='+encodeURIComponent(sdCurrentPath),{method:'POST',body});sdFileStatus.textContent=await r.text();sdUploadForm.reset();loadSdPath(sdCurrentPath);refresh();}
-async function loadGameStatus(){const r=await fetch('/games/status');if(!r.ok){romStatus.textContent=await r.text();return}const s=await r.json();romStatus.textContent=`Core: ${s.core} (${s.runtime})\nSelected: ${s.selectedPath||'none'}\nTitle: ${s.selectedTitle||'-'}\nSize: ${s.selectedSize?fileSize(s.selectedSize):'-'}\nCart/ROM/RAM: ${s.cartType}/${s.romSizeCode}/${s.ramSizeCode}`;}
+async function loadGameStatus(){const r=await fetch('/games/status');if(!r.ok){romStatus.textContent=await r.text();return}const s=await r.json();romStatus.textContent=`Core: ${s.core} (${s.runtime})\nState: ${s.running?'running':'idle'}  Frames: ${s.frames||0}\nSelected: ${s.selectedPath||'none'}\nTitle: ${s.selectedTitle||'-'}\nSize: ${s.selectedSize?fileSize(s.selectedSize):'-'}\nCart/ROM/RAM: ${s.cartType}/${s.romSizeCode}/${s.ramSizeCode}`;}
 async function loadGameRoms(){romStatus.textContent='Scanning /roms...';const r=await fetch('/games/roms?path=/roms');if(!r.ok){romStatus.textContent=await r.text();return}const data=await r.json();const rows=(data.roms||[]).map(rom=>{const pathArg=jsArg(rom.path);return `<tr><td>${esc(rom.title||rom.name)}<br><span class="label">${esc(rom.path)}</span></td><td>${fileSize(rom.size)}</td><td><button onclick="selectGameRom('${pathArg}')">Select</button></td></tr>`});romFiles.innerHTML=rows.join('')||'<tr><td colspan="3">No .gb or .gbc files found in /roms</td></tr>';romStatus.textContent=data.limit?'Showing first 32 ROMs':'Scan complete';loadGameStatus();}
 async function selectGameRom(path){const body=new URLSearchParams({path});const r=await fetch('/games/select',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});romStatus.textContent=await r.text();loadGameStatus();}
+async function openDeviceOverlay(){const r=await fetch('/games/device-overlay',{method:'POST'});romStatus.textContent=await r.text();}
 async function openRomsFolder(){const body=new URLSearchParams({path:'/roms'});await fetch('/sd/mkdir',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});loadSdPath('/roms');}
 async function uploadRomFile(e){e.preventDefault();if(!romUpload.files.length)return;const mk=new URLSearchParams({path:'/roms'});await fetch('/sd/mkdir',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:mk});const body=new FormData();body.append('dir','/roms');body.append('file',romUpload.files[0]);romStatus.textContent='Uploading ROM...';const r=await fetch('/sd/upload?dir=/roms',{method:'POST',body});romStatus.textContent=await r.text();romUploadForm.reset();loadGameRoms();refresh();}
 async function heltecCmd(c,label){hcStatus.textContent='Sending...';const r=await fetch('/serial_cmd',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'cmd='+encodeURIComponent(c)});hcStatus.textContent=r.ok?(label||'Applied: '+c):'Failed: '+c;}
@@ -3802,6 +4124,8 @@ setInterval(refresh,1000);refresh();loadSdPath('/');loadGameStatus();
 void setup() {
   Serial.begin(115200);
   Serial.println("[boot] serial ready");
+  pinMode(BATTERY_RGB_PIN, OUTPUT);
+  neopixelWrite(BATTERY_RGB_PIN, 0, 0, 0);
   SerialLoRa.setRxBufferSize(4096);
   SerialLoRa.begin(LORA_BAUD, SERIAL_8N1, LORA_RX_PIN, LORA_TX_PIN);
   SerialGPS.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
@@ -3840,6 +4164,7 @@ void setup() {
   server.on("/games/roms", HTTP_GET, handleGameBoyRoms);
   server.on("/games/select", HTTP_POST, handleGameBoySelect);
   server.on("/games/status", HTTP_GET, handleGameBoyStatus);
+  server.on("/games/device-overlay", HTTP_POST, handleGameBoyDeviceOverlay);
   server.on("/sd/mount", HTTP_POST, []() {
     if (!requireWebAuth()) return;
     initSdStorage();

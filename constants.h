@@ -39,6 +39,7 @@
 // The board's divider presents about half the LiPo voltage to the ADC.
 #define BATT_ADC_PIN 9
 #define BATT_ADC_MULTIPLIER 2.0f
+#define BATTERY_RGB_PIN 42
 
 // Browser interface served by this board.
 #define INTERFACE_AP_SSID "Heltec-LoRa-Interface"
