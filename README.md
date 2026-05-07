@@ -56,3 +56,5 @@ The page shows radio stats, decoded events, separate public/private chat panes, 
 The Web UI also includes an SD file browser. Mount the SD card, browse folders, download files, create folders, delete files or empty folders, and upload a file into the currently open directory.
 
 The `test-gameboy-submenu` branch adds a Games launcher section with a Peanut GB submenu for experimenting with a future port of `https://github.com/diegopap/peanut_gb_esp32`.
+
+Game Boy work is currently web-first: the Web UI can upload ROMs to `/roms`, scan the SD card for `.gb` and `.gbc` files, select a ROM, and read basic cartridge metadata. The upstream Peanut-GB core is vendored in `src/peanut_gb.h`, but the emulator runtime is not enabled yet.

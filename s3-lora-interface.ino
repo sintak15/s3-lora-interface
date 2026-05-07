@@ -188,6 +188,12 @@ static DeviceStats stats;
 static GpsStats gpsStats;
 static LocalBatteryStats localBattery;
 static SdStorageStats sdStorage;
+static char gameBoySelectedRom[128] = "";
+static char gameBoySelectedTitle[17] = "";
+static uint32_t gameBoySelectedSize = 0;
+static uint8_t gameBoySelectedCartType = 0;
+static uint8_t gameBoySelectedRomSizeCode = 0;
+static uint8_t gameBoySelectedRamSizeCode = 0;
 static uint32_t framesDecoded = 0;
 static uint32_t decodeErrors = 0;
 static uint32_t bytesFromRadio = 0;
@@ -3472,6 +3478,142 @@ static void handleSdUploadStream() {
   }
 }
 
+static bool isGameBoyRomPath(const String& path) {
+  String lower = path;
+  lower.toLowerCase();
+  return lower.endsWith(".gb") || lower.endsWith(".gbc");
+}
+
+static void readGameBoyHeader(File& file, char* title, size_t titleSize, uint8_t& cartType, uint8_t& romSizeCode, uint8_t& ramSizeCode) {
+  if (title && titleSize) title[0] = '\0';
+  cartType = 0;
+  romSizeCode = 0;
+  ramSizeCode = 0;
+  if (!file || file.isDirectory() || file.size() < 0x150) return;
+
+  char rawTitle[17] = "";
+  file.seek(0x0134);
+  size_t bytesRead = file.read((uint8_t*)rawTitle, 16);
+  rawTitle[min<size_t>(bytesRead, 16)] = '\0';
+  size_t out = 0;
+  for (size_t i = 0; i < bytesRead && out + 1 < titleSize; i++) {
+    char c = rawTitle[i];
+    if (c == '\0') break;
+    title[out++] = (c >= 32 && c <= 126) ? c : '?';
+  }
+  title[out] = '\0';
+
+  file.seek(0x0147);
+  cartType = file.read();
+  romSizeCode = file.read();
+  ramSizeCode = file.read();
+}
+
+static void appendGameBoyRomJson(String& json, File& file, const String& path, bool& first) {
+  char title[17] = "";
+  uint8_t cartType = 0;
+  uint8_t romSizeCode = 0;
+  uint8_t ramSizeCode = 0;
+  readGameBoyHeader(file, title, sizeof(title), cartType, romSizeCode, ramSizeCode);
+  if (!first) json += ",";
+  first = false;
+  json += "{\"name\":\"" + jsonEscape(sdBasename(path).c_str()) + "\",";
+  json += "\"path\":\"" + jsonEscape(path.c_str()) + "\",";
+  json += "\"title\":\"" + jsonEscape(title[0] ? title : sdBasename(path).c_str()) + "\",";
+  json += "\"size\":" + String((uint32_t)file.size()) + ",";
+  json += "\"cartType\":" + String(cartType) + ",";
+  json += "\"romSizeCode\":" + String(romSizeCode) + ",";
+  json += "\"ramSizeCode\":" + String(ramSizeCode) + "}";
+}
+
+static void scanGameBoyRomDirectory(const String& path, String& json, bool& first, uint16_t& count, uint16_t& seen) {
+  File dir = SD_MMC.open(path, FILE_READ);
+  if (!dir || !dir.isDirectory()) {
+    if (dir) dir.close();
+    return;
+  }
+
+  File entry = dir.openNextFile();
+  while (entry && seen < 96 && count < 32) {
+    seen++;
+    String entryName = String(entry.name());
+    String fullPath = entryName.startsWith("/") ? entryName : (path == "/" ? "/" + entryName : path + "/" + entryName);
+    if (!entry.isDirectory() && isGameBoyRomPath(fullPath)) {
+      appendGameBoyRomJson(json, entry, fullPath, first);
+      count++;
+    }
+    entry.close();
+    yield();
+    entry = dir.openNextFile();
+  }
+  dir.close();
+}
+
+static void handleGameBoyRoms() {
+  if (!requireWebAuth()) return;
+  if (!sdStorage.available) {
+    server.send(503, "application/json", "{\"error\":\"SD card not available\"}");
+    return;
+  }
+
+  String root;
+  if (!normalizeSdPath(server.hasArg("path") ? server.arg("path") : "/roms", root)) {
+    server.send(400, "application/json", "{\"error\":\"invalid path\"}");
+    return;
+  }
+
+  String json = "{\"root\":\"" + jsonEscape(root.c_str()) + "\",\"roms\":[";
+  bool first = true;
+  uint16_t count = 0;
+  uint16_t seen = 0;
+  scanGameBoyRomDirectory(root, json, first, count, seen);
+  json += "],\"limit\":" + String((count >= 32 || seen >= 96) ? "true" : "false") + ",";
+  json += "\"scanned\":" + String(seen) + "}";
+  server.send(200, "application/json", json);
+}
+
+static void handleGameBoySelect() {
+  if (!requireWebAuth()) return;
+  if (!sdStorage.available) {
+    server.send(503, "text/plain", "SD card not available");
+    return;
+  }
+  String path;
+  if (!normalizeSdPath(server.arg("path"), path, false) || !isGameBoyRomPath(path)) {
+    server.send(400, "text/plain", "invalid ROM path");
+    return;
+  }
+  File file = SD_MMC.open(path, FILE_READ);
+  if (!file || file.isDirectory()) {
+    if (file) file.close();
+    server.send(404, "text/plain", "ROM not found");
+    return;
+  }
+
+  strlcpy(gameBoySelectedRom, path.c_str(), sizeof(gameBoySelectedRom));
+  gameBoySelectedSize = (uint32_t)file.size();
+  readGameBoyHeader(file, gameBoySelectedTitle, sizeof(gameBoySelectedTitle),
+                    gameBoySelectedCartType, gameBoySelectedRomSizeCode, gameBoySelectedRamSizeCode);
+  file.close();
+  appendLine(eventLog, LOG_SIZE, "[gameboy] ROM selected from Web UI\n");
+  server.send(200, "text/plain", "ROM selected");
+}
+
+static void handleGameBoyStatus() {
+  if (!requireWebAuth()) return;
+  String json = "{";
+  json += "\"core\":\"Peanut-GB\",";
+  json += "\"runtime\":\"metadata only\",";
+  json += "\"vendored\":true,";
+  json += "\"selectedPath\":\"" + jsonEscape(gameBoySelectedRom) + "\",";
+  json += "\"selectedTitle\":\"" + jsonEscape(gameBoySelectedTitle) + "\",";
+  json += "\"selectedSize\":" + String(gameBoySelectedSize) + ",";
+  json += "\"cartType\":" + String(gameBoySelectedCartType) + ",";
+  json += "\"romSizeCode\":" + String(gameBoySelectedRomSizeCode) + ",";
+  json += "\"ramSizeCode\":" + String(gameBoySelectedRamSizeCode) + "}";
+  server.send(200, "application/json", json);
+}
+
 static void handleSend() {
   if (!requireWebAuth()) return;
   if (!server.hasArg("msg")) {
@@ -3550,6 +3692,7 @@ input{box-sizing:border-box;width:100%;padding:10px;background:#07100d!important
   .formgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.field{display:flex;flex-direction:column;gap:4px}.field label{color:#8ab7a6;font-size:11px;text-transform:uppercase}.full{grid-column:1/-1}.hint{color:#8ab7a6;font-size:12px;margin-top:8px}.statusbox{min-height:34px;background:#07100d;border:1px solid #24483e;border-radius:6px;padding:8px;color:#d9fff0}.checkrow{display:flex;align-items:center;gap:8px;color:#d9fff0;font-size:13px}.checkrow input{width:auto}.primaryAction{grid-column:1/-1}.dangerAction{background:#16332b;color:#d9fff0;border:1px solid #2f705f}
   .chatActions{display:grid;grid-template-columns:1fr 1fr;gap:8px}.chatActions button{width:100%;min-height:44px}.chatLog{min-height:150px}.windowAction{background:#16332b;color:#d9fff0;border:1px solid #2f705f}
   .filebar{display:grid;grid-template-columns:1fr auto auto;gap:6px;margin-bottom:8px}.filetable button{margin:0;padding:5px 7px}.filetable td:last-child{white-space:nowrap}.uploadrow{display:grid;grid-template-columns:1fr auto;gap:6px;margin-top:8px}.smallAction{background:#16332b;color:#d9fff0;border:1px solid #2f705f}.pathText{font:12px ui-monospace,Consolas,monospace;color:#d9fff0;overflow-wrap:anywhere}
+  .romActions{display:flex;flex-wrap:wrap;gap:6px}.romActions button{margin:0}.romStatus{font:12px ui-monospace,Consolas,monospace;white-space:pre-wrap}
   a{color:#68ffc0;text-decoration:none}.links{display:flex;flex-wrap:wrap;gap:6px}.links a{padding:7px 8px;border:1px solid #2f705f;border-radius:6px;background:#07100d}
 table{width:100%;border-collapse:collapse;font-size:12px;color:#f4fff9}td,th{border-bottom:1px solid #203b35;padding:4px;text-align:left}
 #realMap{width:100%;height:320px;background:#07100d;border:1px solid #24483e;border-radius:6px;box-sizing:border-box;overflow:hidden}
@@ -3594,6 +3737,10 @@ canvas{width:100%;height:260px;background:#07100d;border:1px solid #24483e;borde
 <table class="filetable"><thead><tr><th>Name</th><th>Size</th><th>Actions</th></tr></thead><tbody id="sdFiles"><tr><td colspan="3">Mount SD to browse files</td></tr></tbody></table>
 <div class="uploadrow"><input id="sdNewDir" placeholder="New folder name"><button class="smallAction" onclick="makeSdDir()">Create Folder</button></div>
 <form id="sdUploadForm" class="uploadrow" onsubmit="uploadSdFile(event)"><input id="sdUpload" type="file"><button>Upload</button></form><div class="hint statusbox" id="sdFileStatus">Ready</div></section>
+<section><h2>Games / ROMs</h2><div class="romActions"><button onclick="loadGameRoms()">Scan ROMs</button><button class="smallAction" onclick="openRomsFolder()">Open /roms</button></div>
+<form id="romUploadForm" class="uploadrow" onsubmit="uploadRomFile(event)"><input id="romUpload" type="file" accept=".gb,.gbc"><button>Upload ROM</button></form>
+<table class="filetable"><thead><tr><th>ROM</th><th>Size</th><th>Action</th></tr></thead><tbody id="romFiles"><tr><td colspan="3">Scan SD for ROMs</td></tr></tbody></table>
+<div class="hint statusbox romStatus" id="romStatus">Peanut-GB core vendored; runtime adapter not enabled.</div></section>
 <section><h2>Nodes</h2><table><thead><tr><th>Node</th><th>Name</th><th>SNR</th><th>Age</th><th>GPS</th></tr></thead><tbody id="nodes"></tbody></table></section>
 <section><h2>Serial Link</h2><input id="cmd" placeholder="Serial command"><button onclick="sendCmd()">Send Command</button><pre id="serial" style="margin-top:6px"></pre></section>
 <section><h2>Event Log</h2><pre id="log"></pre></section>
@@ -3627,6 +3774,11 @@ function loadSdParent(){loadSdPath(parentPath(sdCurrentPath));}
 async function makeSdDir(){const name=sdNewDir.value.trim();if(!name)return;const body=new URLSearchParams({path:joinPath(sdCurrentPath,name)});const r=await fetch('/sd/mkdir',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});sdFileStatus.textContent=await r.text();sdNewDir.value='';loadSdPath(sdCurrentPath);}
 async function deleteSdPath(path){if(!confirm('Delete '+path+'?'))return;const body=new URLSearchParams({path});const r=await fetch('/sd/delete',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});sdFileStatus.textContent=await r.text();loadSdPath(sdCurrentPath);}
 async function uploadSdFile(e){e.preventDefault();if(!sdUpload.files.length)return;const body=new FormData();body.append('dir',sdCurrentPath);body.append('file',sdUpload.files[0]);sdFileStatus.textContent='Uploading...';const r=await fetch('/sd/upload?dir='+encodeURIComponent(sdCurrentPath),{method:'POST',body});sdFileStatus.textContent=await r.text();sdUploadForm.reset();loadSdPath(sdCurrentPath);refresh();}
+async function loadGameStatus(){const r=await fetch('/games/status');if(!r.ok){romStatus.textContent=await r.text();return}const s=await r.json();romStatus.textContent=`Core: ${s.core} (${s.runtime})\nSelected: ${s.selectedPath||'none'}\nTitle: ${s.selectedTitle||'-'}\nSize: ${s.selectedSize?fileSize(s.selectedSize):'-'}\nCart/ROM/RAM: ${s.cartType}/${s.romSizeCode}/${s.ramSizeCode}`;}
+async function loadGameRoms(){romStatus.textContent='Scanning /roms...';const r=await fetch('/games/roms?path=/roms');if(!r.ok){romStatus.textContent=await r.text();return}const data=await r.json();const rows=(data.roms||[]).map(rom=>{const pathArg=jsArg(rom.path);return `<tr><td>${esc(rom.title||rom.name)}<br><span class="label">${esc(rom.path)}</span></td><td>${fileSize(rom.size)}</td><td><button onclick="selectGameRom('${pathArg}')">Select</button></td></tr>`});romFiles.innerHTML=rows.join('')||'<tr><td colspan="3">No .gb or .gbc files found in /roms</td></tr>';romStatus.textContent=data.limit?'Showing first 32 ROMs':'Scan complete';loadGameStatus();}
+async function selectGameRom(path){const body=new URLSearchParams({path});const r=await fetch('/games/select',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});romStatus.textContent=await r.text();loadGameStatus();}
+async function openRomsFolder(){const body=new URLSearchParams({path:'/roms'});await fetch('/sd/mkdir',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});loadSdPath('/roms');}
+async function uploadRomFile(e){e.preventDefault();if(!romUpload.files.length)return;const mk=new URLSearchParams({path:'/roms'});await fetch('/sd/mkdir',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:mk});const body=new FormData();body.append('dir','/roms');body.append('file',romUpload.files[0]);romStatus.textContent='Uploading ROM...';const r=await fetch('/sd/upload?dir=/roms',{method:'POST',body});romStatus.textContent=await r.text();romUploadForm.reset();loadGameRoms();refresh();}
 async function heltecCmd(c,label){hcStatus.textContent='Sending...';const r=await fetch('/serial_cmd',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'cmd='+encodeURIComponent(c)});hcStatus.textContent=r.ok?(label||'Applied: '+c):'Failed: '+c;}
 async function heltecAction(url,label){hcStatus.textContent='Sending...';const r=await fetch(url,{method:'POST'});hcStatus.textContent=r.ok?label:'Failed';setTimeout(refresh,400);}
 async function heltecPost(url,fields,label){hcStatus.textContent='Sending...';const body=new URLSearchParams(fields);const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});hcStatus.textContent=r.ok?label:'Failed';setTimeout(refresh,400);}
@@ -3642,7 +3794,7 @@ function formatBytes(kb){if(!kb)return'0 KB';return kb>=1024?Math.ceil(kb/1024)+
 function drawMap(s){initRealMap();const pts=s.nodes.filter(n=>n.hasPosition);if(realMapReady){realMap.classList.remove('hidden');mapFallback.classList.add('hidden');drawRealMap(s,pts);return}realMap.classList.add('hidden');mapFallback.classList.remove('hidden');drawFallbackMap(s,pts);}
 function drawRealMap(s,pts){if(!pts.length){mapMeta.textContent='No node positions yet';return}const seen={};for(const p of pts){seen[p.num]=true;const html=`<b>${p.name||p.num}</b><br>${p.num}<br>${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}<br>Alt ${p.alt} m<br>${p.positionAge}s old`;if(!markers[p.num])markers[p.num]=L.circleMarker([p.lat,p.lon],{radius:7,color:p.num===s.myNode?'#00c985':'#68ffc0',weight:2,fillColor:p.num===s.myNode?'#00c985':'#68ffc0',fillOpacity:.85}).addTo(leafletMap);else markers[p.num].setLatLng([p.lat,p.lon]);markers[p.num].setStyle({color:p.num===s.myNode?'#00c985':'#68ffc0',fillColor:p.num===s.myNode?'#00c985':'#68ffc0'});markers[p.num].bindPopup(html)}for(const id in markers){if(!seen[id]){leafletMap.removeLayer(markers[id]);delete markers[id]}}const bounds=L.latLngBounds(pts.map(p=>[p.lat,p.lon]));leafletMap.fitBounds(bounds.pad(.2),{maxZoom:15,animate:false});mapMeta.textContent=`OpenStreetMap | ${pts.length} positioned node${pts.length===1?'':'s'}`;}
 function drawFallbackMap(s,pts){const c=mapFallback,ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);ctx.fillStyle='#07100d';ctx.fillRect(0,0,c.width,c.height);ctx.strokeStyle='#1f3d35';ctx.lineWidth=1;for(let x=40;x<c.width;x+=80){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,c.height);ctx.stroke()}for(let y=40;y<c.height;y+=80){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(c.width,y);ctx.stroke()}if(!pts.length){ctx.fillStyle='#8ab7a6';ctx.font='16px system-ui';ctx.fillText('Waiting for position packets',24,40);mapMeta.textContent='No node positions yet';return}let minLat=Math.min(...pts.map(p=>p.lat)),maxLat=Math.max(...pts.map(p=>p.lat)),minLon=Math.min(...pts.map(p=>p.lon)),maxLon=Math.max(...pts.map(p=>p.lon));let latSpan=Math.max(maxLat-minLat,0.000001),lonSpan=Math.max(maxLon-minLon,0.000001),pad=28;for(const p of pts){let x=pad+(p.lon-minLon)*(c.width-pad*2)/lonSpan,y=pad+(maxLat-p.lat)*(c.height-pad*2)/latSpan;ctx.fillStyle=p.num===s.myNode?'#00c985':'#68ffc0';ctx.beginPath();ctx.arc(x,y,6,0,Math.PI*2);ctx.fill();ctx.fillStyle='#e8fff5';ctx.font='12px system-ui';ctx.fillText(p.name||p.num,x+9,y+4)}mapMeta.textContent=`Offline plot | ${pts.length} positioned node${pts.length===1?'':'s'} | center ${((minLat+maxLat)/2).toFixed(5)}, ${((minLon+maxLon)/2).toFixed(5)}`;}
-setInterval(refresh,1000);refresh();loadSdPath('/');
+setInterval(refresh,1000);refresh();loadSdPath('/');loadGameStatus();
 </script></body></html>
 )HTML");
 }
@@ -3685,6 +3837,9 @@ void setup() {
   server.on("/sd/mkdir", HTTP_POST, handleSdMkdir);
   server.on("/sd/delete", HTTP_POST, handleSdDelete);
   server.on("/sd/upload", HTTP_POST, handleSdUploadDone, handleSdUploadStream);
+  server.on("/games/roms", HTTP_GET, handleGameBoyRoms);
+  server.on("/games/select", HTTP_POST, handleGameBoySelect);
+  server.on("/games/status", HTTP_GET, handleGameBoyStatus);
   server.on("/sd/mount", HTTP_POST, []() {
     if (!requireWebAuth()) return;
     initSdStorage();
