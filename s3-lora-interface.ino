@@ -19,6 +19,7 @@
 #include "src/meshtastic/telemetry.pb.h"
 #include "src/meshtastic/portnums.pb.h"
 #include "src/UIConfig.h"
+#include "src/WebUi.h"
 
 HardwareSerial SerialLoRa(2);
 HardwareSerial SerialGPS(1);
@@ -165,6 +166,7 @@ static const char* SD_PRIVATE_CHAT_PATH = "/s3-lora/private_chat.log";
 static const char* SD_POSITIONS_PATH = "/s3-lora/positions.csv";
 static const char* SD_MAP_CACHE_PATH = "/s3-lora/map_cache.bin";
 static const char* SD_LAST_LOCATION_PATH = "/s3-lora/last_location.txt";
+static const char* SD_STATUS_SNAPSHOT_PATH = "/s3-lora/status_snapshot.json";
 static const char* WEBUI_USER = "sintak";
 static const char* WEBUI_PASS = "Brielle!13";
 static constexpr uint32_t COLOR_BG = 0x050807;
@@ -311,6 +313,7 @@ static uint32_t lastUiRefreshMs = 0;
 static uint32_t lastSerialDiagMs = 0;
 static uint32_t lastSdDiagMs = 0;
 static uint32_t lastMapUiRefreshMs = 0;
+static bool mapNearbyMode = false;
 static bool mapCanvasCached = false;
 static bool mapRenderPending = false;
 static int cachedMapZoom = -1;
@@ -334,6 +337,7 @@ static void appendLine(char* buffer, size_t bufferSize, const char* line);
 static void refreshMapUi();
 static void loadMapCacheFromSd();
 static void refreshChatViews();
+static void setMapNearbyMode(bool enabled);
 static void styleDarkObject(lv_obj_t* obj, uint32_t bg, uint32_t text = COLOR_TEXT);
 static void styleDarkBorder(lv_obj_t* obj, uint32_t color = COLOR_BORDER);
 static void showPage(lv_obj_t* target, bool remember = true);
@@ -1158,6 +1162,7 @@ static void showPage(lv_obj_t* target, bool remember) {
   if (keyboard) lv_obj_add_flag(keyboard, LV_OBJ_FLAG_HIDDEN);
   currentPage = target;
   if (target == pageGps) {
+    mapNearbyMode = false;
     mapRenderPending = true;
     lastMapUiRefreshMs = millis();
     if (mapCanvasCached && lblMapStats) {
@@ -1172,6 +1177,13 @@ static void showPage(lv_obj_t* target, bool remember) {
       lv_label_set_text(lblMapStats, cacheText);
     }
   }
+}
+
+static void setMapNearbyMode(bool enabled) {
+  mapNearbyMode = enabled;
+  mapRenderPending = true;
+  lastMapUiRefreshMs = 0;
+  refreshMapUi();
 }
 
 static lv_obj_t* makeActionButton(lv_obj_t* parent, const char* text, int y, lv_event_cb_t cb) {
@@ -1596,6 +1608,31 @@ static void buildScreenUi() {
   lv_obj_align(privHint, LV_ALIGN_TOP_LEFT, 2, 236);
 
   makePageTitle(pageGps, "GPS / Map");
+  lv_obj_t* btnGpsMap = lv_btn_create(pageGps);
+  lv_obj_set_size(btnGpsMap, 48, 22);
+  lv_obj_align(btnGpsMap, LV_ALIGN_TOP_RIGHT, -58, 0);
+  styleDarkObject(btnGpsMap, COLOR_PANEL);
+  styleDarkBorder(btnGpsMap, 0x2F705F);
+  lv_obj_set_style_radius(btnGpsMap, 6, 0);
+  lv_obj_set_style_shadow_width(btnGpsMap, 0, 0);
+  lv_obj_add_event_cb(btnGpsMap, [](lv_event_t*) { setMapNearbyMode(false); }, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* lblGpsMap = lv_label_create(btnGpsMap);
+  lv_label_set_text(lblGpsMap, "GPS");
+  lv_obj_set_style_text_color(lblGpsMap, lv_color_hex(COLOR_TEXT), 0);
+  lv_obj_center(lblGpsMap);
+
+  lv_obj_t* btnNodeMap = lv_btn_create(pageGps);
+  lv_obj_set_size(btnNodeMap, 52, 22);
+  lv_obj_align(btnNodeMap, LV_ALIGN_TOP_RIGHT, -2, 0);
+  styleDarkObject(btnNodeMap, COLOR_ACTION, 0x001B12);
+  lv_obj_set_style_radius(btnNodeMap, 6, 0);
+  lv_obj_set_style_shadow_width(btnNodeMap, 0, 0);
+  lv_obj_add_event_cb(btnNodeMap, [](lv_event_t*) { setMapNearbyMode(true); }, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* lblNodeMap = lv_label_create(btnNodeMap);
+  lv_label_set_text(lblNodeMap, "Nodes");
+  lv_obj_set_style_text_color(lblNodeMap, lv_color_hex(0x001B12), 0);
+  lv_obj_center(lblNodeMap);
+
   mapPlot = makePanel(pageGps);
   lv_obj_set_size(mapPlot, MAP_PLOT_W, MAP_PLOT_H);
   lv_obj_align(mapPlot, LV_ALIGN_TOP_MID, 0, 22);
@@ -1800,6 +1837,37 @@ static size_t countPositionedNodes() {
     if (nodes[i].hasPosition) count++;
   }
   return count;
+}
+
+static double distanceMeters(double lat1, double lon1, double lat2, double lon2) {
+  const double r = 6371000.0;
+  double p1 = lat1 * DEG_TO_RAD;
+  double p2 = lat2 * DEG_TO_RAD;
+  double dp = (lat2 - lat1) * DEG_TO_RAD;
+  double dl = (lon2 - lon1) * DEG_TO_RAD;
+  double a = sin(dp / 2.0) * sin(dp / 2.0) +
+             cos(p1) * cos(p2) * sin(dl / 2.0) * sin(dl / 2.0);
+  return r * 2.0 * atan2(sqrt(a), sqrt(1.0 - a));
+}
+
+static bool updateNodePosition(uint32_t nodeNum, const meshtastic_Position& position, const char* source) {
+  if (!position.has_latitude_i || !position.has_longitude_i) return false;
+  if (position.latitude_i == 0 && position.longitude_i == 0) return false;
+
+  NodeRecord* node = findOrCreateNode(nodeNum);
+  if (!node) return false;
+  node->hasPosition = true;
+  node->latitude = position.latitude_i / 10000000.0;
+  node->longitude = position.longitude_i / 10000000.0;
+  node->altitude = position.has_altitude ? position.altitude : 0;
+  node->lastPositionMs = millis();
+
+  char line[128];
+  snprintf(line, sizeof(line), "[map] %s %.5f, %.5f\n", nodeName(nodeNum), node->latitude, node->longitude);
+  appendLine(eventLog, LOG_SIZE, line);
+  logPositionToSd(nodeNum, source ? source : "meshtastic", node->latitude, node->longitude, node->altitude);
+  mapRenderPending = true;
+  return true;
 }
 
 static long lonToTileX(double lon, int zoom) {
@@ -2101,10 +2169,23 @@ static void refreshMapUi() {
   int mapZoom = findBestMapZoom(gpsStats.latitude, gpsStats.longitude, tilePath, sizeof(tilePath));
   bool centerTileFound = renderOfflineTileMap(gpsStats.latitude, gpsStats.longitude, mapZoom, tilePath, sizeof(tilePath));
   size_t plotted = 0;
+  size_t remotePlotted = 0;
+  const NodeRecord* nearest = nullptr;
+  double nearestMeters = 0.0;
   for (size_t i = 0; i < nodeCount; i++) {
     if (!nodes[i].hasPosition) continue;
     lv_color_t color = nodes[i].num == stats.myNodeNum ? lv_color_hex(0x00C985) : lv_color_hex(0x68FFC0);
-    if (placeMapDot(i, nodes[i].latitude, nodes[i].longitude, mapZoom, color, 8)) plotted++;
+    if (placeMapDot(i, nodes[i].latitude, nodes[i].longitude, mapZoom, color, 8)) {
+      plotted++;
+      if (nodes[i].num != stats.myNodeNum) {
+        remotePlotted++;
+        double meters = distanceMeters(gpsStats.latitude, gpsStats.longitude, nodes[i].latitude, nodes[i].longitude);
+        if (!nearest || meters < nearestMeters) {
+          nearest = &nodes[i];
+          nearestMeters = meters;
+        }
+      }
+    }
   }
 
   placeMapDot(MAP_DOT_COUNT - 1, gpsStats.latitude, gpsStats.longitude, mapZoom, lv_color_hex(0x00C985), 10);
@@ -2113,23 +2194,47 @@ static void refreshMapUi() {
   long tileX = lonToTileX(gpsStats.longitude, mapZoom);
   long tileY = latToTileY(gpsStats.latitude, mapZoom);
 
-  char mapText[280];
-  snprintf(mapText, sizeof(mapText),
-           "CYD GPS: fix  RX %lu bytes\n"
-           "Lat/lon: %.5f, %.5f\n"
-           "Offline tile z%d/%ld/%ld: %s\n"
-           "Cache: %s\n"
-           "%u plotted point%s",
-           (unsigned long)gpsBytesFromLocal,
-           gpsStats.latitude,
-           gpsStats.longitude,
-           mapZoom,
-           tileX,
-           tileY,
-           centerTileFound ? "drawn" : "missing",
-           mapCacheStatus,
-           (unsigned)plotted,
-           plotted == 1 ? "" : "s");
+  char mapText[320];
+  if (mapNearbyMode) {
+    char nearestText[72];
+    if (nearest) {
+      snprintf(nearestText, sizeof(nearestText), "%s %.1f km", nodeName(nearest->num), nearestMeters / 1000.0);
+    } else {
+      strlcpy(nearestText, "none yet", sizeof(nearestText));
+    }
+    snprintf(mapText, sizeof(mapText),
+             "Nearby Meshtastic nodes\n"
+             "Local: %.5f, %.5f\n"
+             "Remote nodes: %u  nearest: %s\n"
+             "Tile z%d/%ld/%ld: %s\n"
+             "Cache: %s",
+             gpsStats.latitude,
+             gpsStats.longitude,
+             (unsigned)remotePlotted,
+             nearestText,
+             mapZoom,
+             tileX,
+             tileY,
+             centerTileFound ? "drawn" : "missing",
+             mapCacheStatus);
+  } else {
+    snprintf(mapText, sizeof(mapText),
+             "CYD GPS: fix  RX %lu bytes\n"
+             "Lat/lon: %.5f, %.5f\n"
+             "Offline tile z%d/%ld/%ld: %s\n"
+             "Cache: %s\n"
+             "%u plotted point%s",
+             (unsigned long)gpsBytesFromLocal,
+             gpsStats.latitude,
+             gpsStats.longitude,
+             mapZoom,
+             tileX,
+             tileY,
+             centerTileFound ? "drawn" : "missing",
+             mapCacheStatus,
+             (unsigned)plotted,
+             plotted == 1 ? "" : "s");
+  }
   lv_label_set_text(lblMapStats, mapText);
 }
 
@@ -2796,6 +2901,70 @@ static meshtastic_Channel_Role parseChannelRole(const String& value) {
   return meshtastic_Channel_Role_DISABLED;
 }
 
+static meshtastic_ModuleConfig_SerialConfig_Serial_Baud parseSerialBaud(const String& value) {
+  if (value == "9600") return meshtastic_ModuleConfig_SerialConfig_Serial_Baud_BAUD_9600;
+  if (value == "19200") return meshtastic_ModuleConfig_SerialConfig_Serial_Baud_BAUD_19200;
+  if (value == "38400") return meshtastic_ModuleConfig_SerialConfig_Serial_Baud_BAUD_38400;
+  if (value == "57600") return meshtastic_ModuleConfig_SerialConfig_Serial_Baud_BAUD_57600;
+  if (value == "230400") return meshtastic_ModuleConfig_SerialConfig_Serial_Baud_BAUD_230400;
+  if (value == "460800") return meshtastic_ModuleConfig_SerialConfig_Serial_Baud_BAUD_460800;
+  if (value == "576000") return meshtastic_ModuleConfig_SerialConfig_Serial_Baud_BAUD_576000;
+  if (value == "921600") return meshtastic_ModuleConfig_SerialConfig_Serial_Baud_BAUD_921600;
+  return meshtastic_ModuleConfig_SerialConfig_Serial_Baud_BAUD_115200;
+}
+
+static meshtastic_ModuleConfig_SerialConfig_Serial_Mode parseSerialMode(const String& value) {
+  if (value == "SIMPLE") return meshtastic_ModuleConfig_SerialConfig_Serial_Mode_SIMPLE;
+  if (value == "TEXTMSG") return meshtastic_ModuleConfig_SerialConfig_Serial_Mode_TEXTMSG;
+  if (value == "NMEA") return meshtastic_ModuleConfig_SerialConfig_Serial_Mode_NMEA;
+  if (value == "CALTOPO") return meshtastic_ModuleConfig_SerialConfig_Serial_Mode_CALTOPO;
+  if (value == "WS85") return meshtastic_ModuleConfig_SerialConfig_Serial_Mode_WS85;
+  if (value == "VE_DIRECT") return meshtastic_ModuleConfig_SerialConfig_Serial_Mode_VE_DIRECT;
+  if (value == "MS_CONFIG") return meshtastic_ModuleConfig_SerialConfig_Serial_Mode_MS_CONFIG;
+  if (value == "LOG") return meshtastic_ModuleConfig_SerialConfig_Serial_Mode_LOG;
+  if (value == "LOGTEXT") return meshtastic_ModuleConfig_SerialConfig_Serial_Mode_LOGTEXT;
+  return meshtastic_ModuleConfig_SerialConfig_Serial_Mode_PROTO;
+}
+
+static meshtastic_Config_DeviceConfig_Role parseDeviceRole(const String& value) {
+  if (value == "CLIENT_MUTE") return meshtastic_Config_DeviceConfig_Role_CLIENT_MUTE;
+  if (value == "ROUTER") return meshtastic_Config_DeviceConfig_Role_ROUTER;
+  if (value == "ROUTER_CLIENT") return meshtastic_Config_DeviceConfig_Role_ROUTER_CLIENT;
+  if (value == "REPEATER") return meshtastic_Config_DeviceConfig_Role_REPEATER;
+  if (value == "TRACKER") return meshtastic_Config_DeviceConfig_Role_TRACKER;
+  if (value == "SENSOR") return meshtastic_Config_DeviceConfig_Role_SENSOR;
+  if (value == "TAK") return meshtastic_Config_DeviceConfig_Role_TAK;
+  if (value == "CLIENT_HIDDEN") return meshtastic_Config_DeviceConfig_Role_CLIENT_HIDDEN;
+  if (value == "LOST_AND_FOUND") return meshtastic_Config_DeviceConfig_Role_LOST_AND_FOUND;
+  if (value == "TAK_TRACKER") return meshtastic_Config_DeviceConfig_Role_TAK_TRACKER;
+  if (value == "ROUTER_LATE") return meshtastic_Config_DeviceConfig_Role_ROUTER_LATE;
+  if (value == "CLIENT_BASE") return meshtastic_Config_DeviceConfig_Role_CLIENT_BASE;
+  return meshtastic_Config_DeviceConfig_Role_CLIENT;
+}
+
+static meshtastic_Config_DeviceConfig_RebroadcastMode parseRebroadcastMode(const String& value) {
+  if (value == "ALL_SKIP_DECODING") return meshtastic_Config_DeviceConfig_RebroadcastMode_ALL_SKIP_DECODING;
+  if (value == "LOCAL_ONLY") return meshtastic_Config_DeviceConfig_RebroadcastMode_LOCAL_ONLY;
+  if (value == "KNOWN_ONLY") return meshtastic_Config_DeviceConfig_RebroadcastMode_KNOWN_ONLY;
+  if (value == "NONE") return meshtastic_Config_DeviceConfig_RebroadcastMode_NONE;
+  if (value == "CORE_PORTNUMS_ONLY") return meshtastic_Config_DeviceConfig_RebroadcastMode_CORE_PORTNUMS_ONLY;
+  return meshtastic_Config_DeviceConfig_RebroadcastMode_ALL;
+}
+
+static meshtastic_Config_DeviceConfig_BuzzerMode parseBuzzerMode(const String& value) {
+  if (value == "DISABLED") return meshtastic_Config_DeviceConfig_BuzzerMode_DISABLED;
+  if (value == "NOTIFICATIONS_ONLY") return meshtastic_Config_DeviceConfig_BuzzerMode_NOTIFICATIONS_ONLY;
+  if (value == "SYSTEM_ONLY") return meshtastic_Config_DeviceConfig_BuzzerMode_SYSTEM_ONLY;
+  if (value == "DIRECT_MSG_ONLY") return meshtastic_Config_DeviceConfig_BuzzerMode_DIRECT_MSG_ONLY;
+  return meshtastic_Config_DeviceConfig_BuzzerMode_ALL_ENABLED;
+}
+
+static meshtastic_Config_PositionConfig_GpsMode parseGpsMode(const String& value) {
+  if (value == "ENABLED") return meshtastic_Config_PositionConfig_GpsMode_ENABLED;
+  if (value == "NOT_PRESENT") return meshtastic_Config_PositionConfig_GpsMode_NOT_PRESENT;
+  return meshtastic_Config_PositionConfig_GpsMode_DISABLED;
+}
+
 static bool sendHeltecLoraConfig(const String& region, const String& preset, uint8_t hopLimit, int8_t txPower) {
   meshtastic_AdminMessage admin = meshtastic_AdminMessage_init_zero;
   admin.which_payload_variant = meshtastic_AdminMessage_set_config_tag;
@@ -2811,29 +2980,80 @@ static bool sendHeltecLoraConfig(const String& region, const String& preset, uin
   return ok;
 }
 
-static bool sendHeltecSerialConfig() {
+static bool sendHeltecSerialConfig(bool enabled, uint32_t rxd, uint32_t txd, const String& baud, const String& mode, bool echo, bool overrideConsole) {
   meshtastic_AdminMessage admin = meshtastic_AdminMessage_init_zero;
   admin.which_payload_variant = meshtastic_AdminMessage_set_module_config_tag;
   admin.set_module_config.which_payload_variant = meshtastic_ModuleConfig_serial_tag;
-  admin.set_module_config.payload_variant.serial.enabled = true;
-  admin.set_module_config.payload_variant.serial.rxd = 38;
-  admin.set_module_config.payload_variant.serial.txd = 39;
-  admin.set_module_config.payload_variant.serial.baud = meshtastic_ModuleConfig_SerialConfig_Serial_Baud_BAUD_115200;
-  admin.set_module_config.payload_variant.serial.mode = meshtastic_ModuleConfig_SerialConfig_Serial_Mode_PROTO;
+  admin.set_module_config.payload_variant.serial.enabled = enabled;
+  admin.set_module_config.payload_variant.serial.echo = echo;
+  admin.set_module_config.payload_variant.serial.rxd = rxd;
+  admin.set_module_config.payload_variant.serial.txd = txd;
+  admin.set_module_config.payload_variant.serial.baud = parseSerialBaud(baud);
+  admin.set_module_config.payload_variant.serial.mode = parseSerialMode(mode);
+  admin.set_module_config.payload_variant.serial.override_console_serial_port = overrideConsole;
   bool ok = sendLocalAdmin(admin);
   appendLine(eventLog, LOG_SIZE, ok ? "[local] Heltec serial config sent\n" : "[local] Heltec serial config failed\n");
   return ok;
 }
 
-static bool sendHeltecOwnerName(const String& name) {
+static bool sendHeltecOwnerName(const String& name, const String& shortName) {
   if (!name.length()) return false;
   meshtastic_AdminMessage admin = meshtastic_AdminMessage_init_zero;
   admin.which_payload_variant = meshtastic_AdminMessage_set_owner_tag;
   snprintf(admin.set_owner.id, sizeof(admin.set_owner.id), "!%08lX", (unsigned long)stats.myNodeNum);
   strlcpy(admin.set_owner.long_name, name.c_str(), sizeof(admin.set_owner.long_name));
-  strlcpy(admin.set_owner.short_name, name.substring(0, min<size_t>(4, name.length())).c_str(), sizeof(admin.set_owner.short_name));
+  String shortValue = shortName.length() ? shortName : name.substring(0, min<size_t>(4, name.length()));
+  strlcpy(admin.set_owner.short_name, shortValue.c_str(), sizeof(admin.set_owner.short_name));
   bool ok = sendLocalAdmin(admin);
   appendLine(eventLog, LOG_SIZE, ok ? "[local] Heltec owner name sent\n" : "[local] Heltec owner name failed\n");
+  return ok;
+}
+
+static bool sendHeltecDeviceConfig(const String& role, const String& rebroadcast, uint32_t nodeInfoSecs, const String& tz, bool ledOff, const String& buzzer) {
+  meshtastic_AdminMessage admin = meshtastic_AdminMessage_init_zero;
+  admin.which_payload_variant = meshtastic_AdminMessage_set_config_tag;
+  admin.set_config.which_payload_variant = meshtastic_Config_device_tag;
+  admin.set_config.payload_variant.device.role = parseDeviceRole(role);
+  admin.set_config.payload_variant.device.rebroadcast_mode = parseRebroadcastMode(rebroadcast);
+  admin.set_config.payload_variant.device.node_info_broadcast_secs = nodeInfoSecs;
+  admin.set_config.payload_variant.device.led_heartbeat_disabled = ledOff;
+  admin.set_config.payload_variant.device.buzzer_mode = parseBuzzerMode(buzzer);
+  if (tz.length()) strlcpy(admin.set_config.payload_variant.device.tzdef, tz.c_str(), sizeof(admin.set_config.payload_variant.device.tzdef));
+  bool ok = sendLocalAdmin(admin);
+  appendLine(eventLog, LOG_SIZE, ok ? "[local] Heltec device config sent\n" : "[local] Heltec device config failed\n");
+  return ok;
+}
+
+static bool sendHeltecPositionConfig(bool gpsEnabled, const String& gpsMode, bool fixedPosition, bool smartBroadcast, uint32_t broadcastSecs, uint32_t gpsUpdateSecs, uint32_t gpsAttemptSecs, uint32_t smartMinMeters, uint32_t smartMinSecs) {
+  meshtastic_AdminMessage admin = meshtastic_AdminMessage_init_zero;
+  admin.which_payload_variant = meshtastic_AdminMessage_set_config_tag;
+  admin.set_config.which_payload_variant = meshtastic_Config_position_tag;
+  admin.set_config.payload_variant.position.gps_enabled = gpsEnabled;
+  admin.set_config.payload_variant.position.gps_mode = parseGpsMode(gpsMode);
+  admin.set_config.payload_variant.position.fixed_position = fixedPosition;
+  admin.set_config.payload_variant.position.position_broadcast_smart_enabled = smartBroadcast;
+  admin.set_config.payload_variant.position.position_broadcast_secs = broadcastSecs;
+  admin.set_config.payload_variant.position.gps_update_interval = gpsUpdateSecs;
+  admin.set_config.payload_variant.position.gps_attempt_time = gpsAttemptSecs;
+  admin.set_config.payload_variant.position.broadcast_smart_minimum_distance = smartMinMeters;
+  admin.set_config.payload_variant.position.broadcast_smart_minimum_interval_secs = smartMinSecs;
+  bool ok = sendLocalAdmin(admin);
+  appendLine(eventLog, LOG_SIZE, ok ? "[local] Heltec position config sent\n" : "[local] Heltec position config failed\n");
+  return ok;
+}
+
+static bool sendHeltecPowerConfig(bool powerSaving, uint32_t shutdownSecs, uint32_t waitBluetoothSecs, uint32_t sdsSecs, uint32_t lsSecs, uint32_t minWakeSecs) {
+  meshtastic_AdminMessage admin = meshtastic_AdminMessage_init_zero;
+  admin.which_payload_variant = meshtastic_AdminMessage_set_config_tag;
+  admin.set_config.which_payload_variant = meshtastic_Config_power_tag;
+  admin.set_config.payload_variant.power.is_power_saving = powerSaving;
+  admin.set_config.payload_variant.power.on_battery_shutdown_after_secs = shutdownSecs;
+  admin.set_config.payload_variant.power.wait_bluetooth_secs = waitBluetoothSecs;
+  admin.set_config.payload_variant.power.sds_secs = sdsSecs;
+  admin.set_config.payload_variant.power.ls_secs = lsSecs;
+  admin.set_config.payload_variant.power.min_wake_secs = minWakeSecs;
+  bool ok = sendLocalAdmin(admin);
+  appendLine(eventLog, LOG_SIZE, ok ? "[local] Heltec power config sent\n" : "[local] Heltec power config failed\n");
   return ok;
 }
 
@@ -2940,7 +3160,14 @@ static void handleDecodedPacket(const meshtastic_MeshPacket& packet) {
   } else if (data.portnum == meshtastic_PortNum_POSITION_APP) {
     positionPackets++;
     lastPortNum = data.portnum;
-    appendLine(eventLog, LOG_SIZE, "[radio] Heltec position packet ignored; using CYD GPS UART\n");
+    meshtastic_Position position = meshtastic_Position_init_zero;
+    pb_istream_t stream = pb_istream_from_buffer(data.payload.bytes, data.payload.size);
+    if (pb_decode(&stream, meshtastic_Position_fields, &position) &&
+        updateNodePosition(packet.from, position, "position packet")) {
+      remotePositionPackets++;
+    } else {
+      appendLine(eventLog, LOG_SIZE, "[radio] position packet without usable lat/lon\n");
+    }
   } else if (data.portnum == meshtastic_PortNum_NODEINFO_APP) {
     nodeInfoPackets++;
     lastPortNum = data.portnum;
@@ -2993,7 +3220,9 @@ static void decodeFromRadio(const uint8_t* payload, size_t len) {
     }
     if (fromRadio.node_info.has_position) {
       positionPackets++;
-      appendLine(eventLog, LOG_SIZE, "[radio] Heltec node-info position ignored; using CYD GPS UART\n");
+      if (updateNodePosition(fromRadio.node_info.num, fromRadio.node_info.position, "node info")) {
+        remotePositionPackets++;
+      }
     }
     if (fromRadio.node_info.has_device_metrics) {
       lastTelemetryMs = millis();
@@ -3105,8 +3334,7 @@ static bool requireWebAuth() {
   return false;
 }
 
-static void handleStatus() {
-  if (!requireWebAuth()) return;
+static String buildStatusJson() {
   sampleLocalBattery();
   refreshSdUsage();
   char rxAge[32];
@@ -3200,7 +3428,41 @@ static void handleStatus() {
     json += "\"positionAge\":" + String(nodes[i].lastPositionMs ? (millis() - nodes[i].lastPositionMs) / 1000 : 0) + "}";
   }
   json += "]}";
-  server.send(200, "application/json", json);
+  return json;
+}
+
+static void handleStatus() {
+  if (!requireWebAuth()) return;
+  server.send(200, "application/json", buildStatusJson());
+}
+
+static void handleStatusSnapshot() {
+  if (!requireWebAuth()) return;
+  String json = buildStatusJson();
+  if (!sdStorage.available) {
+    server.send(503, "text/plain", "SD card not available");
+    return;
+  }
+  if (SD_MMC.exists(SD_STATUS_SNAPSHOT_PATH)) SD_MMC.remove(SD_STATUS_SNAPSHOT_PATH);
+  File file = SD_MMC.open(SD_STATUS_SNAPSHOT_PATH, FILE_WRITE);
+  if (!file) {
+    sdStorage.writeErrors++;
+    strlcpy(sdStorage.status, "snapshot open failed", sizeof(sdStorage.status));
+    server.send(500, "text/plain", "snapshot open failed");
+    return;
+  }
+  bool ok = file.print(json);
+  file.close();
+  if (ok) {
+    sdStorage.writes++;
+    strlcpy(sdStorage.status, "snapshot saved", sizeof(sdStorage.status));
+    appendLine(eventLog, LOG_SIZE, "[sd] status snapshot saved\n");
+    server.send(200, "application/json", json);
+  } else {
+    sdStorage.writeErrors++;
+    strlcpy(sdStorage.status, "snapshot write failed", sizeof(sdStorage.status));
+    server.send(500, "text/plain", "snapshot write failed");
+  }
 }
 
 static void handleSdDownload(const char* path, const char* downloadName, const char* contentType) {
@@ -3246,102 +3508,8 @@ static void handleSerialCmd() {
 
 static void handleRoot() {
   if (!requireWebAuth()) return;
-  server.send(200, "text/html", R"HTML(
-<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Heltec LoRa Interface</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<style>
-*{box-sizing:border-box}html,body{min-height:100%;background:#050807;color:#f4fff9}
-body{margin:0;background:#050807!important;color:#f4fff9!important;font-family:system-ui,Segoe UI,sans-serif}
-header{padding:8px 10px;background:#080d0b;border-bottom:1px solid #24483e}
-h1{font-size:16px;margin:0;color:#f4fff9}main{display:grid;gap:8px;padding:8px;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
-section{background:#101816;color:#f4fff9;border:1px solid #24483e;border-radius:6px;padding:8px}
-h2{font-size:12px;line-height:1.1;margin:0 0 6px;color:#68ffc0;text-transform:uppercase}.stats{display:grid;grid-template-columns:1fr 1fr;gap:6px}
-.stat{background:#07100d;color:#f4fff9;padding:6px;border-radius:4px}.label{color:#8ab7a6;font-size:11px}.value{font-size:15px;color:#f4fff9}
-pre{white-space:pre-wrap;overflow:auto;max-height:280px;margin:0;color:#e8fff5;background:#07100d;font:12px ui-monospace,Consolas,monospace}
-input{box-sizing:border-box;width:100%;padding:10px;background:#07100d!important;border:1px solid #2f705f;color:#fff!important;border-radius:6px}
-  button{margin-top:6px;padding:9px 12px;border:0;border-radius:6px;background:#00c985;color:#001b12;font-weight:700}
-  select{box-sizing:border-box;width:100%;padding:10px;background:#07100d!important;border:1px solid #2f705f;color:#fff!important;border-radius:6px}
-  .formgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.field{display:flex;flex-direction:column;gap:4px}.field label{color:#8ab7a6;font-size:11px;text-transform:uppercase}.full{grid-column:1/-1}.hint{color:#8ab7a6;font-size:12px;margin-top:8px}.statusbox{min-height:34px;background:#07100d;border:1px solid #24483e;border-radius:6px;padding:8px;color:#d9fff0}.checkrow{display:flex;align-items:center;gap:8px;color:#d9fff0;font-size:13px}.checkrow input{width:auto}.primaryAction{grid-column:1/-1}.dangerAction{background:#16332b;color:#d9fff0;border:1px solid #2f705f}
-  a{color:#68ffc0;text-decoration:none}.links{display:flex;flex-wrap:wrap;gap:6px}.links a{padding:7px 8px;border:1px solid #2f705f;border-radius:6px;background:#07100d}
-table{width:100%;border-collapse:collapse;font-size:12px;color:#f4fff9}td,th{border-bottom:1px solid #203b35;padding:4px;text-align:left}
-#realMap{width:100%;height:320px;background:#07100d;border:1px solid #24483e;border-radius:6px;box-sizing:border-box;overflow:hidden}
-canvas{width:100%;height:260px;background:#07100d;border:1px solid #24483e;border-radius:6px;box-sizing:border-box}
-.hidden{display:none}
-.mapMeta{color:#8ab7a6;font-size:12px;margin-top:8px}
-.leaflet-container{background:#07100d;color:#10231d}.leaflet-popup-content-wrapper,.leaflet-popup-tip{background:#101816;color:#e8fff5}
-</style></head><body><header><h1>Heltec LoRa Interface</h1><div id="ip"></div></header><main>
-<section><h2>Radio</h2><div class="stats" id="stats"></div><button onclick="fetch('/config',{method:'POST'})">Request Config</button></section>
-<section><h2>Heltec Config</h2><div class="formgrid">
-<div class="field"><label for="hcRegion">Region</label><select id="hcRegion"><option>US</option><option>EU_868</option><option>CN</option><option>JP</option><option>ANZ</option><option>KR</option><option>TW</option><option>RU</option><option>IN</option><option>UNSET</option></select></div>
-<div class="field"><label for="hcPreset">Radio preset</label><select id="hcPreset"><option>LONG_FAST</option><option>LONG_SLOW</option><option>MEDIUM_FAST</option><option>MEDIUM_SLOW</option><option>SHORT_FAST</option><option>SHORT_SLOW</option></select></div>
-<div class="field"><label for="hcHop">Hop limit</label><input id="hcHop" type="number" min="0" max="7" value="3"></div>
-<div class="field"><label for="hcTx">TX power</label><input id="hcTx" type="number" min="0" max="30" value="0"></div>
-<div class="field full"><label for="hcName">Node long name</label><input id="hcName" maxlength="39" placeholder="Optional"></div>
-<div class="field full"><label for="hcTz">Timezone</label><input id="hcTz" value="CST6CDT,M3.2.0,M11.1.0"></div>
-<button class="primaryAction" onclick="applyHeltecLora()">Apply Radio Settings</button>
-<button onclick="applyHeltecSerial()">Enable Serial Link</button><button onclick="applyHeltecName()">Update Name</button>
-<button onclick="applyHeltecTime()">Update Timezone</button><button onclick="heltecAction('/heltec/save','Save command sent')">Save Config</button>
-<button class="dangerAction" onclick="heltecAction('/heltec/reboot','Restart command sent')">Restart Heltec</button>
-</div><div class="hint statusbox" id="hcStatus">Ready</div></section>
-<section><h2>Channel Config</h2><div class="formgrid">
-<input id="hcChanIndex" type="number" min="0" max="7" value="0" placeholder="Channel index">
-<select id="hcChanRole"><option>PRIMARY</option><option>SECONDARY</option><option>DISABLED</option></select>
-<input id="hcChanName" maxlength="11" placeholder="Channel name">
-<input id="hcChanPsk" placeholder="PSK / key, blank to keep">
-<label class="checkrow"><input id="hcChanUplink" type="checkbox">Uplink enabled</label>
-<label class="checkrow"><input id="hcChanDownlink" type="checkbox">Downlink enabled</label>
-<button onclick="applyHeltecChannel()">Apply Channel</button><button onclick="disableHeltecChannel()">Disable Channel</button>
-<button onclick="heltecCmd('get channel')" class="full">Refresh Channel Config</button>
-</div><div class="hint">Choose an index, set role/name/key options, then save after applying.</div></section>
-<section><h2>Current Config</h2><div class="stats" id="configRef"></div>
-<table><thead><tr><th>Index</th><th>Role</th><th>Name</th><th>State</th></tr></thead><tbody id="channelRef"></tbody></table></section>
-<section><h2>Send Message</h2><input id="msg" maxlength="233" placeholder="Message to mesh"><button onclick="send()">Send</button></section>
-<section><h2>Chat</h2><pre id="chat"></pre></section>
-<section><h2>Map</h2><div id="realMap"></div><canvas id="mapFallback" class="hidden" width="640" height="360"></canvas><div class="mapMeta" id="mapMeta"></div></section>
-<section><h2>SD Storage</h2><div class="stats" id="storage"></div><button onclick="mountSd()">Mount SD</button><div class="links"><a href="/sd/events">Events</a><a href="/sd/public">Public Chat</a><a href="/sd/private">Private Chat</a><a href="/sd/positions">Positions CSV</a><a href="/sd/mapcache">Map Cache</a><a href="/sd/last-location">Last GPS</a></div></section>
-<section><h2>Nodes</h2><table><thead><tr><th>Node</th><th>Name</th><th>SNR</th><th>Age</th><th>GPS</th></tr></thead><tbody id="nodes"></tbody></table></section>
-<section><h2>Serial Link</h2><input id="cmd" placeholder="Serial command"><button onclick="sendCmd()">Send Command</button><pre id="serial" style="margin-top:6px"></pre></section>
-<section><h2>Event Log</h2><pre id="log"></pre></section>
-</main><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script>
-let leafletMap=null,markers={},realMapReady=false;
-function initRealMap(){if(realMapReady||!window.L)return;leafletMap=L.map('realMap',{zoomControl:true,attributionControl:true});L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(leafletMap);leafletMap.setView([0,0],2);realMapReady=true;}
-async function refresh(){const s=await (await fetch('/status')).json();ip.textContent=s.wifiMode+' '+s.ip;
-stats.innerHTML=[['Node',s.myNode],['S3 Battery',s.battery+'% '+s.voltage+'V'],['Power',s.powerState],['Frames',s.frames],['Errors',s.errors],['RX/TX',s.rx+'/'+s.tx],['Nodes',s.online+'/'+s.total],['SD',s.sdStatus]]
-.map(x=>`<div class=stat><div class=label>${x[0]}</div><div class=value>${x[1]}</div></div>`).join('');
-storage.innerHTML=[['Status',s.sdAvailable?'mounted':s.sdStatus],['Type',s.sdType],['Used',formatBytes(s.sdUsedKb)],['Total',formatBytes(s.sdTotalKb)],['Writes',s.sdWrites],['Errors',s.sdErrors],['Map Cache',s.mapCacheLoaded?'loaded':s.mapCacheStatus]]
-.map(x=>`<div class=stat><div class=label>${x[0]}</div><div class=value>${x[1]}</div></div>`).join('');
-configRef.innerHTML=[['Node',s.myNode],['Name',s.myNodeName],['Config frames',s.configFrames],['Private channel',s.privateChannel>=0?s.privateChannel:'none'],['Last port',s.lastPort],['WiFi',s.wifiEnabled?s.wifiMode:'off']]
-.map(x=>`<div class=stat><div class=label>${x[0]}</div><div class=value>${x[1]}</div></div>`).join('');
-channelRef.innerHTML=(s.channels&&s.channels.length?s.channels.map(c=>`<tr><td>${c.index}</td><td>${c.role||'-'}</td><td>${c.name||'-'}</td><td>${c.enabled?'enabled':'disabled'}</td></tr>`).join(''):'<tr><td colspan="4">No channel config received yet</td></tr>');
-chat.textContent=s.chat||'No chat yet';log.textContent=s.log||'Waiting for radio data';
-serial.textContent=`RX bytes: ${s.bytes}\nTX bytes: ${s.txBytes}\nLast byte: ${s.lastByte}\nMagic 94/C3: ${s.magic1}/${s.magic2}\nStream frames: ${s.streamFrames}\nBad lengths: ${s.badLengths}\nText/Tel/GPS/Node: ${s.textPackets}/${s.telemetryPackets}/${s.positionPackets}/${s.nodeInfoPackets}\nHeltec GPS ignored: ${s.remotePositionPackets}\nConfig/Other/Encrypted: ${s.configFrames}/${s.otherFrames}/${s.encryptedPackets}\nLast port: ${s.lastPort}\nASCII seen: ${s.serialPeek||''}`;
-nodes.innerHTML=s.nodes.map(n=>`<tr><td>${n.num}</td><td>${n.name}</td><td>${n.snr}</td><td>${n.age}s</td><td>${n.hasPosition?`${n.lat.toFixed(5)}, ${n.lon.toFixed(5)}`:'-'}</td></tr>`).join('');
-drawMap(s);
+  server.send_P(200, "text/html", WEB_UI_HTML);
 }
-async function send(){const m=msg.value.trim();if(!m)return;await fetch('/send',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'msg='+encodeURIComponent(m)});msg.value='';refresh();}
-async function sendCmd(){const c=cmd.value.trim();if(!c)return;await fetch('/serial_cmd',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'cmd='+encodeURIComponent(c)});cmd.value='';refresh();}
-async function mountSd(){await fetch('/sd/mount',{method:'POST'});refresh();}
-async function heltecCmd(c,label){hcStatus.textContent='Sending...';const r=await fetch('/serial_cmd',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'cmd='+encodeURIComponent(c)});hcStatus.textContent=r.ok?(label||'Applied: '+c):'Failed: '+c;}
-async function heltecAction(url,label){hcStatus.textContent='Sending...';const r=await fetch(url,{method:'POST'});hcStatus.textContent=r.ok?label:'Failed';setTimeout(refresh,400);}
-async function heltecPost(url,fields,label){hcStatus.textContent='Sending...';const body=new URLSearchParams(fields);const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});hcStatus.textContent=r.ok?label:'Failed';setTimeout(refresh,400);}
-async function heltecBatch(cmds){for(const c of cmds){await heltecCmd(c);await new Promise(r=>setTimeout(r,180));}}
-function applyHeltecLora(){heltecPost('/heltec/lora',{region:hcRegion.value,preset:hcPreset.value,hop:hcHop.value,tx:hcTx.value},'Radio settings sent');}
-function applyHeltecSerial(){heltecAction('/heltec/serial','Serial link settings sent');}
-function applyHeltecName(){const n=hcName.value.trim();if(n)heltecPost('/heltec/name',{name:n},'Name update sent');}
-function applyHeltecTime(){const z=hcTz.value.trim();if(z)heltecPost('/heltec/timezone',{tz:z},'Timezone update sent');}
-function channelIndex(){let i=parseInt(hcChanIndex.value||'0',10);if(isNaN(i)||i<0)i=0;if(i>7)i=7;hcChanIndex.value=i;return i;}
-function applyHeltecChannel(){heltecPost('/heltec/channel',{index:channelIndex(),role:hcChanRole.value,name:hcChanName.value.trim(),psk:hcChanPsk.value.trim(),uplink:hcChanUplink.checked?'1':'0',downlink:hcChanDownlink.checked?'1':'0'},'Channel settings sent');}
-function disableHeltecChannel(){heltecPost('/heltec/channel',{index:channelIndex(),role:'DISABLED'},'Disable channel sent');}
-function formatBytes(kb){if(!kb)return'0 KB';return kb>=1024?Math.ceil(kb/1024)+' MB':kb+' KB';}
-function drawMap(s){initRealMap();const pts=s.nodes.filter(n=>n.hasPosition);if(realMapReady){realMap.classList.remove('hidden');mapFallback.classList.add('hidden');drawRealMap(s,pts);return}realMap.classList.add('hidden');mapFallback.classList.remove('hidden');drawFallbackMap(s,pts);}
-function drawRealMap(s,pts){if(!pts.length){mapMeta.textContent='No node positions yet';return}const seen={};for(const p of pts){seen[p.num]=true;const html=`<b>${p.name||p.num}</b><br>${p.num}<br>${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}<br>Alt ${p.alt} m<br>${p.positionAge}s old`;if(!markers[p.num])markers[p.num]=L.circleMarker([p.lat,p.lon],{radius:7,color:p.num===s.myNode?'#00c985':'#68ffc0',weight:2,fillColor:p.num===s.myNode?'#00c985':'#68ffc0',fillOpacity:.85}).addTo(leafletMap);else markers[p.num].setLatLng([p.lat,p.lon]);markers[p.num].setStyle({color:p.num===s.myNode?'#00c985':'#68ffc0',fillColor:p.num===s.myNode?'#00c985':'#68ffc0'});markers[p.num].bindPopup(html)}for(const id in markers){if(!seen[id]){leafletMap.removeLayer(markers[id]);delete markers[id]}}const bounds=L.latLngBounds(pts.map(p=>[p.lat,p.lon]));leafletMap.fitBounds(bounds.pad(.2),{maxZoom:15,animate:false});mapMeta.textContent=`OpenStreetMap | ${pts.length} positioned node${pts.length===1?'':'s'}`;}
-function drawFallbackMap(s,pts){const c=mapFallback,ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);ctx.fillStyle='#07100d';ctx.fillRect(0,0,c.width,c.height);ctx.strokeStyle='#1f3d35';ctx.lineWidth=1;for(let x=40;x<c.width;x+=80){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,c.height);ctx.stroke()}for(let y=40;y<c.height;y+=80){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(c.width,y);ctx.stroke()}if(!pts.length){ctx.fillStyle='#8ab7a6';ctx.font='16px system-ui';ctx.fillText('Waiting for position packets',24,40);mapMeta.textContent='No node positions yet';return}let minLat=Math.min(...pts.map(p=>p.lat)),maxLat=Math.max(...pts.map(p=>p.lat)),minLon=Math.min(...pts.map(p=>p.lon)),maxLon=Math.max(...pts.map(p=>p.lon));let latSpan=Math.max(maxLat-minLat,0.000001),lonSpan=Math.max(maxLon-minLon,0.000001),pad=28;for(const p of pts){let x=pad+(p.lon-minLon)*(c.width-pad*2)/lonSpan,y=pad+(maxLat-p.lat)*(c.height-pad*2)/latSpan;ctx.fillStyle=p.num===s.myNode?'#00c985':'#68ffc0';ctx.beginPath();ctx.arc(x,y,6,0,Math.PI*2);ctx.fill();ctx.fillStyle='#e8fff5';ctx.font='12px system-ui';ctx.fillText(p.name||p.num,x+9,y+4)}mapMeta.textContent=`Offline plot | ${pts.length} positioned node${pts.length===1?'':'s'} | center ${((minLat+maxLat)/2).toFixed(5)}, ${((minLon+maxLon)/2).toFixed(5)}`;}
-setInterval(refresh,1000);refresh();
-</script></body></html>
-)HTML");
-}
-
 void setup() {
   Serial.begin(115200);
   Serial.println("[boot] serial ready");
@@ -3373,6 +3541,8 @@ void setup() {
   server.on("/sd/positions", HTTP_GET, []() { handleSdDownload(SD_POSITIONS_PATH, "positions.csv", "text/csv"); });
   server.on("/sd/mapcache", HTTP_GET, []() { handleSdDownload(SD_MAP_CACHE_PATH, "map_cache.bin", "application/octet-stream"); });
   server.on("/sd/last-location", HTTP_GET, []() { handleSdDownload(SD_LAST_LOCATION_PATH, "last_location.txt", "text/plain"); });
+  server.on("/sd/status-snapshot", HTTP_GET, []() { handleSdDownload(SD_STATUS_SNAPSHOT_PATH, "status_snapshot.json", "application/json"); });
+  server.on("/sd/snapshot", HTTP_POST, handleStatusSnapshot);
   server.on("/sd/mount", HTTP_POST, []() {
     if (!requireWebAuth()) return;
     initSdStorage();
@@ -3395,13 +3565,56 @@ void setup() {
   });
   server.on("/heltec/serial", HTTP_POST, []() {
     if (!requireWebAuth()) return;
-    bool ok = sendHeltecSerialConfig();
+    uint32_t rxd = server.hasArg("rxd") ? (uint32_t)server.arg("rxd").toInt() : 38;
+    uint32_t txd = server.hasArg("txd") ? (uint32_t)server.arg("txd").toInt() : 39;
+    String baud = server.arg("baud");
+    String mode = server.arg("mode");
+    bool ok = sendHeltecSerialConfig(server.arg("enabled") == "1",
+                                     rxd,
+                                     txd,
+                                     baud.length() ? baud : String("115200"),
+                                     mode.length() ? mode : String("PROTO"),
+                                     server.arg("echo") == "1",
+                                     server.arg("override") == "1");
     server.send(ok ? 200 : 500, "text/plain", ok ? "serial config sent" : "serial config failed");
   });
   server.on("/heltec/name", HTTP_POST, []() {
     if (!requireWebAuth()) return;
-    bool ok = sendHeltecOwnerName(server.arg("name"));
+    bool ok = sendHeltecOwnerName(server.arg("name"), server.arg("short"));
     server.send(ok ? 200 : 400, "text/plain", ok ? "name sent" : "missing name");
+  });
+  server.on("/heltec/device", HTTP_POST, []() {
+    if (!requireWebAuth()) return;
+    bool ok = sendHeltecDeviceConfig(server.arg("role"),
+                                     server.arg("rebroadcast"),
+                                     (uint32_t)server.arg("nodeInfo").toInt(),
+                                     server.arg("tz"),
+                                     server.arg("ledOff") == "1",
+                                     server.arg("buzzer"));
+    server.send(ok ? 200 : 500, "text/plain", ok ? "device config sent" : "device config failed");
+  });
+  server.on("/heltec/position", HTTP_POST, []() {
+    if (!requireWebAuth()) return;
+    bool ok = sendHeltecPositionConfig(server.arg("gpsEnabled") == "1",
+                                       server.arg("gpsMode"),
+                                       server.arg("fixed") == "1",
+                                       server.arg("smart") == "1",
+                                       (uint32_t)server.arg("broadcast").toInt(),
+                                       (uint32_t)server.arg("gpsUpdate").toInt(),
+                                       (uint32_t)server.arg("gpsAttempt").toInt(),
+                                       (uint32_t)server.arg("smartMeters").toInt(),
+                                       (uint32_t)server.arg("smartSecs").toInt());
+    server.send(ok ? 200 : 500, "text/plain", ok ? "position config sent" : "position config failed");
+  });
+  server.on("/heltec/power", HTTP_POST, []() {
+    if (!requireWebAuth()) return;
+    bool ok = sendHeltecPowerConfig(server.arg("saving") == "1",
+                                    (uint32_t)server.arg("shutdown").toInt(),
+                                    (uint32_t)server.arg("waitBt").toInt(),
+                                    (uint32_t)server.arg("sds").toInt(),
+                                    (uint32_t)server.arg("ls").toInt(),
+                                    (uint32_t)server.arg("wake").toInt());
+    server.send(ok ? 200 : 500, "text/plain", ok ? "power config sent" : "power config failed");
   });
   server.on("/heltec/timezone", HTTP_POST, []() {
     if (!requireWebAuth()) return;
