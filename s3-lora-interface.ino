@@ -3851,8 +3851,12 @@ static void scanGameBoyRomDirectory(const String& path, String& json, bool& firs
     String entryName = String(entry.name());
     String fullPath = entryName.startsWith("/") ? entryName : (path == "/" ? "/" + entryName : path + "/" + entryName);
     if (!entry.isDirectory() && isGameBoyRomPath(fullPath)) {
-      appendGameBoyRomJson(json, entry, fullPath, first);
-      count++;
+      File romFile = SD_MMC.open(fullPath, FILE_READ);
+      if (romFile) {
+        appendGameBoyRomJson(json, romFile, fullPath, first);
+        romFile.close();
+        count++;
+      }
     }
     entry.close();
     yield();
