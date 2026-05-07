@@ -291,6 +291,7 @@ static lv_obj_t* navBar = nullptr;
 static lv_obj_t* lblStatus = nullptr;
 static lv_obj_t* lblBatteryStatus = nullptr;
 static lv_obj_t* lblStats = nullptr;
+static lv_obj_t* lblGamesStatus = nullptr;
 static lv_obj_t* lblSystemInterface = nullptr;
 static lv_obj_t* lblSystemSerial = nullptr;
 static lv_obj_t* lblSystemRadio = nullptr;
@@ -332,6 +333,8 @@ static bool wifiLocalPageBuilt = false;
 static bool wifiScanPageBuilt = false;
 static uint8_t deferredWifiAction = 0;
 static uint32_t deferredWifiActionMs = 0;
+static uint8_t deferredGameBoyAction = 0;
+static uint32_t deferredGameBoyActionMs = 0;
 static uint32_t lastUiRefreshMs = 0;
 static uint32_t lastSerialDiagMs = 0;
 static uint32_t lastSdDiagMs = 0;
@@ -1533,8 +1536,14 @@ static void buildLandscapeKeyboardScreen() {
 }
 
 static void ensureGameBoyPage();
+static void ensureGamesPage();
 static bool gameBoyStartSelectedRom();
 static void gameBoyStop();
+
+static void deferGameBoyAction(uint8_t action) {
+  deferredGameBoyAction = action;
+  deferredGameBoyActionMs = millis();
+}
 
 static const char* gameBoyInitErrorName(gb_init_error_e err) {
   switch (err) {
@@ -1646,15 +1655,34 @@ static lv_obj_t* makeGameBoyControl(lv_obj_t* parent, const char* text, int x, i
   return btn;
 }
 
+static lv_obj_t* makeGameBoyAction(lv_obj_t* parent, const char* text, int x, lv_event_cb_t cb) {
+  lv_obj_t* btn = lv_btn_create(parent);
+  lv_obj_set_size(btn, 48, 24);
+  lv_obj_align(btn, LV_ALIGN_TOP_LEFT, x, 0);
+  styleDarkObject(btn, COLOR_ACTION, 0x001B12);
+  lv_obj_set_style_radius(btn, 6, 0);
+  lv_obj_set_style_shadow_width(btn, 0, 0);
+  lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* label = lv_label_create(btn);
+  lv_label_set_text(label, text);
+  lv_obj_set_style_text_color(label, lv_color_hex(0x001B12), 0);
+  lv_obj_center(label);
+  return btn;
+}
+
 static void ensureGameBoyPage() {
   if (pageGameBoy || !mainScreen) return;
   pageGameBoy = makePage(mainScreen);
 
   makePageTitle(pageGameBoy, "Game Boy");
+  makeGameBoyAction(pageGameBoy, "BACK", 184, [](lv_event_t*) {
+    gameBoyStop();
+    showPage(pageGames ? pageGames : pageLauncher, false);
+  });
 
   lv_obj_t* viewport = makePanel(pageGameBoy);
-  lv_obj_set_size(viewport, LCD_WIDTH + 12, LCD_HEIGHT + 12);
-  lv_obj_align(viewport, LV_ALIGN_TOP_MID, 0, 18);
+  lv_obj_set_size(viewport, SCREEN_W - 12, 126);
+  lv_obj_align(viewport, LV_ALIGN_TOP_MID, 0, 42);
   lv_obj_set_style_bg_color(viewport, lv_color_hex(0x06110E), 0);
 
   lblGameBoyStatus = lv_label_create(viewport);
@@ -1662,22 +1690,6 @@ static void ensureGameBoyPage() {
   lv_obj_set_style_text_color(lblGameBoyStatus, lv_color_hex(COLOR_TEXT), 0);
   lv_obj_set_width(lblGameBoyStatus, lv_pct(100));
   lv_obj_align(lblGameBoyStatus, LV_ALIGN_TOP_LEFT, 2, 2);
-  ensureGameBoyCanvas();
-
-  makeGameBoyControl(pageGameBoy, "UP", 50, 178, 42, 28);
-  makeGameBoyControl(pageGameBoy, "LEFT", 4, 208, 54, 28);
-  makeGameBoyControl(pageGameBoy, "RIGHT", 82, 208, 54, 28);
-  makeGameBoyControl(pageGameBoy, "DOWN", 50, 238, 42, 28);
-  makeGameBoyControl(pageGameBoy, "B", 154, 198, 34, 34);
-  makeGameBoyControl(pageGameBoy, "A", 198, 180, 34, 34);
-  makeGameBoyControl(pageGameBoy, "SELECT", 104, 238, 58, 28);
-  makeGameBoyControl(pageGameBoy, "START", 170, 238, 58, 28);
-
-  lv_obj_t* exitBtn = makeGameBoyControl(pageGameBoy, "EXIT", 184, 0, 48, 24);
-  lv_obj_add_event_cb(exitBtn, [](lv_event_t*) {
-    gameBoyStop();
-    showPage(previousPage ? previousPage : pageLauncher, false);
-  }, LV_EVENT_CLICKED, nullptr);
 }
 
 static void showGameBoyOverlay() {
@@ -1815,26 +1827,56 @@ static void serviceGameBoy() {
   if (canvasGameBoy) lv_obj_invalidate(canvasGameBoy);
 }
 
+static void showGameBoyMenuPage() {
+  ensureGameBoyPage();
+  if (lblGameBoyStatus) {
+    char text[180];
+    snprintf(text, sizeof(text),
+             "%s\n"
+             "%s\n"
+             "%lu KB\n"
+             "Lightweight page test",
+             gameBoySelectedTitle[0] ? gameBoySelectedTitle : "Peanut-GB",
+             gameBoySelectedRom[0] ? gameBoySelectedRom : "No ROM selected",
+             (unsigned long)(gameBoySelectedSize / 1024));
+    lv_label_set_text(lblGameBoyStatus, text);
+  }
+  showPage(pageGameBoy);
+}
+
+static void processDeferredGameBoyAction() {
+  if (!deferredGameBoyAction || millis() - deferredGameBoyActionMs < 50) return;
+  uint8_t action = deferredGameBoyAction;
+  deferredGameBoyAction = 0;
+  if (action == 1) {
+    ensureGamesPage();
+    showPage(pageGames);
+  } else if (action == 2) {
+    showGameBoyMenuPage();
+  } else if (action == 3) {
+    showGameBoyOverlay();
+  }
+}
+
 static void ensureGamesPage() {
   if (pageGames || !mainScreen) return;
   pageGames = makePage(mainScreen);
 
   makePageTitle(pageGames, "Games");
   makeActionButton(pageGames, "Peanut GB", 34, [](lv_event_t*) {
-    ensureGameBoyPage();
-    showPage(pageGameBoy);
+    deferGameBoyAction(2);
   });
   lv_obj_t* gamesPanel = makePanel(pageGames);
   lv_obj_set_size(gamesPanel, SCREEN_W - 12, 146);
   lv_obj_align(gamesPanel, LV_ALIGN_TOP_MID, 0, 94);
-  lv_obj_t* gamesLabel = lv_label_create(gamesPanel);
-  lv_label_set_text(gamesLabel,
+  lblGamesStatus = lv_label_create(gamesPanel);
+  lv_label_set_text(lblGamesStatus,
                     "Game Boy\n"
-                    "Peanut-GB test area\n"
+                    "Peanut-GB runtime\n"
                     "ROMs: SD card\n"
-                    "Display: pending port");
-  lv_obj_set_style_text_color(gamesLabel, lv_color_hex(COLOR_TEXT), 0);
-  lv_obj_set_width(gamesLabel, lv_pct(100));
+                    "Tap Peanut GB to inspect the selected ROM");
+  lv_obj_set_style_text_color(lblGamesStatus, lv_color_hex(COLOR_TEXT), 0);
+  lv_obj_set_width(lblGamesStatus, lv_pct(100));
 }
 
 static void buildScreenUi() {
@@ -1878,6 +1920,9 @@ static void buildScreenUi() {
   makeSystemTile(pageLauncher, "LoRa", 0, 0, [](lv_event_t*) { showPage(pageLora); });
   makeSystemTile(pageLauncher, "GPS / Map", 1, 0, [](lv_event_t*) { showPage(pageGps); });
   makeSystemTile(pageLauncher, "System", 0, 1, [](lv_event_t*) { showPage(pageSystem); });
+  makeSystemTile(pageLauncher, "Games", 1, 1, [](lv_event_t*) {
+    deferGameBoyAction(1);
+  });
 
   makePageTitle(pageLora, "LoRa");
   makeActionButton(pageLora, "Public Chat", 34, [](lv_event_t*) { showPage(pagePublicChat); });
@@ -2866,6 +2911,7 @@ static void refreshScreenUi() {
 
 static void serviceScreen() {
   processDeferredWifiAction();
+  processDeferredGameBoyAction();
   pollWifiScan();
   sampleLocalBattery();
   refreshScreenUi();
@@ -3934,7 +3980,7 @@ static void handleGameBoyStatus() {
 
 static void handleGameBoyDeviceOverlay() {
   if (!requireWebAuth()) return;
-  showGameBoyOverlay();
+  deferGameBoyAction(3);
   server.send(200, "text/plain", "device overlay opened");
 }
 

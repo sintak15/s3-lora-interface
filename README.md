@@ -71,11 +71,9 @@ The web interface is a comprehensive control panel for your radio. It includes:
 
 This project is currently experimenting with a Game Boy emulator (`peanut_gb`) built into the device, specifically on the `test-gameboy-submenu` branch. 
 
-**Important Note for Testers:** 
-There is currently **no on-device menu or screen interface** available to play or test games directly on the ESP32-S3 physical display yet.
-
-The Game Boy functionality is currently **"web-first"**. This means:
-*   You must use the Web Dashboard (`http://192.168.4.1/`) to interact with games.
-*   Through the web interface, you can upload Game Boy ROMs (`.gb` or `.gbc` files) to a `/roms` folder on your SD card.
-*   The web interface can scan the SD card, let you select a ROM, and read the game cartridge metadata.
-*   The actual game emulator engine is included in the project's code, but the runtime to play the games on the screen is not yet enabled.
+To play games:
+1.  Open the Web Dashboard (`http://192.168.4.1/`) and navigate to the **Games / ROMs** section.
+2.  Use the **Upload ROM** button to upload Game Boy ROMs (`.gb` or `.gbc` files) to your SD card.
+3.  Click **Scan ROMs** to list available games, and click **Select** next to the game you want to play.
+4.  Once a ROM is selected, click **Device Overlay** in the web dashboard.
+5.  The game will launch on the ESP32-S3's physical display, complete with on-screen touch controls! You can also launch the emulator directly from the device's **Games** menu once a ROM has been selected via the web interface.
