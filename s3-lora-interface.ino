@@ -64,6 +64,16 @@ struct ChannelRecord {
   bool enabled = false;
 };
 
+struct TxRecord {
+  char text[64] = "";
+  uint32_t to = 0xFFFFFFFFUL;
+  uint8_t channel = 0;
+  uint32_t sentMs = 0;
+  bool direct = false;
+  bool ok = false;
+  bool echoSeen = false;
+};
+
 struct DeviceStats {
   uint32_t myNodeNum = 0;
   uint32_t uptimeSeconds = 0;
@@ -177,6 +187,7 @@ static constexpr size_t LOG_SIZE = 8192;
 static constexpr size_t CHAT_SIZE = 4096;
 static constexpr size_t PACKET_LOG_SIZE = 4096;
 static constexpr size_t MAX_NODES = 64;
+static constexpr size_t TX_HISTORY_COUNT = 10;
 static constexpr size_t MAP_DOT_COUNT = MAX_NODES + 1;
 static constexpr size_t MAX_CHANNELS = 8;
 static constexpr size_t FRAME_MAX = 512;
@@ -227,8 +238,11 @@ static char* familyChatLog = nullptr;
 static char* directChatLog = nullptr;
 static char lastLocalSentText[234];
 static NodeRecord nodes[MAX_NODES];
+static TxRecord txHistory[TX_HISTORY_COUNT];
 static ChannelRecord channels[MAX_CHANNELS];
 static size_t nodeCount = 0;
+static size_t txHistoryCount = 0;
+static size_t txHistoryNext = 0;
 static int8_t privateChannelIndex = -1;
 static DeviceStats stats;
 static GpsStats gpsStats;
@@ -294,11 +308,13 @@ static lv_color_t lvBuf2[SCREEN_W * 24];
 static lv_color_t* mapCanvasBuf = nullptr;
 static uint16_t mapReadBuf[MAP_PLOT_W];
 static lv_obj_t* pageLauncher = nullptr;
-static lv_obj_t* pageLora = nullptr;
+static lv_obj_t* pageOperate = nullptr;
+static lv_obj_t* pageDiagnose = nullptr;
 static lv_obj_t* pageNodes = nullptr;
 static lv_obj_t* pageNodeDetail = nullptr;
 static lv_obj_t* pageMeshHealth = nullptr;
 static lv_obj_t* pagePacketInspector = nullptr;
+static lv_obj_t* pageTxHistory = nullptr;
 static lv_obj_t* pagePublicChat = nullptr;
 static lv_obj_t* pagePrivateChat = nullptr;
 static lv_obj_t* pageDirectChat = nullptr;
@@ -326,6 +342,7 @@ static lv_obj_t* lblNodeListMode = nullptr;
 static lv_obj_t* taNodeDetail = nullptr;
 static lv_obj_t* lblMeshHealth = nullptr;
 static lv_obj_t* taPacketInspector = nullptr;
+static lv_obj_t* taTxHistory = nullptr;
 static lv_obj_t* lblSystemInterface = nullptr;
 static lv_obj_t* lblSystemSerial = nullptr;
 static lv_obj_t* lblSystemRadio = nullptr;
@@ -394,6 +411,7 @@ static uint16_t lastTouchY = 0;
 
 static bool sendTextMessage(const char* text, int8_t channelIndex = PUBLIC_CHANNEL_INDEX);
 static bool sendDirectTextMessage(const char* text, uint32_t toNode);
+static bool isDirectAddress(uint32_t to);
 static void sendDirectFromInput(lv_obj_t* toInput, lv_obj_t* msgInput);
 static const char* nodeName(uint32_t num);
 static NodeRecord* findOrCreateNode(uint32_t num);
@@ -404,6 +422,8 @@ static void showNodeDetail(uint32_t nodeNum);
 static void directSelectedNode();
 static void cycleNodeSort();
 static void cycleNodeFilter();
+static bool retryLastTx();
+static void refreshTxHistoryView();
 static void refreshNodeList(bool force = false);
 static void refreshMapUi();
 static double distanceMeters(double lat1, double lon1, double lat2, double lon2);
@@ -1122,6 +1142,11 @@ static lv_obj_t* makePage(lv_obj_t* parent) {
   return page;
 }
 
+static void makePageScrollable(lv_obj_t* page) {
+  lv_obj_add_flag(page, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scrollbar_mode(page, LV_SCROLLBAR_MODE_AUTO);
+}
+
 static void buildStatusBar(lv_obj_t* screen) {
   statusBar = lv_obj_create(screen);
   lv_obj_set_size(statusBar, SCREEN_W, STATUS_BAR_H);
@@ -1156,8 +1181,8 @@ static void showPage(lv_obj_t* target, bool remember) {
   if (!target) return;
   if (remember && currentPage && currentPage != target) previousPage = currentPage;
   lv_obj_t* pages[] = {
-    pageLauncher, pageLora, pageNodes, pageNodeDetail, pageMeshHealth, pagePacketInspector,
-    pagePublicChat, pagePrivateChat, pageDirectChat, pageGps,
+    pageLauncher, pageOperate, pageDiagnose, pageNodes, pageNodeDetail, pageMeshHealth, pagePacketInspector,
+    pageTxHistory, pagePublicChat, pagePrivateChat, pageDirectChat, pageGps,
     pageSystem, pageSystemInterface, pageSystemSerial, pageSystemRadio, pageSystemGps,
     pageWifi, pageWifiStats, pageWifiLocal, pageWifiScan, pageBacklight, pageBattery
   };
@@ -1464,10 +1489,25 @@ static void refreshNodeList(bool force) {
     NodeRecord& node = nodes[sorted[listIndex]];
     char title[48];
     snprintf(title, sizeof(title), "%.30s", node.name[0] ? node.name : nodeName(node.num));
-    lv_obj_t* btn = lv_list_add_btn(listNodes, nullptr, title);
-    styleDarkObject(btn, COLOR_PANEL);
-    styleDarkBorder(btn, 0x2F705F);
-    lv_obj_add_event_cb(btn, nodeListButtonEvent, LV_EVENT_CLICKED, (void*)(uintptr_t)node.num);
+
+    lv_obj_t* row = lv_obj_create(listNodes);
+    lv_obj_set_width(row, lv_pct(100));
+    lv_obj_set_height(row, 68);
+    styleDarkObject(row, COLOR_PANEL);
+    styleDarkBorder(row, 0x2F705F);
+    lv_obj_set_style_radius(row, 6, 0);
+    lv_obj_set_style_pad_all(row, 6, 0);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(row, nodeListButtonEvent, LV_EVENT_CLICKED, (void*)(uintptr_t)node.num);
+
+    lv_obj_t* nameLabel = lv_label_create(row);
+    lv_label_set_text(nameLabel, title);
+    lv_obj_set_width(nameLabel, lv_pct(100));
+    lv_label_set_long_mode(nameLabel, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_color(nameLabel, lv_color_hex(COLOR_TEXT), 0);
+    lv_obj_align(nameLabel, LV_ALIGN_TOP_LEFT, 0, 0);
+
     char rangeText[32];
     formatRangeBearing(node, rangeText, sizeof(rangeText));
     char detail[128];
@@ -1477,12 +1517,12 @@ static void refreshNodeList(bool force) {
              node.hopsAway,
              (unsigned long)nodeAgeSeconds(node, now),
              rangeText);
-    lv_obj_t* label = lv_label_create(btn);
+    lv_obj_t* label = lv_label_create(row);
     lv_label_set_text(label, detail);
-    lv_obj_set_width(label, SCREEN_W - 42);
-    lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(label, lv_pct(100));
+    lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_color(label, lv_color_hex(COLOR_MUTED), 0);
-    lv_obj_align(label, LV_ALIGN_BOTTOM_LEFT, 8, -4);
+    lv_obj_align(label, LV_ALIGN_TOP_LEFT, 0, 22);
   }
 }
 
@@ -1709,11 +1749,13 @@ static void buildScreenUi() {
   buildStatusBar(screen);
 
   pageLauncher = makePage(screen);
-  pageLora = makePage(screen);
+  pageOperate = makePage(screen);
+  pageDiagnose = makePage(screen);
   pageNodes = makePage(screen);
   pageNodeDetail = makePage(screen);
   pageMeshHealth = makePage(screen);
   pagePacketInspector = makePage(screen);
+  pageTxHistory = makePage(screen);
   pagePublicChat = makePage(screen);
   pagePrivateChat = makePage(screen);
   pageDirectChat = makePage(screen);
@@ -1733,44 +1775,58 @@ static void buildScreenUi() {
   currentPage = pageLauncher;
   lv_obj_clear_flag(pageLauncher, LV_OBJ_FLAG_HIDDEN);
 
-  makeSystemTile(pageLauncher, "LoRa", 0, 0, [](lv_event_t*) { showPage(pageLora); });
-  makeSystemTile(pageLauncher, "GPS / Map", 1, 0, [](lv_event_t*) { showPage(pageGps); });
+  makeSystemTile(pageLauncher, "Operate", 0, 0, [](lv_event_t*) { showPage(pageOperate); });
+  makeSystemTile(pageLauncher, "Diagnose", 1, 0, [](lv_event_t*) { showPage(pageDiagnose); });
   makeSystemTile(pageLauncher, "System", 0, 1, [](lv_event_t*) { showPage(pageSystem); });
+  makeSystemTile(pageLauncher, "Map", 1, 1, [](lv_event_t*) { showPage(pageGps); });
 
-  makePageTitle(pageLora, "LoRa");
-  makeSystemTile(pageLora, "Public", 0, 0, [](lv_event_t*) { showPage(pagePublicChat); });
-  makeSystemTile(pageLora, "Family", 1, 0, [](lv_event_t*) { showPage(pagePrivateChat); });
-  makeSystemTile(pageLora, "Direct", 0, 1, [](lv_event_t*) { showPage(pageDirectChat); });
-  makeSystemTile(pageLora, "Nodes", 1, 1, [](lv_event_t*) {
+  makePageTitle(pageOperate, "Operate");
+  makePageScrollable(pageOperate);
+  makeSystemTile(pageOperate, "Public", 0, 0, [](lv_event_t*) { showPage(pagePublicChat); });
+  makeSystemTile(pageOperate, "Family", 1, 0, [](lv_event_t*) { showPage(pagePrivateChat); });
+  makeSystemTile(pageOperate, "Direct", 0, 1, [](lv_event_t*) { showPage(pageDirectChat); });
+  makeSystemTile(pageOperate, "Nodes", 1, 1, [](lv_event_t*) {
     refreshNodeList(true);
     showPage(pageNodes);
   });
-  makeSystemTile(pageLora, "Health", 0, 2, [](lv_event_t*) { showPage(pageMeshHealth); });
-  makeSystemTile(pageLora, "Packets", 1, 2, [](lv_event_t*) { showPage(pagePacketInspector); });
+  makeSystemTile(pageOperate, "TX Log", 0, 2, [](lv_event_t*) { showPage(pageTxHistory); });
 
-  lv_obj_t* loraPanel = makePanel(pageLora);
-  lv_obj_set_size(loraPanel, SCREEN_W - 12, 58);
-  lv_obj_align(loraPanel, LV_ALIGN_TOP_MID, 0, 190);
-  lblStats = lv_label_create(loraPanel);
+  lv_obj_t* operatePanel = makePanel(pageOperate);
+  lv_obj_set_size(operatePanel, SCREEN_W - 12, 58);
+  lv_obj_align(operatePanel, LV_ALIGN_TOP_MID, 0, 190);
+  lblStats = lv_label_create(operatePanel);
   lv_label_set_text(lblStats, "Waiting for radio...");
   lv_obj_set_style_text_font(lblStats, LV_FONT_DEFAULT, 0);
   lv_obj_set_style_text_color(lblStats, lv_color_hex(0xF4FFF9), 0);
   lv_obj_set_width(lblStats, lv_pct(100));
 
+  makePageTitle(pageDiagnose, "Diagnose");
+  makePageScrollable(pageDiagnose);
+  makeSystemTile(pageDiagnose, "Mesh", 0, 0, [](lv_event_t*) { showPage(pageMeshHealth); });
+  makeSystemTile(pageDiagnose, "Packets", 1, 0, [](lv_event_t*) { showPage(pagePacketInspector); });
+  makeSystemTile(pageDiagnose, "Serial", 0, 1, [](lv_event_t*) { showPage(pageSystemSerial); });
+  makeSystemTile(pageDiagnose, "Radio", 1, 1, [](lv_event_t*) { showPage(pageSystemRadio); });
+  makeSystemTile(pageDiagnose, "Interface", 0, 2, [](lv_event_t*) { showPage(pageSystemInterface); });
+  makeSystemTile(pageDiagnose, "Power", 1, 2, [](lv_event_t*) { showPage(pageBattery); });
+  makeSystemTile(pageDiagnose, "GPS", 0, 3, [](lv_event_t*) { showPage(pageSystemGps); });
+  makeSystemTile(pageDiagnose, "WiFi", 1, 3, [](lv_event_t*) { showPage(pageWifiStats); });
+
   makePageTitle(pageNodes, "Nodes");
-  makeSmallButton(pageNodes, "Sort", 6, 24, 54, [](lv_event_t*) { cycleNodeSort(); });
-  makeSmallButton(pageNodes, "Filter", 66, 24, 62, [](lv_event_t*) { cycleNodeFilter(); });
+  makeSmallButton(pageNodes, "Sort", 6, 24, 74, [](lv_event_t*) { cycleNodeSort(); });
+  makeSmallButton(pageNodes, "Filter", 86, 24, 74, [](lv_event_t*) { cycleNodeFilter(); });
   lblNodeListMode = lv_label_create(pageNodes);
   lv_label_set_text(lblNodeListMode, "sort heard  filter all");
-  lv_obj_set_width(lblNodeListMode, 98);
+  lv_obj_set_width(lblNodeListMode, SCREEN_W - 12);
   lv_label_set_long_mode(lblNodeListMode, LV_LABEL_LONG_DOT);
   lv_obj_set_style_text_color(lblNodeListMode, lv_color_hex(COLOR_MUTED), 0);
-  lv_obj_align(lblNodeListMode, LV_ALIGN_TOP_RIGHT, -2, 29);
+  lv_obj_align(lblNodeListMode, LV_ALIGN_TOP_LEFT, 6, 52);
   listNodes = lv_list_create(pageNodes);
-  lv_obj_set_size(listNodes, SCREEN_W - 12, 188);
-  lv_obj_align(listNodes, LV_ALIGN_TOP_MID, 0, 56);
+  lv_obj_set_size(listNodes, SCREEN_W - 12, 174);
+  lv_obj_align(listNodes, LV_ALIGN_TOP_MID, 0, 74);
   styleDarkObject(listNodes, COLOR_PANEL);
   styleDarkBorder(listNodes, 0x2F705F);
+  lv_obj_set_style_pad_all(listNodes, 4, 0);
+  lv_obj_set_style_pad_row(listNodes, 6, 0);
 
   makePageTitle(pageNodeDetail, "Node Detail");
   taNodeDetail = makeReadonlyText(pageNodeDetail, 26, 174);
@@ -1788,6 +1844,11 @@ static void buildScreenUi() {
   makePageTitle(pagePacketInspector, "Packets");
   taPacketInspector = makeReadonlyText(pagePacketInspector, 26, 218);
   lv_textarea_set_text(taPacketInspector, "No packets decoded yet");
+
+  makePageTitle(pageTxHistory, "TX History");
+  taTxHistory = makeReadonlyText(pageTxHistory, 26, 174);
+  lv_textarea_set_text(taTxHistory, "No messages sent yet");
+  makeActionButton(pageTxHistory, "Retry Last", 208, [](lv_event_t*) { retryLastTx(); });
 
   makePageTitle(pagePublicChat, "Public Chat");
   lv_obj_t* publicStats = lv_label_create(pagePublicChat);
@@ -1943,6 +2004,7 @@ static void buildScreenUi() {
   lv_obj_align(lblMapStats, LV_ALIGN_TOP_LEFT, 6, 164);
 
   makePageTitle(pageSystem, "System");
+  makePageScrollable(pageSystem);
   makeSystemTile(pageSystem, "Interface", 0, 0, [](lv_event_t*) { showPage(pageSystemInterface); });
   makeSystemTile(pageSystem, "Serial", 1, 0, [](lv_event_t*) { showPage(pageSystemSerial); });
   makeSystemTile(pageSystem, "Radio", 0, 1, [](lv_event_t*) { showPage(pageSystemRadio); });
@@ -2729,7 +2791,18 @@ static void refreshScreenUi() {
     char rxAge[32];
     if (lastByteMs) snprintf(rxAge, sizeof(rxAge), "%lu s ago", (unsigned long)((now - lastByteMs) / 1000));
     else strlcpy(rxAge, "never", sizeof(rxAge));
-    char healthText[620];
+    TxRecord* lastTx = latestTxRecord();
+    char txDest[24] = "-";
+    const char* txStatus = "none";
+    uint32_t txAge = 0;
+    uint8_t txChannel = 0;
+    if (lastTx) {
+      describeTxDestination(*lastTx, txDest, sizeof(txDest));
+      txStatus = txStatusText(*lastTx, now);
+      txAge = (now - lastTx->sentMs) / 1000;
+      txChannel = lastTx->channel;
+    }
+    char healthText[760];
     snprintf(healthText, sizeof(healthText),
              "Mesh\n"
              "Known: %u  Active: %u\n"
@@ -2745,6 +2818,10 @@ static void refreshScreenUi() {
              "Position %lu  Node info %lu\n"
              "Config %lu  Other %lu\n"
              "Encrypted %lu\n\n"
+             "TX\n"
+             "Last: %s %lus\n"
+             "Dest: %s  ch%u\n"
+             "TX bytes: %lu\n\n"
              "Link quality\n"
              "Best: %s %.1f dB\n"
              "Weak: %s %.1f dB\n"
@@ -2770,6 +2847,11 @@ static void refreshScreenUi() {
              (unsigned long)configFrames,
              (unsigned long)otherFrames,
              (unsigned long)encryptedPackets,
+             txStatus,
+             (unsigned long)txAge,
+             txDest,
+             txChannel,
+             (unsigned long)bytesToRadio,
              best ? best->name : "-",
              best ? best->snr : 0.0f,
              weakest ? weakest->name : "-",
@@ -2996,6 +3078,9 @@ static void refreshScreenUi() {
   if (currentPage == pagePacketInspector && taPacketInspector) {
     lv_textarea_set_text(taPacketInspector, packetLog[0] ? packetLog : "No packets decoded yet");
   }
+  if (currentPage == pageTxHistory) {
+    refreshTxHistoryView();
+  }
   if (currentPage == pageSystemSerial && taScreenLog) {
     lv_textarea_set_text(taScreenLog, eventLog[0] ? eventLog : "Waiting for radio data");
   }
@@ -3176,6 +3261,99 @@ static void refreshChatViews() {
   }
 }
 
+static TxRecord* latestTxRecord() {
+  if (txHistoryCount == 0) return nullptr;
+  size_t index = txHistoryNext == 0 ? TX_HISTORY_COUNT - 1 : txHistoryNext - 1;
+  return &txHistory[index];
+}
+
+static void describeTxDestination(const TxRecord& record, char* out, size_t outSize) {
+  if (!out || outSize == 0) return;
+  if (record.direct) {
+    snprintf(out, outSize, "!%08lX", (unsigned long)record.to);
+  } else {
+    snprintf(out, outSize, "%s", channelName(record.channel));
+  }
+}
+
+static void recordTxMessage(uint8_t channel, uint32_t to, const char* text, size_t len, bool ok) {
+  TxRecord& record = txHistory[txHistoryNext];
+  memset(&record, 0, sizeof(record));
+  size_t copyLen = min(len, sizeof(record.text) - 1);
+  if (text && copyLen > 0) memcpy(record.text, text, copyLen);
+  record.text[copyLen] = '\0';
+  record.to = to;
+  record.channel = channel;
+  record.sentMs = millis();
+  record.direct = isDirectAddress(to);
+  record.ok = ok;
+  record.echoSeen = false;
+  txHistoryNext = (txHistoryNext + 1) % TX_HISTORY_COUNT;
+  if (txHistoryCount < TX_HISTORY_COUNT) txHistoryCount++;
+  refreshTxHistoryView();
+}
+
+static void markTxEchoSeen(uint8_t channel, uint32_t to, const uint8_t* text, size_t len) {
+  for (size_t offset = 0; offset < txHistoryCount; offset++) {
+    size_t index = (txHistoryNext + TX_HISTORY_COUNT - 1 - offset) % TX_HISTORY_COUNT;
+    TxRecord& record = txHistory[index];
+    if (record.channel != channel || record.to != to) continue;
+    if (strlen(record.text) != len) continue;
+    if (memcmp(record.text, text, len) != 0) continue;
+    record.echoSeen = true;
+    refreshTxHistoryView();
+    return;
+  }
+}
+
+static const char* txStatusText(const TxRecord& record, uint32_t nowMs) {
+  if (!record.ok) return "failed";
+  if (record.echoSeen) return "echo";
+  if (nowMs - record.sentMs > 15000) return "no echo";
+  return "sent";
+}
+
+static void refreshTxHistoryView() {
+  if (!taTxHistory || currentPage != pageTxHistory) return;
+  if (txHistoryCount == 0) {
+    lv_textarea_set_text(taTxHistory, "No messages sent yet");
+    return;
+  }
+  uint32_t now = millis();
+  char text[1200];
+  size_t used = 0;
+  for (size_t offset = 0; offset < txHistoryCount && used < sizeof(text) - 1; offset++) {
+    size_t index = (txHistoryNext + TX_HISTORY_COUNT - 1 - offset) % TX_HISTORY_COUNT;
+    TxRecord& record = txHistory[index];
+    char dest[24];
+    describeTxDestination(record, dest, sizeof(dest));
+    int written = snprintf(text + used,
+                           sizeof(text) - used,
+                           "%lus  %s  ch%u %s\n%.63s\n\n",
+                           (unsigned long)((now - record.sentMs) / 1000),
+                           txStatusText(record, now),
+                           record.channel,
+                           dest,
+                           record.text);
+    if (written <= 0) break;
+    used += min((size_t)written, sizeof(text) - used - 1);
+  }
+  text[used] = '\0';
+  lv_textarea_set_text(taTxHistory, text);
+}
+
+static bool retryLastTx() {
+  TxRecord* record = latestTxRecord();
+  if (!record || !record->text[0]) {
+    appendLine(eventLog, LOG_SIZE, "[local] retry failed: no TX history\n");
+    refreshTxHistoryView();
+    return false;
+  }
+  bool ok = record->direct ? sendDirectTextMessage(record->text, record->to) : sendTextMessage(record->text, record->channel);
+  appendLine(eventLog, LOG_SIZE, ok ? "[local] retried last TX\n" : "[local] retry failed\n");
+  return ok;
+}
+
 static void rememberLocalSentText(uint8_t channel, uint32_t to, const char* text, size_t len) {
   size_t copyLen = min(len, sizeof(lastLocalSentText) - 1);
   memcpy(lastLocalSentText, text, copyLen);
@@ -3282,10 +3460,14 @@ static bool sendTextMessage(const char* text, int8_t channelIndex) {
 
   uint8_t out[512];
   pb_ostream_t stream = pb_ostream_from_buffer(out, sizeof(out));
-  if (!pb_encode(&stream, meshtastic_ToRadio_fields, &toRadio)) return false;
+  if (!pb_encode(&stream, meshtastic_ToRadio_fields, &toRadio)) {
+    recordTxMessage(packet.channel, packet.to, text, data.payload.size, false);
+    return false;
+  }
   writeStreamFrame(out, stream.bytes_written);
 
   rememberLocalSentText(packet.channel, packet.to, text, data.payload.size);
+  recordTxMessage(packet.channel, packet.to, text, data.payload.size, true);
   appendChatMessage(packet.channel, packet.to, "me", data.payload.bytes, data.payload.size);
 
   char line[96];
@@ -3313,10 +3495,14 @@ static bool sendDirectTextMessage(const char* text, uint32_t toNode) {
 
   uint8_t out[512];
   pb_ostream_t stream = pb_ostream_from_buffer(out, sizeof(out));
-  if (!pb_encode(&stream, meshtastic_ToRadio_fields, &toRadio)) return false;
+  if (!pb_encode(&stream, meshtastic_ToRadio_fields, &toRadio)) {
+    recordTxMessage(packet.channel, packet.to, text, data.payload.size, false);
+    return false;
+  }
   writeStreamFrame(out, stream.bytes_written);
 
   rememberLocalSentText(packet.channel, packet.to, text, data.payload.size);
+  recordTxMessage(packet.channel, packet.to, text, data.payload.size, true);
   appendChatMessage(packet.channel, packet.to, "me", data.payload.bytes, data.payload.size);
 
   char line[96];
@@ -3663,7 +3849,10 @@ static void handleDecodedPacket(const meshtastic_MeshPacket& packet) {
       snprintf(fromText, sizeof(fromText), "!%08lX", (unsigned long)packet.from);
       lv_textarea_set_text(taDirectTo, fromText);
     }
-    if (!(fromThisNode && isRecentLocalEcho(packet.channel, packet.to, data.payload.bytes, data.payload.size))) {
+    bool localEcho = fromThisNode && isRecentLocalEcho(packet.channel, packet.to, data.payload.bytes, data.payload.size);
+    if (localEcho) {
+      markTxEchoSeen(packet.channel, packet.to, data.payload.bytes, data.payload.size);
+    } else {
       appendChatMessage(packet.channel, packet.to, fromThisNode ? "me" : nodeName(packet.from), data.payload.bytes, data.payload.size);
     }
     snprintf(line, sizeof(line), "[%s] %.*s\n", fromThisNode ? "me" : nodeName(packet.from),
