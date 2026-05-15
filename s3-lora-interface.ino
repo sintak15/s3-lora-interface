@@ -101,29 +101,18 @@ struct GpsStats {
 };
 
 struct LocalBatteryStats {
-  static constexpr uint8_t TREND_SAMPLES = 20;
   uint32_t rawMv = 0;
   uint32_t rawPackMv = 0;
   uint32_t filteredPackMv = 0;
-  uint32_t batteryMv = 0;
-  uint32_t learnedBatteryMv = 0;
-  uint32_t lastRawPackMv = 0;
+  uint32_t batteryMv = 5000;
+  uint32_t learnedBatteryMv = 5000;
   int32_t deltaMvPerMin = 0;
   int32_t deltaMvPerMinTenths = 0;
   int16_t calibrationOffsetMv = 0;
-  int percent = 0;
-  bool usbLikely = false;
-  bool chargingLikely = false;
-  uint32_t lastSampleMs = 0;
-  uint32_t lastCalibrationSaveMs = 0;
-  uint32_t trendMs[TREND_SAMPLES] = {};
-  uint32_t trendMv[TREND_SAMPLES] = {};
-  uint8_t trendWriteIndex = 0;
+  int percent = 100;
   uint8_t trendSampleCount = 0;
-  uint8_t filterSampleCount = 0;
   uint8_t stableSampleCount = 0;
-  bool trendUsbLikely = false;
-  char powerState[24] = "unknown";
+  char powerState[24] = "ext power";
 };
 
 struct SdStorageStats {
@@ -608,201 +597,9 @@ static unsigned long bytesToWholeMb(uint64_t bytes) {
   return (unsigned long)((bytes + (1024ULL * 1024ULL - 1ULL)) / (1024ULL * 1024ULL));
 }
 
-static int interpolateBatteryPct(uint32_t mv, uint32_t lowMv, uint8_t lowPct, uint32_t highMv, uint8_t highPct) {
-  uint32_t mvRange = highMv - lowMv;
-  uint32_t pctRange = highPct - lowPct;
-  return lowPct + (int)(((mv - lowMv) * pctRange + (mvRange / 2)) / mvRange);
-}
-
-static int batteryPercentFromMv(uint32_t mv) {
-  struct BatteryCurvePoint {
-    uint32_t mv;
-    uint8_t pct;
-  };
-
-  static const BatteryCurvePoint curve[] = {
-    {3300, 0},
-    {3500, 10},
-    {3600, 25},
-    {3650, 35},
-    {3680, 42},
-    {3700, 46},
-    {3750, 55},
-    {3800, 62},
-    {3850, 72},
-    {3920, 80},
-    {4000, 88},
-    {4100, 95},
-    {4200, 100},
-  };
-
-  if (mv <= curve[0].mv) return curve[0].pct;
-  for (size_t i = 1; i < sizeof(curve) / sizeof(curve[0]); ++i) {
-    if (mv <= curve[i].mv) {
-      return constrain(interpolateBatteryPct(mv, curve[i - 1].mv, curve[i - 1].pct, curve[i].mv, curve[i].pct), 0, 100);
-    }
-  }
-  return curve[sizeof(curve) / sizeof(curve[0]) - 1].pct;
-}
-
-static uint32_t smoothBatteryEstimate(uint32_t currentMv, uint32_t targetMv, bool pluggedIn) {
-  if (currentMv == 0) return constrain(targetMv, 3300UL, 4200UL);
-  targetMv = constrain(targetMv, 3300UL, 4200UL);
-
-  if (pluggedIn) {
-    if (targetMv > currentMv) {
-      uint32_t rise = min<uint32_t>(targetMv - currentMv, 2);
-      return currentMv + rise;
-    }
-    return (currentMv * 31 + targetMv) / 32;
-  }
-
-  if (targetMv < currentMv) {
-    uint32_t fall = min<uint32_t>(currentMv - targetMv, 20);
-    return currentMv - fall;
-  }
-  return (currentMv * 7 + targetMv) / 8;
-}
-
-static void loadBatteryCalibration() {
-  localBattery.calibrationOffsetMv = constrain((int)prefs.getInt("battOffsetMv", 0), -120, 120);
-  uint32_t learnedMv = prefs.getUInt("battLearnedMv", 0);
-  if (learnedMv >= 3300 && learnedMv <= 4200) {
-    localBattery.learnedBatteryMv = learnedMv;
-    localBattery.batteryMv = learnedMv;
-    localBattery.percent = batteryPercentFromMv(learnedMv);
-  }
-}
-
-static void maybeLearnBatteryCalibration() {
-  if (localBattery.trendSampleCount < LocalBatteryStats::TREND_SAMPLES) return;
-
-  bool stable = abs(localBattery.deltaMvPerMinTenths) <= 15;
-  if (stable) {
-    if (localBattery.stableSampleCount < 250) localBattery.stableSampleCount++;
-  } else {
-    localBattery.stableSampleCount = 0;
-  }
-  if (localBattery.stableSampleCount < 20) return;
-
-  if (!localBattery.usbLikely && !localBattery.chargingLikely) {
-    uint32_t learned = localBattery.learnedBatteryMv
-                        ? (localBattery.learnedBatteryMv * 15 + localBattery.batteryMv) / 16
-                        : localBattery.batteryMv;
-    localBattery.learnedBatteryMv = constrain(learned, 3300UL, 4200UL);
-  }
-
-  if (localBattery.usbLikely &&
-      localBattery.filteredPackMv >= 4180 &&
-      localBattery.filteredPackMv <= 4300 &&
-      abs(localBattery.deltaMvPerMinTenths) <= 5) {
-    int16_t targetOffset = (int16_t)4200 - (int16_t)localBattery.filteredPackMv;
-    targetOffset = constrain(targetOffset, -80, 40);
-    localBattery.calibrationOffsetMv = (int16_t)((localBattery.calibrationOffsetMv * 31 + targetOffset) / 32);
-  }
-
-  if (millis() - localBattery.lastCalibrationSaveMs < 60000) return;
-  localBattery.lastCalibrationSaveMs = millis();
-  prefs.putInt("battOffsetMv", localBattery.calibrationOffsetMv);
-  if (localBattery.learnedBatteryMv) {
-    prefs.putUInt("battLearnedMv", localBattery.learnedBatteryMv);
-  }
-}
-
-static void resetBatteryTrendWindow() {
-  localBattery.trendWriteIndex = 0;
-  localBattery.trendSampleCount = 0;
-  localBattery.deltaMvPerMin = 0;
-  localBattery.deltaMvPerMinTenths = 0;
-}
-
-static void updateBatteryTrend(uint32_t sampleMv) {
-  if (localBattery.trendSampleCount > 0 && localBattery.usbLikely != localBattery.trendUsbLikely) {
-    resetBatteryTrendWindow();
-  }
-  localBattery.trendUsbLikely = localBattery.usbLikely;
-
-  uint32_t now = millis();
-  uint8_t newest = localBattery.trendWriteIndex;
-  localBattery.trendMs[newest] = now;
-  localBattery.trendMv[newest] = sampleMv;
-  localBattery.trendWriteIndex = (localBattery.trendWriteIndex + 1) % LocalBatteryStats::TREND_SAMPLES;
-  if (localBattery.trendSampleCount < LocalBatteryStats::TREND_SAMPLES) {
-    localBattery.trendSampleCount++;
-  }
-
-  if (localBattery.trendSampleCount < 6) {
-    localBattery.deltaMvPerMin = 0;
-    localBattery.deltaMvPerMinTenths = 0;
-    return;
-  }
-
-  uint8_t oldest = localBattery.trendSampleCount == LocalBatteryStats::TREND_SAMPLES ? localBattery.trendWriteIndex : 0;
-  uint32_t elapsedMs = now - localBattery.trendMs[oldest];
-  if (elapsedMs < 5000) {
-    localBattery.deltaMvPerMin = 0;
-    localBattery.deltaMvPerMinTenths = 0;
-    return;
-  }
-
-  int32_t deltaMv = (int32_t)sampleMv - (int32_t)localBattery.trendMv[oldest];
-  int32_t trendTenths = (int32_t)((int64_t)deltaMv * 600000LL / (int32_t)elapsedMs);
-  if (trendTenths > -3 && trendTenths < 3) trendTenths = 0;
-  if (localBattery.usbLikely && sampleMv >= 4180 && trendTenths > 0) trendTenths = 0;
-  if (!localBattery.chargingLikely && sampleMv < 4100 && trendTenths > 0) trendTenths = 0;
-  localBattery.deltaMvPerMinTenths = constrain(trendTenths, -600L, 600L);
-  localBattery.deltaMvPerMin = localBattery.deltaMvPerMinTenths / 10;
-}
-
 static void sampleLocalBattery() {
-  if (millis() - localBattery.lastSampleMs < 1000) return;
-  localBattery.lastSampleMs = millis();
-
-  uint32_t adcMv = analogReadMilliVolts(BATT_ADC_PIN);
-  uint32_t rawPackMv = (uint32_t)(adcMv * BATT_ADC_MULTIPLIER + 0.5f);
-  uint32_t packMv = constrain((int32_t)rawPackMv + localBattery.calibrationOffsetMv, 3000L, 4500L);
-  int32_t rawStepMv = localBattery.lastRawPackMv ? (int32_t)packMv - (int32_t)localBattery.lastRawPackMv : 0;
-
-  localBattery.rawMv = adcMv;
-  localBattery.rawPackMv = rawPackMv;
-  if (localBattery.filteredPackMv == 0) {
-    localBattery.filteredPackMv = packMv;
-  } else {
-    localBattery.filteredPackMv = (localBattery.filteredPackMv * 3 + packMv) / 4;
-  }
-  if (localBattery.filterSampleCount < 250) localBattery.filterSampleCount++;
-
-  bool overLipoVoltage = localBattery.filteredPackMv >= 4300 || packMv >= 4350;
-  bool unplugStep = rawStepMv < -120 && packMv < 4250;
-  bool keepUsbLatch = localBattery.usbLikely && localBattery.filteredPackMv >= 4240 && !unplugStep;
-  localBattery.usbLikely = overLipoVoltage || keepUsbLatch;
-
-  bool plausibleChargeVoltage = localBattery.filteredPackMv >= 4050 && localBattery.filteredPackMv <= 4240;
-  localBattery.chargingLikely = !localBattery.usbLikely && plausibleChargeVoltage && rawStepMv > 8;
-
-  uint32_t trustedPackMv = localBattery.filteredPackMv;
-  if (localBattery.usbLikely && trustedPackMv > 4200) {
-    trustedPackMv = localBattery.batteryMv ? localBattery.batteryMv : 4100;
-  }
-  localBattery.batteryMv = smoothBatteryEstimate(localBattery.batteryMv, trustedPackMv, localBattery.usbLikely);
-  localBattery.percent = batteryPercentFromMv(localBattery.batteryMv);
-  if (localBattery.filterSampleCount >= 10) {
-    updateBatteryTrend(constrain(localBattery.filteredPackMv, 3300UL, 4300UL));
-    maybeLearnBatteryCalibration();
-  } else {
-    resetBatteryTrendWindow();
-  }
-
-  if (localBattery.usbLikely) {
-    strlcpy(localBattery.powerState, "plugged in", sizeof(localBattery.powerState));
-  } else if (localBattery.chargingLikely) {
-    strlcpy(localBattery.powerState, "charging/plugged", sizeof(localBattery.powerState));
-  } else if (localBattery.deltaMvPerMinTenths < -10) {
-    strlcpy(localBattery.powerState, "battery only", sizeof(localBattery.powerState));
-  } else {
-    strlcpy(localBattery.powerState, "battery/steady", sizeof(localBattery.powerState));
-  }
-  localBattery.lastRawPackMv = packMv;
+  // Battery is now read via MT3608 boost converter to the 5V rail.
+  // We can no longer read the LiPo directly via the board's divider.
 }
 
 static void appendLine(char* buffer, size_t bufferSize, const char* line) {
@@ -2415,9 +2212,7 @@ static void refreshScreenUi() {
   lv_label_set_text(lblStatus, status);
 
   if (lblBatteryStatus) {
-    char batteryStatus[24];
-    snprintf(batteryStatus, sizeof(batteryStatus), "Batt %d%%", localBattery.percent);
-    lv_label_set_text(lblBatteryStatus, batteryStatus);
+    lv_label_set_text(lblBatteryStatus, "Ext Power");
   }
 
   char statsText[256];
@@ -2598,16 +2393,9 @@ static void refreshScreenUi() {
   if (currentPage == pageBattery && lblBatteryStats) {
     char batteryText[520];
     snprintf(batteryText, sizeof(batteryText),
-             "S3 battery\n"
-             "Level: %d%%\n"
-             "Battery estimate: %.2f V\n"
-             "Sense voltage: %.2f V\n"
-             "Calibration: %+d mV\n"
-             "Learned stable: %.2f V\n"
-             "ADC pin: GPIO%d\n"
-             "ADC reading: %lu mV\n"
-             "Power: %s\n"
-             "Trend: %.1f mV/min (%us)\n\n"
+             "S3 power\n"
+             "Level: 100%%\n"
+             "Power: %s\n\n"
              "S3 interface power\n"
              "Uptime: %lu s\n"
              "Heap free/min: %lu/%lu KB\n"
@@ -2616,16 +2404,7 @@ static void refreshScreenUi() {
              "Packets RX/TX: %lu/%lu\n"
              "Channel use: %.2f%%\n"
              "Air TX use: %.2f%%",
-             localBattery.percent,
-             localBattery.batteryMv / 1000.0f,
-             localBattery.filteredPackMv / 1000.0f,
-             (int)localBattery.calibrationOffsetMv,
-             localBattery.learnedBatteryMv / 1000.0f,
-             BATT_ADC_PIN,
-             (unsigned long)localBattery.rawMv,
              localBattery.powerState,
-             localBattery.deltaMvPerMinTenths / 10.0f,
-             (unsigned)(localBattery.trendSampleCount ? localBattery.trendSampleCount - 1 : 0),
              (unsigned long)(millis() / 1000),
              (unsigned long)(ESP.getFreeHeap() / 1024),
              (unsigned long)(ESP.getMinFreeHeap() / 1024),
@@ -3777,7 +3556,6 @@ void setup() {
   appendLine(eventLog, LOG_SIZE, "[boot] Heltec LoRa interface starting\n");
   Serial.println("[boot] prefs");
   prefs.begin("s3-lora", false);
-  loadBatteryCalibration();
   wifiApMode = prefs.getBool("wifiApMode", true);
   strlcpy(wifiLocalSsid, "SOB", sizeof(wifiLocalSsid));
   strlcpy(wifiLocalPass, "CestLaVie629!", sizeof(wifiLocalPass));
