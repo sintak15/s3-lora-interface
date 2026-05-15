@@ -77,6 +77,20 @@ struct DeviceStats {
   uint16_t totalNodes = 0;
 };
 
+enum NodeSortMode : uint8_t {
+  NODE_SORT_LAST_HEARD,
+  NODE_SORT_SNR,
+  NODE_SORT_DISTANCE,
+  NODE_SORT_NAME
+};
+
+enum NodeFilterMode : uint8_t {
+  NODE_FILTER_ALL,
+  NODE_FILTER_ACTIVE,
+  NODE_FILTER_POSITIONED,
+  NODE_FILTER_STALE
+};
+
 struct GpsStats {
   bool valid = false;
   bool hasSats = false;
@@ -308,6 +322,7 @@ static lv_obj_t* lblStatus = nullptr;
 static lv_obj_t* lblBatteryStatus = nullptr;
 static lv_obj_t* lblStats = nullptr;
 static lv_obj_t* listNodes = nullptr;
+static lv_obj_t* lblNodeListMode = nullptr;
 static lv_obj_t* taNodeDetail = nullptr;
 static lv_obj_t* lblMeshHealth = nullptr;
 static lv_obj_t* taPacketInspector = nullptr;
@@ -361,6 +376,8 @@ static bool mapCanvasCached = false;
 static bool mapRenderPending = false;
 static uint32_t selectedNodeNum = 0;
 static uint32_t lastNodeListRefreshMs = 0;
+static NodeSortMode nodeSortMode = NODE_SORT_LAST_HEARD;
+static NodeFilterMode nodeFilterMode = NODE_FILTER_ALL;
 static int cachedMapZoom = -1;
 static long cachedMapTileX = LONG_MIN;
 static long cachedMapTileY = LONG_MIN;
@@ -385,8 +402,11 @@ static void appendLine(char* buffer, size_t bufferSize, const char* line);
 static void appendPacketEvent(const char* line);
 static void showNodeDetail(uint32_t nodeNum);
 static void directSelectedNode();
+static void cycleNodeSort();
+static void cycleNodeFilter();
 static void refreshNodeList(bool force = false);
 static void refreshMapUi();
+static double distanceMeters(double lat1, double lon1, double lat2, double lon2);
 static void loadMapCacheFromSd();
 static void refreshChatViews();
 static void setMapNearbyMode(bool enabled);
@@ -1194,6 +1214,27 @@ static lv_obj_t* makeActionButton(lv_obj_t* parent, const char* text, int y, lv_
   return btn;
 }
 
+static lv_obj_t* makeSmallButton(lv_obj_t* parent, const char* text, int x, int y, int w, lv_event_cb_t cb) {
+  lv_obj_t* btn = lv_btn_create(parent);
+  lv_obj_set_size(btn, w, 24);
+  lv_obj_align(btn, LV_ALIGN_TOP_LEFT, x, y);
+  styleDarkObject(btn, COLOR_PANEL);
+  styleDarkBorder(btn, 0x2F705F);
+  lv_obj_set_style_radius(btn, 6, 0);
+  lv_obj_set_style_shadow_width(btn, 0, 0);
+  lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* label = lv_label_create(btn);
+  lv_label_set_text(label, text);
+  lv_obj_set_width(label, w - 8);
+  lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_text_color(label, lv_color_hex(COLOR_TEXT), 0);
+  lv_obj_center(label);
+  lv_obj_move_foreground(btn);
+  return btn;
+}
+
 static lv_obj_t* makeSystemTile(lv_obj_t* parent, const char* text, int col, int row, lv_event_cb_t cb) {
   const int tileW = UI_TILE_W;
   const int tileH = UI_TILE_H;
@@ -1300,9 +1341,94 @@ static uint32_t nodeAgeSeconds(const NodeRecord& node, uint32_t nowMs) {
   return node.lastHeardMs ? (nowMs - node.lastHeardMs) / 1000 : 0;
 }
 
+static double headingTo(double lat1, double lon1, double lat2, double lon2) {
+  double dLon = (lon2 - lon1) * DEG_TO_RAD;
+  double y = sin(dLon) * cos(lat2 * DEG_TO_RAD);
+  double x = cos(lat1 * DEG_TO_RAD) * sin(lat2 * DEG_TO_RAD) -
+             sin(lat1 * DEG_TO_RAD) * cos(lat2 * DEG_TO_RAD) * cos(dLon);
+  double brng = atan2(y, x) * RAD_TO_DEG;
+  return fmod(brng + 360.0, 360.0);
+}
+
+static const char* nodeSortLabel() {
+  switch (nodeSortMode) {
+    case NODE_SORT_SNR: return "snr";
+    case NODE_SORT_DISTANCE: return "range";
+    case NODE_SORT_NAME: return "name";
+    default: return "heard";
+  }
+}
+
+static const char* nodeFilterLabel() {
+  switch (nodeFilterMode) {
+    case NODE_FILTER_ACTIVE: return "active";
+    case NODE_FILTER_POSITIONED: return "position";
+    case NODE_FILTER_STALE: return "stale";
+    default: return "all";
+  }
+}
+
+static bool nodeMatchesFilter(const NodeRecord& node, uint32_t nowMs) {
+  uint32_t age = nodeAgeSeconds(node, nowMs);
+  switch (nodeFilterMode) {
+    case NODE_FILTER_ACTIVE: return age <= 900;
+    case NODE_FILTER_POSITIONED: return node.hasPosition;
+    case NODE_FILTER_STALE: return age > 900;
+    default: return true;
+  }
+}
+
+static bool nodeComesBefore(const NodeRecord& a, const NodeRecord& b, uint32_t nowMs) {
+  switch (nodeSortMode) {
+    case NODE_SORT_SNR:
+      return a.snr > b.snr;
+    case NODE_SORT_DISTANCE:
+      if (gpsStats.valid) {
+        bool aHasRange = a.hasPosition;
+        bool bHasRange = b.hasPosition;
+        if (aHasRange && bHasRange) {
+          double da = distanceMeters(gpsStats.latitude, gpsStats.longitude, a.latitude, a.longitude);
+          double db = distanceMeters(gpsStats.latitude, gpsStats.longitude, b.latitude, b.longitude);
+          return da < db;
+        }
+        if (aHasRange != bHasRange) return aHasRange;
+      }
+      return nodeAgeSeconds(a, nowMs) < nodeAgeSeconds(b, nowMs);
+    case NODE_SORT_NAME:
+      return strcasecmp(a.name, b.name) < 0;
+    default:
+      return nodeAgeSeconds(a, nowMs) < nodeAgeSeconds(b, nowMs);
+  }
+}
+
+static void formatRangeBearing(const NodeRecord& node, char* buffer, size_t bufferSize) {
+  if (!buffer || bufferSize == 0) return;
+  if (!gpsStats.valid || !node.hasPosition) {
+    strlcpy(buffer, "range --", bufferSize);
+    return;
+  }
+  double meters = distanceMeters(gpsStats.latitude, gpsStats.longitude, node.latitude, node.longitude);
+  double bearing = headingTo(gpsStats.latitude, gpsStats.longitude, node.latitude, node.longitude);
+  if (meters >= 1000.0) {
+    snprintf(buffer, bufferSize, "%.1f km %.0f deg", meters / 1000.0, bearing);
+  } else {
+    snprintf(buffer, bufferSize, "%.0f m %.0f deg", meters, bearing);
+  }
+}
+
 static void nodeListButtonEvent(lv_event_t* e) {
   uint32_t nodeNum = (uint32_t)(uintptr_t)lv_event_get_user_data(e);
   showNodeDetail(nodeNum);
+}
+
+static void cycleNodeSort() {
+  nodeSortMode = (NodeSortMode)((nodeSortMode + 1) % 4);
+  refreshNodeList(true);
+}
+
+static void cycleNodeFilter() {
+  nodeFilterMode = (NodeFilterMode)((nodeFilterMode + 1) % 4);
+  refreshNodeList(true);
 }
 
 static void refreshNodeList(bool force) {
@@ -1311,24 +1437,46 @@ static void refreshNodeList(bool force) {
   if (!force && now - lastNodeListRefreshMs < 3000) return;
   lastNodeListRefreshMs = now;
   lv_obj_clean(listNodes);
-  if (nodeCount == 0) {
-    lv_list_add_text(listNodes, "No nodes heard yet");
+  if (lblNodeListMode) {
+    char modeText[48];
+    snprintf(modeText, sizeof(modeText), "sort %s  filter %s", nodeSortLabel(), nodeFilterLabel());
+    lv_label_set_text(lblNodeListMode, modeText);
+  }
+  size_t sorted[MAX_NODES];
+  size_t sortedCount = 0;
+  for (size_t i = 0; i < nodeCount; i++) {
+    if (nodeMatchesFilter(nodes[i], now)) sorted[sortedCount++] = i;
+  }
+  for (size_t i = 0; i < sortedCount; i++) {
+    for (size_t j = i + 1; j < sortedCount; j++) {
+      if (nodeComesBefore(nodes[sorted[j]], nodes[sorted[i]], now)) {
+        size_t tmp = sorted[i];
+        sorted[i] = sorted[j];
+        sorted[j] = tmp;
+      }
+    }
+  }
+  if (sortedCount == 0) {
+    lv_list_add_text(listNodes, nodeCount ? "No nodes match filter" : "No nodes heard yet");
     return;
   }
-  for (size_t i = 0; i < nodeCount; i++) {
-    NodeRecord& node = nodes[i];
+  for (size_t listIndex = 0; listIndex < sortedCount; listIndex++) {
+    NodeRecord& node = nodes[sorted[listIndex]];
     char title[48];
     snprintf(title, sizeof(title), "%.30s", node.name[0] ? node.name : nodeName(node.num));
     lv_obj_t* btn = lv_list_add_btn(listNodes, nullptr, title);
     styleDarkObject(btn, COLOR_PANEL);
     styleDarkBorder(btn, 0x2F705F);
     lv_obj_add_event_cb(btn, nodeListButtonEvent, LV_EVENT_CLICKED, (void*)(uintptr_t)node.num);
-    char detail[96];
-    snprintf(detail, sizeof(detail), "!%08lX  %.1f dB  %ld dBm  %lus",
+    char rangeText[32];
+    formatRangeBearing(node, rangeText, sizeof(rangeText));
+    char detail[128];
+    snprintf(detail, sizeof(detail), "!%08lX  %.1f dB  H%u  %lus\n%s",
              (unsigned long)node.num,
              node.snr,
-             (long)node.rssi,
-             (unsigned long)nodeAgeSeconds(node, now));
+             node.hopsAway,
+             (unsigned long)nodeAgeSeconds(node, now),
+             rangeText);
     lv_obj_t* label = lv_label_create(btn);
     lv_label_set_text(label, detail);
     lv_obj_set_width(label, SCREEN_W - 42);
@@ -1610,9 +1758,17 @@ static void buildScreenUi() {
   lv_obj_set_width(lblStats, lv_pct(100));
 
   makePageTitle(pageNodes, "Nodes");
+  makeSmallButton(pageNodes, "Sort", 6, 24, 54, [](lv_event_t*) { cycleNodeSort(); });
+  makeSmallButton(pageNodes, "Filter", 66, 24, 62, [](lv_event_t*) { cycleNodeFilter(); });
+  lblNodeListMode = lv_label_create(pageNodes);
+  lv_label_set_text(lblNodeListMode, "sort heard  filter all");
+  lv_obj_set_width(lblNodeListMode, 98);
+  lv_label_set_long_mode(lblNodeListMode, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_text_color(lblNodeListMode, lv_color_hex(COLOR_MUTED), 0);
+  lv_obj_align(lblNodeListMode, LV_ALIGN_TOP_RIGHT, -2, 29);
   listNodes = lv_list_create(pageNodes);
-  lv_obj_set_size(listNodes, SCREEN_W - 12, 220);
-  lv_obj_align(listNodes, LV_ALIGN_TOP_MID, 0, 24);
+  lv_obj_set_size(listNodes, SCREEN_W - 12, 188);
+  lv_obj_align(listNodes, LV_ALIGN_TOP_MID, 0, 56);
   styleDarkObject(listNodes, COLOR_PANEL);
   styleDarkBorder(listNodes, 0x2F705F);
 
@@ -2491,12 +2647,15 @@ static void refreshScreenUi() {
       uint32_t now = millis();
       char positionText[128];
       if (node->hasPosition) {
+        char rangeText[32];
+        formatRangeBearing(*node, rangeText, sizeof(rangeText));
         snprintf(positionText, sizeof(positionText),
-                 "%.6f, %.6f\nAlt: %ld m  Pos age: %lu s",
+                 "%.6f, %.6f\nAlt: %ld m  Pos age: %lu s\n%s",
                  node->latitude,
                  node->longitude,
                  (long)node->altitude,
-                 (unsigned long)((now - node->lastPositionMs) / 1000));
+                 (unsigned long)((now - node->lastPositionMs) / 1000),
+                 rangeText);
       } else {
         strlcpy(positionText, "No position yet", sizeof(positionText));
       }
