@@ -52,3 +52,7 @@ Offline on-device map tiles can be copied to the SD card as raw RGB565 files.
 4. Open `http://192.168.4.1/`.
 
 The page shows radio stats, decoded events, chat messages, an OpenStreetMap node map with an offline fallback plot, SD log downloads, and known nodes. The send box broadcasts a Meshtastic text message to the mesh.
+
+## LVGL memory
+
+This baseline expects LVGL to allocate UI objects from ESP32-S3 PSRAM. In the active Arduino `lv_conf.h`, set `LV_MEM_CUSTOM` to `1` and use `heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)` for `LV_MEM_CUSTOM_ALLOC`. The sketch also moves large logs and the map canvas into PSRAM at boot.
