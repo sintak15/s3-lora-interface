@@ -225,6 +225,12 @@ C:\Users\justi\Documents\Arduino\s3-lora-interface\build\sketch\s3-lora-interfac
  C:\Users\justi\AppData\Local\Arduino15\packages\esp32\hardware\esp32\3.3.7\libraries\WebServer\src/middleware/Middleware.h \
  C:\Users\justi\AppData\Local\Arduino15\packages\esp32\hardware\esp32\3.3.7\libraries\WebServer\src/detail/RequestHandler.h \
  C:\Users\justi\AppData\Local\Arduino15\packages\esp32\hardware\esp32\3.3.7\libraries\Preferences\src/Preferences.h \
+ C:\Users\justi\AppData\Local\Arduino15\packages\esp32\tools\esp32s3-libs\3.3.7/include/esp_wifi/include/esp_wifi.h \
+ C:\Users\justi\AppData\Local\Arduino15\packages\esp32\tools\esp32s3-libs\3.3.7/include/esp_wifi/include/esp_wifi_crypto_types.h \
+ C:\Users\justi\AppData\Local\Arduino15\packages\esp32\tools\esp32s3-libs\3.3.7/include/esp_wifi/include/esp_wifi_default.h \
+ C:\Users\justi\AppData\Local\Arduino15\packages\esp32\tools\esp32s3-libs\3.3.7/include/esp_netif/include/esp_netif.h \
+ C:\Users\justi\AppData\Local\Arduino15\packages\esp32\tools\esp32s3-libs\3.3.7/include/esp_netif/include/esp_netif_types.h \
+ C:\Users\justi\AppData\Local\Arduino15\packages\esp32\tools\esp32s3-libs\3.3.7/include/esp_netif/include/esp_netif_defaults.h \
  C:\Users\justi\AppData\Local\Arduino15\packages\esp32\hardware\esp32\3.3.7\libraries\Wire\src/Wire.h \
  C:\Users\justi\AppData\Local\Arduino15\packages\esp32\hardware\esp32\3.3.7\cores\esp32/esp32-hal.h \
  C:\Users\justi\AppData\Local\Arduino15\packages\esp32\hardware\esp32\3.3.7\cores\esp32/esp32-hal-log.h \
@@ -483,16 +489,20 @@ C:\Users\justi\Documents\Arduino\s3-lora-interface\build\sketch\s3-lora-interfac
  C:\Users\justi\Documents\Arduino\libraries\nanopb-master/pb.h \
  C:\Users\justi\Documents\Arduino\libraries\nanopb-master/pb_encode.h \
  C:\Users\justi\Documents\Arduino\s3-lora-interface\build\sketch\constants.h \
- C:\Users\justi\Documents\Arduino\s3-lora-interface\build\sketch\src/meshtastic/mesh.pb.h \
+ C:\Users\justi\Documents\Arduino\s3-lora-interface\build\sketch\src/meshtastic/admin.pb.h \
  C:\Users\justi\Documents\Arduino\libraries\nanopb-master/pb.h \
  C:\Users\justi\Documents\Arduino\s3-lora-interface\build\sketch\src/meshtastic/channel.pb.h \
  C:\Users\justi\Documents\Arduino\s3-lora-interface\build\sketch\src/meshtastic/config.pb.h \
  C:\Users\justi\Documents\Arduino\s3-lora-interface\build\sketch\src/meshtastic/device_ui.pb.h \
+ C:\Users\justi\Documents\Arduino\s3-lora-interface\build\sketch\src/meshtastic/connection_status.pb.h \
+ C:\Users\justi\Documents\Arduino\s3-lora-interface\build\sketch\src/meshtastic/mesh.pb.h \
  C:\Users\justi\Documents\Arduino\s3-lora-interface\build\sketch\src/meshtastic/module_config.pb.h \
  C:\Users\justi\Documents\Arduino\s3-lora-interface\build\sketch\src/meshtastic/atak.pb.h \
  C:\Users\justi\Documents\Arduino\s3-lora-interface\build\sketch\src/meshtastic/portnums.pb.h \
  C:\Users\justi\Documents\Arduino\s3-lora-interface\build\sketch\src/meshtastic/telemetry.pb.h \
  C:\Users\justi\Documents\Arduino\s3-lora-interface\build\sketch\src/meshtastic/xmodem.pb.h \
+ C:\Users\justi\Documents\Arduino\s3-lora-interface\build\sketch\src/meshtastic/mesh.pb.h \
  C:\Users\justi\Documents\Arduino\s3-lora-interface\build\sketch\src/meshtastic/telemetry.pb.h \
  C:\Users\justi\Documents\Arduino\s3-lora-interface\build\sketch\src/meshtastic/portnums.pb.h \
- C:\Users\justi\Documents\Arduino\s3-lora-interface\build\sketch\src/UIConfig.h
+ C:\Users\justi\Documents\Arduino\s3-lora-interface\build\sketch\src/UIConfig.h \
+ C:\Users\justi\Documents\Arduino\s3-lora-interface\build\sketch\src/WebUi.h

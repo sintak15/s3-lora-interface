@@ -101,18 +101,28 @@ struct GpsStats {
 };
 
 struct LocalBatteryStats {
+  static constexpr uint8_t TREND_SAMPLES = 20;
   uint32_t rawMv = 0;
   uint32_t rawPackMv = 0;
   uint32_t filteredPackMv = 0;
   uint32_t batteryMv = 0;
+  uint32_t learnedBatteryMv = 0;
   uint32_t lastRawPackMv = 0;
   int32_t deltaMvPerMin = 0;
+  int32_t deltaMvPerMinTenths = 0;
+  int16_t calibrationOffsetMv = 0;
   int percent = 0;
   bool usbLikely = false;
   bool chargingLikely = false;
   uint32_t lastSampleMs = 0;
-  uint32_t lastTrendMs = 0;
-  uint32_t lastTrendMv = 0;
+  uint32_t lastCalibrationSaveMs = 0;
+  uint32_t trendMs[TREND_SAMPLES] = {};
+  uint32_t trendMv[TREND_SAMPLES] = {};
+  uint8_t trendWriteIndex = 0;
+  uint8_t trendSampleCount = 0;
+  uint8_t filterSampleCount = 0;
+  uint8_t stableSampleCount = 0;
+  bool trendUsbLikely = false;
   char powerState[24] = "unknown";
 };
 
@@ -159,10 +169,12 @@ static constexpr int MAP_TILE_MAX_ZOOM = 14;
 static constexpr uint32_t MAP_CACHE_MAGIC = 0x4D415031UL;
 static constexpr uint16_t MAP_CACHE_VERSION = 1;
 static constexpr int8_t PUBLIC_CHANNEL_INDEX = 0;
+static constexpr uint32_t BROADCAST_ADDR = 0xFFFFFFFFUL;
 static const char* SD_DIR = "/s3-lora";
 static const char* SD_EVENTS_PATH = "/s3-lora/events.log";
 static const char* SD_PUBLIC_CHAT_PATH = "/s3-lora/public_chat.log";
-static const char* SD_PRIVATE_CHAT_PATH = "/s3-lora/private_chat.log";
+static const char* SD_FAMILY_CHAT_PATH = "/s3-lora/private_family_chat.log";
+static const char* SD_DIRECT_CHAT_PATH = "/s3-lora/direct_messages.log";
 static const char* SD_POSITIONS_PATH = "/s3-lora/positions.csv";
 static const char* SD_MAP_CACHE_PATH = "/s3-lora/map_cache.bin";
 static const char* SD_LAST_LOCATION_PATH = "/s3-lora/last_location.txt";
@@ -177,10 +189,18 @@ static constexpr uint32_t COLOR_TEXT = 0xF4FFF9;
 static constexpr uint32_t COLOR_MUTED = 0x8AB7A6;
 static constexpr uint32_t COLOR_ACCENT = 0x68FFC0;
 static constexpr uint32_t COLOR_ACTION = 0x00C985;
+static constexpr int UI_GAP = 8;
+static constexpr int UI_PANEL_W = SCREEN_W - 12;
+static constexpr int UI_ACTION_H = 40;
+static constexpr int UI_ACTION_W = SCREEN_W - 18;
+static constexpr int UI_INPUT_H = 38;
+static constexpr int UI_TILE_W = 106;
+static constexpr int UI_TILE_H = 48;
 
 static char eventLog[LOG_SIZE];
 static char publicChatLog[CHAT_SIZE];
-static char privateChatLog[CHAT_SIZE];
+static char familyChatLog[CHAT_SIZE];
+static char directChatLog[CHAT_SIZE];
 static char lastLocalSentText[234];
 static NodeRecord nodes[MAX_NODES];
 static ChannelRecord channels[MAX_CHANNELS];
@@ -236,10 +256,11 @@ static size_t wifiScanResultCount = 0;
 static uint32_t wifiStartedMs = 0;
 static uint32_t wifiStoppedMs = 0;
 static uint32_t wifiToggleCount = 0;
-static uint8_t backlightPercent = 80;
+static uint8_t backlightPercent = 10;
 static bool backlightPwmReady = false;
 static uint32_t lastLocalSentMs = 0;
 static uint8_t lastLocalSentChannel = PUBLIC_CHANNEL_INDEX;
+static uint32_t lastLocalSentTo = BROADCAST_ADDR;
 
 static lv_disp_draw_buf_t drawBuf;
 static lv_disp_drv_t dispDrv;
@@ -252,6 +273,7 @@ static lv_obj_t* pageLauncher = nullptr;
 static lv_obj_t* pageLora = nullptr;
 static lv_obj_t* pagePublicChat = nullptr;
 static lv_obj_t* pagePrivateChat = nullptr;
+static lv_obj_t* pageDirectChat = nullptr;
 static lv_obj_t* pageGps = nullptr;
 static lv_obj_t* pageSystem = nullptr;
 static lv_obj_t* pageSystemInterface = nullptr;
@@ -291,11 +313,14 @@ static lv_obj_t* mapPlot = nullptr;
 static lv_obj_t* mapCanvas = nullptr;
 static lv_obj_t* mapDots[MAP_DOT_COUNT];
 static lv_obj_t* taPublicChat = nullptr;
-static lv_obj_t* taPrivateChat = nullptr;
+static lv_obj_t* taFamilyChat = nullptr;
+static lv_obj_t* taDirectChat = nullptr;
 static lv_obj_t* taScreenLog = nullptr;
 static lv_obj_t* taScreenNodes = nullptr;
 static lv_obj_t* taPublicInput = nullptr;
-static lv_obj_t* taPrivateInput = nullptr;
+static lv_obj_t* taFamilyInput = nullptr;
+static lv_obj_t* taDirectTo = nullptr;
+static lv_obj_t* taDirectInput = nullptr;
 static lv_obj_t* activeChatInput = nullptr;
 static lv_obj_t* keyboard = nullptr;
 static lv_obj_t* mainScreen = nullptr;
@@ -331,6 +356,8 @@ static uint16_t lastTouchX = 0;
 static uint16_t lastTouchY = 0;
 
 static bool sendTextMessage(const char* text, int8_t channelIndex = PUBLIC_CHANNEL_INDEX);
+static bool sendDirectTextMessage(const char* text, uint32_t toNode);
+static void sendDirectFromInput(lv_obj_t* toInput, lv_obj_t* msgInput);
 static const char* nodeName(uint32_t num);
 static NodeRecord* findOrCreateNode(uint32_t num);
 static void appendLine(char* buffer, size_t bufferSize, const char* line);
@@ -365,9 +392,11 @@ static void loadSdTextTail(const char* path, char* buffer, size_t bufferSize) {
 
 static void loadChatLogsFromSd() {
   publicChatLog[0] = '\0';
-  privateChatLog[0] = '\0';
+  familyChatLog[0] = '\0';
+  directChatLog[0] = '\0';
   loadSdTextTail(SD_PUBLIC_CHAT_PATH, publicChatLog, sizeof(publicChatLog));
-  loadSdTextTail(SD_PRIVATE_CHAT_PATH, privateChatLog, sizeof(privateChatLog));
+  loadSdTextTail(SD_FAMILY_CHAT_PATH, familyChatLog, sizeof(familyChatLog));
+  loadSdTextTail(SD_DIRECT_CHAT_PATH, directChatLog, sizeof(directChatLog));
   refreshChatViews();
 }
 
@@ -461,9 +490,9 @@ static void initSdStorage() {
 
 static void refreshSdUsage() {
   if (!sdStorage.available) return;
-  sdStorage.totalBytes = SD_MMC.totalBytes();
-  if (sdStorage.totalBytes == 0) sdStorage.totalBytes = sdStorage.cardSizeBytes;
-  sdStorage.usedBytes = SD_MMC.usedBytes();
+  // Some ESP32-S3 SD_MMC/card combinations can block inside usedBytes() after
+  // files have been opened. Keep the mount-time usage values so UI refreshes
+  // and diagnostics cannot stall the display loop.
 }
 
 static void logPositionToSd(uint32_t from, const char* sourceKind, double lat, double lon, int32_t alt) {
@@ -635,21 +664,113 @@ static uint32_t smoothBatteryEstimate(uint32_t currentMv, uint32_t targetMv, boo
   return (currentMv * 7 + targetMv) / 8;
 }
 
+static void loadBatteryCalibration() {
+  localBattery.calibrationOffsetMv = constrain((int)prefs.getInt("battOffsetMv", 0), -120, 120);
+  uint32_t learnedMv = prefs.getUInt("battLearnedMv", 0);
+  if (learnedMv >= 3300 && learnedMv <= 4200) {
+    localBattery.learnedBatteryMv = learnedMv;
+    localBattery.batteryMv = learnedMv;
+    localBattery.percent = batteryPercentFromMv(learnedMv);
+  }
+}
+
+static void maybeLearnBatteryCalibration() {
+  if (localBattery.trendSampleCount < LocalBatteryStats::TREND_SAMPLES) return;
+
+  bool stable = abs(localBattery.deltaMvPerMinTenths) <= 15;
+  if (stable) {
+    if (localBattery.stableSampleCount < 250) localBattery.stableSampleCount++;
+  } else {
+    localBattery.stableSampleCount = 0;
+  }
+  if (localBattery.stableSampleCount < 20) return;
+
+  if (!localBattery.usbLikely && !localBattery.chargingLikely) {
+    uint32_t learned = localBattery.learnedBatteryMv
+                        ? (localBattery.learnedBatteryMv * 15 + localBattery.batteryMv) / 16
+                        : localBattery.batteryMv;
+    localBattery.learnedBatteryMv = constrain(learned, 3300UL, 4200UL);
+  }
+
+  if (localBattery.usbLikely &&
+      localBattery.filteredPackMv >= 4180 &&
+      localBattery.filteredPackMv <= 4300 &&
+      abs(localBattery.deltaMvPerMinTenths) <= 5) {
+    int16_t targetOffset = (int16_t)4200 - (int16_t)localBattery.filteredPackMv;
+    targetOffset = constrain(targetOffset, -80, 40);
+    localBattery.calibrationOffsetMv = (int16_t)((localBattery.calibrationOffsetMv * 31 + targetOffset) / 32);
+  }
+
+  if (millis() - localBattery.lastCalibrationSaveMs < 60000) return;
+  localBattery.lastCalibrationSaveMs = millis();
+  prefs.putInt("battOffsetMv", localBattery.calibrationOffsetMv);
+  if (localBattery.learnedBatteryMv) {
+    prefs.putUInt("battLearnedMv", localBattery.learnedBatteryMv);
+  }
+}
+
+static void resetBatteryTrendWindow() {
+  localBattery.trendWriteIndex = 0;
+  localBattery.trendSampleCount = 0;
+  localBattery.deltaMvPerMin = 0;
+  localBattery.deltaMvPerMinTenths = 0;
+}
+
+static void updateBatteryTrend(uint32_t sampleMv) {
+  if (localBattery.trendSampleCount > 0 && localBattery.usbLikely != localBattery.trendUsbLikely) {
+    resetBatteryTrendWindow();
+  }
+  localBattery.trendUsbLikely = localBattery.usbLikely;
+
+  uint32_t now = millis();
+  uint8_t newest = localBattery.trendWriteIndex;
+  localBattery.trendMs[newest] = now;
+  localBattery.trendMv[newest] = sampleMv;
+  localBattery.trendWriteIndex = (localBattery.trendWriteIndex + 1) % LocalBatteryStats::TREND_SAMPLES;
+  if (localBattery.trendSampleCount < LocalBatteryStats::TREND_SAMPLES) {
+    localBattery.trendSampleCount++;
+  }
+
+  if (localBattery.trendSampleCount < 6) {
+    localBattery.deltaMvPerMin = 0;
+    localBattery.deltaMvPerMinTenths = 0;
+    return;
+  }
+
+  uint8_t oldest = localBattery.trendSampleCount == LocalBatteryStats::TREND_SAMPLES ? localBattery.trendWriteIndex : 0;
+  uint32_t elapsedMs = now - localBattery.trendMs[oldest];
+  if (elapsedMs < 5000) {
+    localBattery.deltaMvPerMin = 0;
+    localBattery.deltaMvPerMinTenths = 0;
+    return;
+  }
+
+  int32_t deltaMv = (int32_t)sampleMv - (int32_t)localBattery.trendMv[oldest];
+  int32_t trendTenths = (int32_t)((int64_t)deltaMv * 600000LL / (int32_t)elapsedMs);
+  if (trendTenths > -3 && trendTenths < 3) trendTenths = 0;
+  if (localBattery.usbLikely && sampleMv >= 4180 && trendTenths > 0) trendTenths = 0;
+  if (!localBattery.chargingLikely && sampleMv < 4100 && trendTenths > 0) trendTenths = 0;
+  localBattery.deltaMvPerMinTenths = constrain(trendTenths, -600L, 600L);
+  localBattery.deltaMvPerMin = localBattery.deltaMvPerMinTenths / 10;
+}
+
 static void sampleLocalBattery() {
   if (millis() - localBattery.lastSampleMs < 1000) return;
   localBattery.lastSampleMs = millis();
 
   uint32_t adcMv = analogReadMilliVolts(BATT_ADC_PIN);
-  uint32_t packMv = (uint32_t)(adcMv * BATT_ADC_MULTIPLIER + 0.5f);
+  uint32_t rawPackMv = (uint32_t)(adcMv * BATT_ADC_MULTIPLIER + 0.5f);
+  uint32_t packMv = constrain((int32_t)rawPackMv + localBattery.calibrationOffsetMv, 3000L, 4500L);
   int32_t rawStepMv = localBattery.lastRawPackMv ? (int32_t)packMv - (int32_t)localBattery.lastRawPackMv : 0;
 
   localBattery.rawMv = adcMv;
-  localBattery.rawPackMv = packMv;
+  localBattery.rawPackMv = rawPackMv;
   if (localBattery.filteredPackMv == 0) {
     localBattery.filteredPackMv = packMv;
   } else {
     localBattery.filteredPackMv = (localBattery.filteredPackMv * 3 + packMv) / 4;
   }
+  if (localBattery.filterSampleCount < 250) localBattery.filterSampleCount++;
 
   bool overLipoVoltage = localBattery.filteredPackMv >= 4300 || packMv >= 4350;
   bool unplugStep = rawStepMv < -120 && packMv < 4250;
@@ -665,26 +786,18 @@ static void sampleLocalBattery() {
   }
   localBattery.batteryMv = smoothBatteryEstimate(localBattery.batteryMv, trustedPackMv, localBattery.usbLikely);
   localBattery.percent = batteryPercentFromMv(localBattery.batteryMv);
-
-  if (localBattery.lastTrendMs == 0) {
-    localBattery.lastTrendMs = millis();
-    localBattery.lastTrendMv = localBattery.batteryMv;
-  } else if (millis() - localBattery.lastTrendMs >= 30000) {
-    int32_t delta = (int32_t)localBattery.batteryMv - (int32_t)localBattery.lastTrendMv;
-    uint32_t elapsedMs = millis() - localBattery.lastTrendMs;
-    localBattery.deltaMvPerMin = (int32_t)((delta * 60000L) / (int32_t)elapsedMs);
-    if (localBattery.batteryMv < 4100 && localBattery.deltaMvPerMin > 0) {
-      localBattery.deltaMvPerMin = 0;
-    }
-    localBattery.lastTrendMs = millis();
-    localBattery.lastTrendMv = localBattery.batteryMv;
+  if (localBattery.filterSampleCount >= 10) {
+    updateBatteryTrend(constrain(localBattery.filteredPackMv, 3300UL, 4300UL));
+    maybeLearnBatteryCalibration();
+  } else {
+    resetBatteryTrendWindow();
   }
 
   if (localBattery.usbLikely) {
     strlcpy(localBattery.powerState, "plugged in", sizeof(localBattery.powerState));
   } else if (localBattery.chargingLikely) {
     strlcpy(localBattery.powerState, "charging/plugged", sizeof(localBattery.powerState));
-  } else if (localBattery.deltaMvPerMin < -4) {
+  } else if (localBattery.deltaMvPerMinTenths < -10) {
     strlcpy(localBattery.powerState, "battery only", sizeof(localBattery.powerState));
   } else {
     strlcpy(localBattery.powerState, "battery/steady", sizeof(localBattery.powerState));
@@ -712,8 +825,10 @@ static void appendLine(char* buffer, size_t bufferSize, const char* line) {
     appendSdLine(SD_EVENTS_PATH, line);
   } else if (buffer == publicChatLog) {
     appendSdLine(SD_PUBLIC_CHAT_PATH, line);
-  } else if (buffer == privateChatLog) {
-    appendSdLine(SD_PRIVATE_CHAT_PATH, line);
+  } else if (buffer == familyChatLog) {
+    appendSdLine(SD_FAMILY_CHAT_PATH, line);
+  } else if (buffer == directChatLog) {
+    appendSdLine(SD_DIRECT_CHAT_PATH, line);
   }
 }
 
@@ -1018,8 +1133,10 @@ static void applyBacklight() {
 }
 
 static void initBacklight() {
+  Serial.printf("[boot] Backlight pin %d configuring...\n", TFT_BL);
   pinMode(TFT_BL, OUTPUT);
   backlightPwmReady = ledcAttach(TFT_BL, 5000, 8);
+  Serial.printf("[boot] Backlight PWM ready: %d\n", backlightPwmReady);
   applyBacklight();
 }
 
@@ -1135,12 +1252,17 @@ static void buildStatusBar(lv_obj_t* screen) {
 
   lblStatus = lv_label_create(statusBar);
   lv_label_set_text(lblStatus, "booting");
+  lv_obj_set_width(lblStatus, SCREEN_W - 92);
+  lv_label_set_long_mode(lblStatus, LV_LABEL_LONG_DOT);
   lv_obj_set_style_text_color(lblStatus, lv_color_hex(COLOR_MUTED), 0);
   lv_obj_set_style_text_font(lblStatus, LV_FONT_DEFAULT, 0);
   lv_obj_align(lblStatus, LV_ALIGN_LEFT_MID, 0, 0);
 
   lblBatteryStatus = lv_label_create(statusBar);
   lv_label_set_text(lblBatteryStatus, "Batt --%");
+  lv_obj_set_width(lblBatteryStatus, 82);
+  lv_label_set_long_mode(lblBatteryStatus, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_text_align(lblBatteryStatus, LV_TEXT_ALIGN_RIGHT, 0);
   lv_obj_set_style_text_color(lblBatteryStatus, lv_color_hex(COLOR_ACCENT), 0);
   lv_obj_set_style_text_font(lblBatteryStatus, LV_FONT_DEFAULT, 0);
   lv_obj_align(lblBatteryStatus, LV_ALIGN_RIGHT_MID, 0, 0);
@@ -1150,7 +1272,7 @@ static void showPage(lv_obj_t* target, bool remember) {
   if (!target) return;
   if (remember && currentPage && currentPage != target) previousPage = currentPage;
   lv_obj_t* pages[] = {
-    pageLauncher, pageLora, pagePublicChat, pagePrivateChat, pageGps,
+    pageLauncher, pageLora, pagePublicChat, pagePrivateChat, pageDirectChat, pageGps,
     pageSystem, pageSystemInterface, pageSystemSerial, pageSystemRadio, pageSystemGps,
     pageWifi, pageWifiStats, pageWifiLocal, pageWifiScan, pageBacklight, pageBattery
   };
@@ -1188,7 +1310,7 @@ static void setMapNearbyMode(bool enabled) {
 
 static lv_obj_t* makeActionButton(lv_obj_t* parent, const char* text, int y, lv_event_cb_t cb) {
   lv_obj_t* btn = lv_btn_create(parent);
-  lv_obj_set_size(btn, SCREEN_W - 18, 44);
+  lv_obj_set_size(btn, UI_ACTION_W, UI_ACTION_H);
   lv_obj_align(btn, LV_ALIGN_TOP_MID, 0, y);
   styleDarkObject(btn, COLOR_PANEL);
   styleDarkBorder(btn, 0x2F705F);
@@ -1198,6 +1320,9 @@ static lv_obj_t* makeActionButton(lv_obj_t* parent, const char* text, int y, lv_
   lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* label = lv_label_create(btn);
   lv_label_set_text(label, text);
+  lv_obj_set_width(label, UI_ACTION_W - 20);
+  lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_text_color(label, lv_color_hex(COLOR_TEXT), 0);
   lv_obj_center(label);
   lv_obj_move_foreground(btn);
@@ -1205,9 +1330,9 @@ static lv_obj_t* makeActionButton(lv_obj_t* parent, const char* text, int y, lv_
 }
 
 static lv_obj_t* makeSystemTile(lv_obj_t* parent, const char* text, int col, int row, lv_event_cb_t cb) {
-  const int tileW = 106;
-  const int tileH = 54;
-  const int gap = 8;
+  const int tileW = UI_TILE_W;
+  const int tileH = UI_TILE_H;
+  const int gap = UI_GAP;
   const int x = 6 + col * (tileW + gap);
   const int y = 24 + row * (tileH + gap);
   lv_obj_t* btn = lv_btn_create(parent);
@@ -1221,6 +1346,8 @@ static lv_obj_t* makeSystemTile(lv_obj_t* parent, const char* text, int col, int
   lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* label = lv_label_create(btn);
   lv_label_set_text(label, text);
+  lv_obj_set_width(label, tileW - 12);
+  lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
   lv_obj_set_style_text_color(label, lv_color_hex(COLOR_TEXT), 0);
   lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_center(label);
@@ -1231,6 +1358,8 @@ static lv_obj_t* makeSystemTile(lv_obj_t* parent, const char* text, int col, int
 static lv_obj_t* makePageTitle(lv_obj_t* parent, const char* text) {
   lv_obj_t* title = lv_label_create(parent);
   lv_label_set_text(title, text);
+  lv_obj_set_width(title, SCREEN_W - 118);
+  lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_ACCENT), 0);
   lv_obj_set_style_text_font(title, LV_FONT_DEFAULT, 0);
   lv_obj_align(title, LV_ALIGN_TOP_LEFT, 2, 0);
@@ -1249,6 +1378,9 @@ static lv_obj_t* makeNavButton(lv_obj_t* parent, const char* text, lv_align_t al
   lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* label = lv_label_create(btn);
   lv_label_set_text(label, text);
+  lv_obj_set_width(label, 80);
+  lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_text_color(label, lv_color_hex(COLOR_TEXT), 0);
   lv_obj_center(label);
   lv_obj_move_foreground(btn);
@@ -1293,7 +1425,7 @@ static lv_obj_t* makeReadonlyText(lv_obj_t* parent, int y, int h) {
 }
 
 static int8_t activeChatChannel() {
-  if (activeChatInput == taPrivateInput) {
+  if (activeChatInput == taFamilyInput) {
     return privateChannelIndex >= 0 ? privateChannelIndex : 1;
   }
   return PUBLIC_CHANNEL_INDEX;
@@ -1308,7 +1440,11 @@ static void sendFromInput(lv_obj_t* input, int8_t channelIndex) {
 }
 
 static void sendActiveFromScreen() {
-  sendFromInput(activeChatInput, activeChatChannel());
+  if (activeChatInput == taDirectInput) {
+    sendDirectFromInput(taDirectTo, taDirectInput);
+  } else if (activeChatInput != taDirectTo) {
+    sendFromInput(activeChatInput, activeChatChannel());
+  }
 }
 
 static void setUiLandscape(bool landscape) {
@@ -1363,7 +1499,10 @@ static void inputEvent(lv_event_t* e) {
   lv_event_code_t code = lv_event_get_code(e);
   if (code == LV_EVENT_FOCUSED) {
     lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
-    openLandscapeKeyboard(target, target == taPrivateInput ? "Private message" : "Public message", 233, true);
+    if (target == taDirectTo) openLandscapeKeyboard(target, "Direct recipient", 9, false);
+    else if (target == taDirectInput) openLandscapeKeyboard(target, "Direct message", 233, true);
+    else if (target == taFamilyInput) openLandscapeKeyboard(target, "Family message", 233, true);
+    else openLandscapeKeyboard(target, "Public message", 233, true);
   } else if (code == LV_EVENT_DEFOCUSED) {
     if (!landscapeKeyboardOpen && keyboard) {
       lv_keyboard_set_textarea(keyboard, nullptr);
@@ -1498,6 +1637,7 @@ static void buildScreenUi() {
   pageLora = makePage(screen);
   pagePublicChat = makePage(screen);
   pagePrivateChat = makePage(screen);
+  pageDirectChat = makePage(screen);
   pageGps = makePage(screen);
   pageSystem = makePage(screen);
   pageSystemInterface = makePage(screen);
@@ -1514,28 +1654,18 @@ static void buildScreenUi() {
   currentPage = pageLauncher;
   lv_obj_clear_flag(pageLauncher, LV_OBJ_FLAG_HIDDEN);
 
-  lv_obj_t* launcherTitle = lv_label_create(pageLauncher);
-  lv_label_set_text(launcherTitle, "Heltec Interface");
-  lv_obj_set_style_text_color(launcherTitle, lv_color_hex(COLOR_TEXT), 0);
-  lv_obj_set_style_text_font(launcherTitle, LV_FONT_DEFAULT, 0);
-  lv_obj_align(launcherTitle, LV_ALIGN_TOP_LEFT, 2, 4);
-
-  lv_obj_t* launcherSub = lv_label_create(pageLauncher);
-  lv_label_set_text(launcherSub, "Select a module");
-  lv_obj_set_style_text_color(launcherSub, lv_color_hex(COLOR_MUTED), 0);
-  lv_obj_align(launcherSub, LV_ALIGN_TOP_LEFT, 2, 24);
-
   makeSystemTile(pageLauncher, "LoRa", 0, 0, [](lv_event_t*) { showPage(pageLora); });
   makeSystemTile(pageLauncher, "GPS / Map", 1, 0, [](lv_event_t*) { showPage(pageGps); });
   makeSystemTile(pageLauncher, "System", 0, 1, [](lv_event_t*) { showPage(pageSystem); });
 
   makePageTitle(pageLora, "LoRa");
-  makeActionButton(pageLora, "Public Chat", 34, [](lv_event_t*) { showPage(pagePublicChat); });
-  makeActionButton(pageLora, "Private Chat", 86, [](lv_event_t*) { showPage(pagePrivateChat); });
+  makeActionButton(pageLora, "Public", 26, [](lv_event_t*) { showPage(pagePublicChat); });
+  makeActionButton(pageLora, "Private Family", 76, [](lv_event_t*) { showPage(pagePrivateChat); });
+  makeActionButton(pageLora, "Direct Messages", 126, [](lv_event_t*) { showPage(pageDirectChat); });
 
   lv_obj_t* loraPanel = makePanel(pageLora);
-  lv_obj_set_size(loraPanel, SCREEN_W - 12, 112);
-  lv_obj_align(loraPanel, LV_ALIGN_TOP_MID, 0, 140);
+  lv_obj_set_size(loraPanel, SCREEN_W - 12, 76);
+  lv_obj_align(loraPanel, LV_ALIGN_TOP_MID, 0, 176);
   lblStats = lv_label_create(loraPanel);
   lv_label_set_text(lblStats, "Waiting for radio...");
   lv_obj_set_style_text_font(lblStats, LV_FONT_DEFAULT, 0);
@@ -1572,29 +1702,29 @@ static void buildScreenUi() {
   lv_obj_center(publicSendLbl);
   lv_obj_move_foreground(publicSendBtn);
 
-  makePageTitle(pagePrivateChat, "Private Chat");
+  makePageTitle(pagePrivateChat, "Private Family");
   lv_obj_t* privateStats = lv_label_create(pagePrivateChat);
-  lv_label_set_text(privateStats, "Channel: priv");
+  lv_label_set_text(privateStats, "Channel: priv / family");
   lv_obj_set_style_text_color(privateStats, lv_color_hex(COLOR_MUTED), 0);
   lv_obj_align(privateStats, LV_ALIGN_TOP_LEFT, 2, 18);
 
-  taPrivateChat = makeReadonlyText(pagePrivateChat, 36, 148);
-  lv_textarea_set_text(taPrivateChat, "No private chat yet");
-  taPrivateInput = lv_textarea_create(pagePrivateChat);
-  lv_obj_set_size(taPrivateInput, SCREEN_W - 76, 38);
-  lv_obj_align(taPrivateInput, LV_ALIGN_TOP_LEFT, 6, 192);
-  styleDarkTextArea(taPrivateInput);
-  lv_textarea_set_one_line(taPrivateInput, true);
-  lv_textarea_set_max_length(taPrivateInput, 233);
-  lv_textarea_set_placeholder_text(taPrivateInput, "Private message");
-  lv_obj_add_event_cb(taPrivateInput, inputEvent, LV_EVENT_ALL, nullptr);
+  taFamilyChat = makeReadonlyText(pagePrivateChat, 36, 148);
+  lv_textarea_set_text(taFamilyChat, "No family chat yet");
+  taFamilyInput = lv_textarea_create(pagePrivateChat);
+  lv_obj_set_size(taFamilyInput, SCREEN_W - 76, 38);
+  lv_obj_align(taFamilyInput, LV_ALIGN_TOP_LEFT, 6, 192);
+  styleDarkTextArea(taFamilyInput);
+  lv_textarea_set_one_line(taFamilyInput, true);
+  lv_textarea_set_max_length(taFamilyInput, 233);
+  lv_textarea_set_placeholder_text(taFamilyInput, "Family message");
+  lv_obj_add_event_cb(taFamilyInput, inputEvent, LV_EVENT_ALL, nullptr);
 
   lv_obj_t* privateSendBtn = lv_btn_create(pagePrivateChat);
   lv_obj_set_size(privateSendBtn, 56, 38);
   lv_obj_align(privateSendBtn, LV_ALIGN_TOP_RIGHT, -6, 192);
   styleDarkObject(privateSendBtn, COLOR_ACTION, 0x001B12);
   lv_obj_set_style_shadow_width(privateSendBtn, 0, 0);
-  lv_obj_add_event_cb(privateSendBtn, [](lv_event_t*) { sendFromInput(taPrivateInput, privateChannelIndex >= 0 ? privateChannelIndex : 1); }, LV_EVENT_CLICKED, nullptr);
+  lv_obj_add_event_cb(privateSendBtn, [](lv_event_t*) { sendFromInput(taFamilyInput, privateChannelIndex >= 0 ? privateChannelIndex : 1); }, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_flag(privateSendBtn, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_t* privateSendLbl = lv_label_create(privateSendBtn);
   lv_label_set_text(privateSendLbl, "Send");
@@ -1606,6 +1736,38 @@ static void buildScreenUi() {
   lv_label_set_text(privHint, "Meshtastic channel name: priv");
   lv_obj_set_style_text_color(privHint, lv_color_hex(COLOR_MUTED), 0);
   lv_obj_align(privHint, LV_ALIGN_TOP_LEFT, 2, 236);
+
+  makePageTitle(pageDirectChat, "Direct Messages");
+  taDirectChat = makeReadonlyText(pageDirectChat, 26, 126);
+  lv_textarea_set_text(taDirectChat, "No direct messages yet");
+  taDirectTo = lv_textarea_create(pageDirectChat);
+  lv_obj_set_size(taDirectTo, SCREEN_W - 12, 34);
+  lv_obj_align(taDirectTo, LV_ALIGN_TOP_LEFT, 6, 158);
+  styleDarkTextArea(taDirectTo);
+  lv_textarea_set_one_line(taDirectTo, true);
+  lv_textarea_set_max_length(taDirectTo, 9);
+  lv_textarea_set_placeholder_text(taDirectTo, "To: !1234ABCD");
+  lv_obj_add_event_cb(taDirectTo, inputEvent, LV_EVENT_ALL, nullptr);
+  taDirectInput = lv_textarea_create(pageDirectChat);
+  lv_obj_set_size(taDirectInput, SCREEN_W - 76, 38);
+  lv_obj_align(taDirectInput, LV_ALIGN_TOP_LEFT, 6, 198);
+  styleDarkTextArea(taDirectInput);
+  lv_textarea_set_one_line(taDirectInput, true);
+  lv_textarea_set_max_length(taDirectInput, 233);
+  lv_textarea_set_placeholder_text(taDirectInput, "Direct message");
+  lv_obj_add_event_cb(taDirectInput, inputEvent, LV_EVENT_ALL, nullptr);
+  lv_obj_t* directSendBtn = lv_btn_create(pageDirectChat);
+  lv_obj_set_size(directSendBtn, 56, 38);
+  lv_obj_align(directSendBtn, LV_ALIGN_TOP_RIGHT, -6, 198);
+  styleDarkObject(directSendBtn, COLOR_ACTION, 0x001B12);
+  lv_obj_set_style_shadow_width(directSendBtn, 0, 0);
+  lv_obj_add_event_cb(directSendBtn, [](lv_event_t*) { sendDirectFromInput(taDirectTo, taDirectInput); }, LV_EVENT_CLICKED, nullptr);
+  lv_obj_add_flag(directSendBtn, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_t* directSendLbl = lv_label_create(directSendBtn);
+  lv_label_set_text(directSendLbl, "Send");
+  lv_obj_set_style_text_color(directSendLbl, lv_color_hex(0x001B12), 0);
+  lv_obj_center(directSendLbl);
+  lv_obj_move_foreground(directSendBtn);
 
   makePageTitle(pageGps, "GPS / Map");
   lv_obj_t* btnGpsMap = lv_btn_create(pageGps);
@@ -1708,7 +1870,7 @@ static void buildScreenUi() {
 
   makePageTitle(pageWifi, "WiFi");
   lv_obj_t* wifiPanel = makePanel(pageWifi);
-  lv_obj_set_size(wifiPanel, SCREEN_W - 12, 150);
+  lv_obj_set_size(wifiPanel, UI_PANEL_W, 142);
   lv_obj_align(wifiPanel, LV_ALIGN_TOP_MID, 0, 26);
   lv_obj_t* wifiToggleLabel = lv_label_create(wifiPanel);
   lv_label_set_text(wifiToggleLabel, "WiFi On/Off");
@@ -1736,11 +1898,11 @@ static void buildScreenUi() {
   lv_label_set_text(lblWifiState, "WiFi starting...");
   lv_obj_set_style_text_color(lblWifiState, lv_color_hex(COLOR_MUTED), 0);
   lv_obj_set_width(lblWifiState, lv_pct(100));
-  lv_obj_align(lblWifiState, LV_ALIGN_TOP_LEFT, 2, 84);
-  makeActionButton(pageWifi, "Local Network", 184, [](lv_event_t*) {
+  lv_obj_align(lblWifiState, LV_ALIGN_TOP_LEFT, 2, 80);
+  makeActionButton(pageWifi, "Local Network", 176, [](lv_event_t*) {
     deferWifiAction(1);
   });
-  makeActionButton(pageWifi, "WiFi Stats", 236, [](lv_event_t*) { showPage(pageWifiStats); });
+  makeActionButton(pageWifi, "WiFi Stats", 220, [](lv_event_t*) { showPage(pageWifiStats); });
 
   makePageTitle(pageWifiStats, "WiFi Stats");
   lv_obj_t* wifiStatsPanel = makePanel(pageWifiStats);
@@ -1756,7 +1918,7 @@ static void buildScreenUi() {
   lv_obj_set_size(backlightPanel, SCREEN_W - 12, 150);
   lv_obj_align(backlightPanel, LV_ALIGN_TOP_MID, 0, 30);
   lblBacklight = lv_label_create(backlightPanel);
-  lv_label_set_text(lblBacklight, "Brightness: 80%");
+  lv_label_set_text(lblBacklight, "Brightness: 10%");
   lv_obj_set_style_text_color(lblBacklight, lv_color_hex(COLOR_TEXT), 0);
   lv_obj_align(lblBacklight, LV_ALIGN_TOP_LEFT, 2, 4);
   sliderBacklight = lv_slider_create(backlightPanel);
@@ -2260,7 +2422,7 @@ static void refreshScreenUi() {
 
   char statsText[256];
   snprintf(statsText, sizeof(statsText),
-           "Node: %s\nID: !%08lX\nRX/TX: %lu/%lu  Nodes: %u/%u\nPriv: %s",
+           "Node: %s\nID: !%08lX\nRX/TX: %lu/%lu  Nodes: %u/%u\nFamily: %s",
            nodeName(stats.myNodeNum),
            (unsigned long)stats.myNodeNum,
            (unsigned long)stats.packetsRx,
@@ -2270,7 +2432,7 @@ static void refreshScreenUi() {
            privateChannelIndex >= 0 ? "found" : "not found");
   lv_label_set_text(lblStats, statsText);
 
-  if (lblSystemInterface) {
+  if (currentPage == pageSystemInterface && lblSystemInterface) {
     String wifiIp = wifiEnabled ? (wifiApMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString()) : String("off");
     char interfaceText[360];
     snprintf(interfaceText, sizeof(interfaceText),
@@ -2302,7 +2464,7 @@ static void refreshScreenUi() {
     lv_label_set_text(lblSystemInterface, interfaceText);
   }
 
-  if (lblSystemSerial) {
+  if (currentPage == pageSystemSerial && lblSystemSerial) {
     char serialText[340];
     char rxAge[32];
     if (lastByteMs) snprintf(rxAge, sizeof(rxAge), "%lus ago", (unsigned long)((millis() - lastByteMs) / 1000));
@@ -2331,7 +2493,7 @@ static void refreshScreenUi() {
     lv_label_set_text(lblSystemSerial, serialText);
   }
 
-  if (lblSystemRadio) {
+  if (currentPage == pageSystemRadio && lblSystemRadio) {
     char radioText[300];
     snprintf(radioText, sizeof(radioText),
              "Packet types\n"
@@ -2366,7 +2528,7 @@ static void refreshScreenUi() {
     else lv_obj_clear_state(swWifiApMode, LV_STATE_CHECKED);
   }
 
-  if (lblWifiState) {
+  if (currentPage == pageWifi && lblWifiState) {
     String wifiIp = wifiEnabled ? (wifiApMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString()) : String("-");
     const char* wifiState = "off";
     if (wifiEnabled && wifiApMode) wifiState = "AP on";
@@ -2381,7 +2543,7 @@ static void refreshScreenUi() {
     lv_label_set_text(lblWifiState, wifiStateText);
   }
 
-  if (lblWifiStats) {
+  if (currentPage == pageWifiStats && lblWifiStats) {
     uint32_t wifiAge = 0;
     if (wifiEnabled && wifiStartedMs) wifiAge = (millis() - wifiStartedMs) / 1000;
     else if (!wifiEnabled && wifiStoppedMs) wifiAge = (millis() - wifiStoppedMs) / 1000;
@@ -2424,7 +2586,7 @@ static void refreshScreenUi() {
     lv_slider_set_value(sliderBacklight, backlightPercent, LV_ANIM_OFF);
   }
 
-  if (lblBacklight) {
+  if (currentPage == pageBacklight && lblBacklight) {
     char backlightText[96];
     snprintf(backlightText, sizeof(backlightText),
              "Brightness: %u%%\nPWM: %s",
@@ -2433,17 +2595,19 @@ static void refreshScreenUi() {
     lv_label_set_text(lblBacklight, backlightText);
   }
 
-  if (lblBatteryStats) {
-    char batteryText[420];
+  if (currentPage == pageBattery && lblBatteryStats) {
+    char batteryText[520];
     snprintf(batteryText, sizeof(batteryText),
              "S3 battery\n"
              "Level: %d%%\n"
              "Battery estimate: %.2f V\n"
              "Sense voltage: %.2f V\n"
+             "Calibration: %+d mV\n"
+             "Learned stable: %.2f V\n"
              "ADC pin: GPIO%d\n"
              "ADC reading: %lu mV\n"
              "Power: %s\n"
-             "Trend: %ld mV/min\n\n"
+             "Trend: %.1f mV/min (%us)\n\n"
              "S3 interface power\n"
              "Uptime: %lu s\n"
              "Heap free/min: %lu/%lu KB\n"
@@ -2454,11 +2618,14 @@ static void refreshScreenUi() {
              "Air TX use: %.2f%%",
              localBattery.percent,
              localBattery.batteryMv / 1000.0f,
-             localBattery.rawPackMv / 1000.0f,
+             localBattery.filteredPackMv / 1000.0f,
+             (int)localBattery.calibrationOffsetMv,
+             localBattery.learnedBatteryMv / 1000.0f,
              BATT_ADC_PIN,
              (unsigned long)localBattery.rawMv,
              localBattery.powerState,
-             (long)localBattery.deltaMvPerMin,
+             localBattery.deltaMvPerMinTenths / 10.0f,
+             (unsigned)(localBattery.trendSampleCount ? localBattery.trendSampleCount - 1 : 0),
              (unsigned long)(millis() / 1000),
              (unsigned long)(ESP.getFreeHeap() / 1024),
              (unsigned long)(ESP.getMinFreeHeap() / 1024),
@@ -2470,7 +2637,7 @@ static void refreshScreenUi() {
     lv_label_set_text(lblBatteryStats, batteryText);
   }
 
-  if (lblGpsStats) {
+  if (currentPage == pageSystemGps && lblGpsStats) {
     char gpsText[720];
     if (gpsStats.valid) {
       uint32_t age = (millis() - gpsStats.lastUpdateMs) / 1000;
@@ -2573,11 +2740,20 @@ static void refreshScreenUi() {
 
   refreshMapUi();
 
-  if (taPublicChat) lv_textarea_set_text(taPublicChat, publicChatLog[0] ? publicChatLog : "No public chat yet");
-  if (taPrivateChat) lv_textarea_set_text(taPrivateChat, privateChatLog[0] ? privateChatLog : "No private chat yet");
-  if (taScreenLog) lv_textarea_set_text(taScreenLog, eventLog[0] ? eventLog : "Waiting for radio data");
+  if (currentPage == pagePublicChat && taPublicChat) {
+    lv_textarea_set_text(taPublicChat, publicChatLog[0] ? publicChatLog : "No public chat yet");
+  }
+  if (currentPage == pagePrivateChat && taFamilyChat) {
+    lv_textarea_set_text(taFamilyChat, familyChatLog[0] ? familyChatLog : "No family chat yet");
+  }
+  if (currentPage == pageDirectChat && taDirectChat) {
+    lv_textarea_set_text(taDirectChat, directChatLog[0] ? directChatLog : "No direct messages yet");
+  }
+  if (currentPage == pageSystemSerial && taScreenLog) {
+    lv_textarea_set_text(taScreenLog, eventLog[0] ? eventLog : "Waiting for radio data");
+  }
 
-  if (taScreenNodes) {
+  if (currentPage == pageSystemSerial && taScreenNodes) {
     String text;
     for (size_t i = 0; i < nodeCount; i++) {
       text += "!";
@@ -2591,6 +2767,25 @@ static void refreshScreenUi() {
       text += "s ago\n\n";
     }
     lv_textarea_set_text(taScreenNodes, text.length() ? text.c_str() : "No nodes heard yet");
+  }
+}
+
+static uint32_t parseNodeAddress(const char* text) {
+  if (!text) return 0;
+  while (*text == ' ' || *text == '\t' || *text == '!') text++;
+  if (!*text) return 0;
+  char* end = nullptr;
+  uint32_t value = strtoul(text, &end, 16);
+  if (end == text || value == 0 || value == BROADCAST_ADDR) return 0;
+  return value;
+}
+
+static void sendDirectFromInput(lv_obj_t* toInput, lv_obj_t* msgInput) {
+  if (!toInput || !msgInput) return;
+  uint32_t to = parseNodeAddress(lv_textarea_get_text(toInput));
+  const char* msg = lv_textarea_get_text(msgInput);
+  if (to && msg && msg[0] && sendDirectTextMessage(msg, to)) {
+    lv_textarea_set_text(msgInput, "");
   }
 }
 
@@ -2708,7 +2903,7 @@ static void updateChannelRecord(const meshtastic_Channel& channel) {
   } else {
     record.name[0] = '\0';
   }
-  if (record.enabled && strcmp(record.name, "priv") == 0) {
+  if (record.enabled && (strcasecmp(record.name, "priv") == 0 || strcasecmp(record.name, "family") == 0)) {
     privateChannelIndex = record.index;
   }
 
@@ -2723,20 +2918,28 @@ static bool isPrivateChannel(uint8_t index) {
 }
 
 static void refreshChatViews() {
-  if (taPublicChat) lv_textarea_set_text(taPublicChat, publicChatLog[0] ? publicChatLog : "No public chat yet");
-  if (taPrivateChat) lv_textarea_set_text(taPrivateChat, privateChatLog[0] ? privateChatLog : "No private chat yet");
+  if (currentPage == pagePublicChat && taPublicChat) {
+    lv_textarea_set_text(taPublicChat, publicChatLog[0] ? publicChatLog : "No public chat yet");
+  }
+  if (currentPage == pagePrivateChat && taFamilyChat) {
+    lv_textarea_set_text(taFamilyChat, familyChatLog[0] ? familyChatLog : "No family chat yet");
+  }
+  if (currentPage == pageDirectChat && taDirectChat) {
+    lv_textarea_set_text(taDirectChat, directChatLog[0] ? directChatLog : "No direct messages yet");
+  }
 }
 
-static void rememberLocalSentText(uint8_t channel, const char* text, size_t len) {
+static void rememberLocalSentText(uint8_t channel, uint32_t to, const char* text, size_t len) {
   size_t copyLen = min(len, sizeof(lastLocalSentText) - 1);
   memcpy(lastLocalSentText, text, copyLen);
   lastLocalSentText[copyLen] = '\0';
   lastLocalSentChannel = channel;
+  lastLocalSentTo = to;
   lastLocalSentMs = millis();
 }
 
-static bool isRecentLocalEcho(uint8_t channel, const uint8_t* text, size_t len) {
-  if (!lastLocalSentMs || channel != lastLocalSentChannel) return false;
+static bool isRecentLocalEcho(uint8_t channel, uint32_t to, const uint8_t* text, size_t len) {
+  if (!lastLocalSentMs || channel != lastLocalSentChannel || to != lastLocalSentTo) return false;
   if (millis() - lastLocalSentMs > 15000) return false;
   if (len != strlen(lastLocalSentText)) return false;
   return memcmp(text, lastLocalSentText, len) == 0;
@@ -2765,13 +2968,18 @@ static void formatChatTimestamp(char* out, size_t outSize) {
            (unsigned long)seconds);
 }
 
-static void appendChatMessage(uint8_t channel, const char* sender, const uint8_t* text, size_t len) {
+static bool isDirectAddress(uint32_t to) {
+  return to != 0 && to != BROADCAST_ADDR;
+}
+
+static void appendChatMessage(uint8_t channel, uint32_t to, const char* sender, const uint8_t* text, size_t len) {
   if (!text || len == 0) return;
   char stamp[28];
   formatChatTimestamp(stamp, sizeof(stamp));
   char line[320];
   snprintf(line, sizeof(line), "[%s] [%s] %.*s\n", stamp, sender && sender[0] ? sender : "unknown", (int)len, text);
-  appendLine(isPrivateChannel(channel) ? privateChatLog : publicChatLog, CHAT_SIZE, line);
+  if (isDirectAddress(to)) appendLine(directChatLog, CHAT_SIZE, line);
+  else appendLine(isPrivateChannel(channel) ? familyChatLog : publicChatLog, CHAT_SIZE, line);
   refreshChatViews();
 }
 
@@ -2815,7 +3023,7 @@ static bool sendTextMessage(const char* text, int8_t channelIndex) {
   toRadio.which_payload_variant = meshtastic_ToRadio_packet_tag;
 
   meshtastic_MeshPacket& packet = toRadio.packet;
-  packet.to = 0xFFFFFFFF;
+  packet.to = BROADCAST_ADDR;
   packet.channel = channelIndex < 0 ? PUBLIC_CHANNEL_INDEX : channelIndex;
   packet.want_ack = false;
   packet.which_payload_variant = meshtastic_MeshPacket_decoded_tag;
@@ -2830,11 +3038,42 @@ static bool sendTextMessage(const char* text, int8_t channelIndex) {
   if (!pb_encode(&stream, meshtastic_ToRadio_fields, &toRadio)) return false;
   writeStreamFrame(out, stream.bytes_written);
 
-  rememberLocalSentText(packet.channel, text, data.payload.size);
-  appendChatMessage(packet.channel, "me", data.payload.bytes, data.payload.size);
+  rememberLocalSentText(packet.channel, packet.to, text, data.payload.size);
+  appendChatMessage(packet.channel, packet.to, "me", data.payload.bytes, data.payload.size);
 
   char line[96];
   snprintf(line, sizeof(line), "[local] text sent on %s\n", channelName(packet.channel));
+  appendLine(eventLog, LOG_SIZE, line);
+  return true;
+}
+
+static bool sendDirectTextMessage(const char* text, uint32_t toNode) {
+  if (!text || !text[0] || !isDirectAddress(toNode)) return false;
+
+  meshtastic_ToRadio toRadio = meshtastic_ToRadio_init_zero;
+  toRadio.which_payload_variant = meshtastic_ToRadio_packet_tag;
+
+  meshtastic_MeshPacket& packet = toRadio.packet;
+  packet.to = toNode;
+  packet.channel = PUBLIC_CHANNEL_INDEX;
+  packet.want_ack = true;
+  packet.which_payload_variant = meshtastic_MeshPacket_decoded_tag;
+
+  meshtastic_Data& data = packet.decoded;
+  data.portnum = meshtastic_PortNum_TEXT_MESSAGE_APP;
+  data.payload.size = min(strlen(text), sizeof(data.payload.bytes));
+  memcpy(data.payload.bytes, text, data.payload.size);
+
+  uint8_t out[512];
+  pb_ostream_t stream = pb_ostream_from_buffer(out, sizeof(out));
+  if (!pb_encode(&stream, meshtastic_ToRadio_fields, &toRadio)) return false;
+  writeStreamFrame(out, stream.bytes_written);
+
+  rememberLocalSentText(packet.channel, packet.to, text, data.payload.size);
+  appendChatMessage(packet.channel, packet.to, "me", data.payload.bytes, data.payload.size);
+
+  char line[96];
+  snprintf(line, sizeof(line), "[local] direct text sent to !%08lX\n", (unsigned long)toNode);
   appendLine(eventLog, LOG_SIZE, line);
   return true;
 }
@@ -2844,7 +3083,7 @@ static bool sendLocalAdmin(const meshtastic_AdminMessage& admin) {
   toRadio.which_payload_variant = meshtastic_ToRadio_packet_tag;
 
   meshtastic_MeshPacket& packet = toRadio.packet;
-  packet.to = stats.myNodeNum ? stats.myNodeNum : 0xFFFFFFFF;
+  packet.to = stats.myNodeNum ? stats.myNodeNum : BROADCAST_ADDR;
   packet.channel = PUBLIC_CHANNEL_INDEX;
   packet.want_ack = false;
   packet.which_payload_variant = meshtastic_MeshPacket_decoded_tag;
@@ -3147,8 +3386,13 @@ static void handleDecodedPacket(const meshtastic_MeshPacket& packet) {
     textPackets++;
     lastPortNum = data.portnum;
     bool fromThisNode = stats.myNodeNum != 0 && packet.from == stats.myNodeNum;
-    if (!(fromThisNode && isRecentLocalEcho(packet.channel, data.payload.bytes, data.payload.size))) {
-      appendChatMessage(packet.channel, fromThisNode ? "me" : nodeName(packet.from), data.payload.bytes, data.payload.size);
+    if (!fromThisNode && isDirectAddress(packet.to) && taDirectTo) {
+      char fromText[12];
+      snprintf(fromText, sizeof(fromText), "!%08lX", (unsigned long)packet.from);
+      lv_textarea_set_text(taDirectTo, fromText);
+    }
+    if (!(fromThisNode && isRecentLocalEcho(packet.channel, packet.to, data.payload.bytes, data.payload.size))) {
+      appendChatMessage(packet.channel, packet.to, fromThisNode ? "me" : nodeName(packet.from), data.payload.bytes, data.payload.size);
     }
     snprintf(line, sizeof(line), "[%s] %.*s\n", fromThisNode ? "me" : nodeName(packet.from),
              (int)data.payload.size, data.payload.bytes);
@@ -3371,10 +3615,16 @@ static String buildStatusJson() {
   json += "\"myNodeName\":\"" + jsonEscape(nodeName(stats.myNodeNum)) + "\",";
   json += "\"battery\":" + String(localBattery.percent) + ",";
   json += "\"voltage\":" + String(localBattery.batteryMv / 1000.0f, 2) + ",";
-  json += "\"senseVoltage\":" + String(localBattery.rawPackMv / 1000.0f, 2) + ",";
+  json += "\"senseVoltage\":" + String(localBattery.filteredPackMv / 1000.0f, 2) + ",";
+  json += "\"rawSenseVoltage\":" + String(localBattery.rawPackMv / 1000.0f, 2) + ",";
   json += "\"batterySource\":\"S3\",";
   json += "\"powerState\":\"" + jsonEscape(localBattery.powerState) + "\",";
-  json += "\"batteryTrend\":" + String(localBattery.deltaMvPerMin) + ",";
+  json += "\"batteryTrend\":" + String(localBattery.deltaMvPerMinTenths / 10.0f, 1) + ",";
+  json += "\"batteryTrendMvPerMin\":" + String(localBattery.deltaMvPerMin) + ",";
+  json += "\"batteryTrendWindowSec\":" + String(localBattery.trendSampleCount ? localBattery.trendSampleCount - 1 : 0) + ",";
+  json += "\"batteryCalibrationOffsetMv\":" + String(localBattery.calibrationOffsetMv) + ",";
+  json += "\"batteryLearnedVoltage\":" + String(localBattery.learnedBatteryMv / 1000.0f, 2) + ",";
+  json += "\"batteryStableSamples\":" + String(localBattery.stableSampleCount) + ",";
   json += "\"sdAvailable\":" + String(sdStorage.available ? "true" : "false") + ",";
   json += "\"sdStatus\":\"" + jsonEscape(sdStorage.status) + "\",";
   json += "\"sdType\":\"" + jsonEscape(sdStorage.cardType) + "\",";
@@ -3390,7 +3640,9 @@ static String buildStatusJson() {
   json += "\"total\":" + String(stats.totalNodes) + ",";
   json += "\"chat\":\"" + jsonEscape(publicChatLog) + "\",";
   json += "\"publicChat\":\"" + jsonEscape(publicChatLog) + "\",";
-  json += "\"privateChat\":\"" + jsonEscape(privateChatLog) + "\",";
+  json += "\"privateChat\":\"" + jsonEscape(familyChatLog) + "\",";
+  json += "\"familyChat\":\"" + jsonEscape(familyChatLog) + "\",";
+  json += "\"directChat\":\"" + jsonEscape(directChatLog) + "\",";
   json += "\"privateChannel\":" + String(privateChannelIndex) + ",";
   json += "\"gpsValid\":" + String(gpsStats.valid ? "true" : "false") + ",";
   json += "\"gpsLat\":" + String(gpsStats.latitude, 6) + ",";
@@ -3512,15 +3764,20 @@ static void handleRoot() {
 }
 void setup() {
   Serial.begin(115200);
+  delay(3000);
   Serial.println("[boot] serial ready");
   SerialLoRa.setRxBufferSize(4096);
   SerialLoRa.begin(LORA_BAUD, SERIAL_8N1, LORA_RX_PIN, LORA_TX_PIN);
   SerialGPS.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
+  Serial.println("[boot] init screen");
   initScreen();
+  Serial.println("[boot] init sd");
   initSdStorage();
 
   appendLine(eventLog, LOG_SIZE, "[boot] Heltec LoRa interface starting\n");
+  Serial.println("[boot] prefs");
   prefs.begin("s3-lora", false);
+  loadBatteryCalibration();
   wifiApMode = prefs.getBool("wifiApMode", true);
   strlcpy(wifiLocalSsid, "SOB", sizeof(wifiLocalSsid));
   strlcpy(wifiLocalPass, "CestLaVie629!", sizeof(wifiLocalPass));
@@ -3531,13 +3788,15 @@ void setup() {
     else lv_obj_clear_state(swWifiApMode, LV_STATE_CHECKED);
   }
 
+  Serial.println("[boot] routes");
   server.on("/", HTTP_GET, handleRoot);
   server.on("/status", HTTP_GET, handleStatus);
   server.on("/send", HTTP_POST, handleSend);
   server.on("/serial_cmd", HTTP_POST, handleSerialCmd);
   server.on("/sd/events", HTTP_GET, []() { handleSdDownload(SD_EVENTS_PATH, "events.log", "text/plain"); });
   server.on("/sd/public", HTTP_GET, []() { handleSdDownload(SD_PUBLIC_CHAT_PATH, "public_chat.log", "text/plain"); });
-  server.on("/sd/private", HTTP_GET, []() { handleSdDownload(SD_PRIVATE_CHAT_PATH, "private_chat.log", "text/plain"); });
+  server.on("/sd/private", HTTP_GET, []() { handleSdDownload(SD_FAMILY_CHAT_PATH, "private_family_chat.log", "text/plain"); });
+  server.on("/sd/direct", HTTP_GET, []() { handleSdDownload(SD_DIRECT_CHAT_PATH, "direct_messages.log", "text/plain"); });
   server.on("/sd/positions", HTTP_GET, []() { handleSdDownload(SD_POSITIONS_PATH, "positions.csv", "text/csv"); });
   server.on("/sd/mapcache", HTTP_GET, []() { handleSdDownload(SD_MAP_CACHE_PATH, "map_cache.bin", "application/octet-stream"); });
   server.on("/sd/last-location", HTTP_GET, []() { handleSdDownload(SD_LAST_LOCATION_PATH, "last_location.txt", "text/plain"); });
@@ -3636,7 +3895,9 @@ void setup() {
                                       server.arg("downlink") == "1");
     server.send(ok ? 200 : 500, "text/plain", ok ? "channel sent" : "channel failed");
   });
+  Serial.println("[boot] wifi");
   startWifi();
+  Serial.println("[boot] wifi done");
 
   char line[128];
   String wifiIp = wifiEnabled ? (wifiApMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString()) : String("0.0.0.0");
@@ -3645,7 +3906,9 @@ void setup() {
            wifiApMode ? "AP" : "Local",
            wifiIp.c_str());
   appendLine(eventLog, LOG_SIZE, line);
+  Serial.println("[boot] config request");
   sendConfigRequest();
+  Serial.println("[boot] setup complete");
 }
 
 void loop() {
