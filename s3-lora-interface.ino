@@ -22,6 +22,9 @@
 #include "src/UIConfig.h"
 #include "src/WebUi.h"
 
+LV_FONT_DECLARE(comic_neue_12);
+LV_FONT_DECLARE(comic_neue_14);
+
 HardwareSerial SerialLoRa(2);
 HardwareSerial SerialGPS(1);
 WebServer server(80);
@@ -62,6 +65,9 @@ struct ChannelRecord {
   char name[12] = "";
   char role[16] = "";
   bool enabled = false;
+  bool uplink = false;
+  bool downlink = false;
+  uint8_t pskSize = 0;
 };
 
 struct TxRecord {
@@ -72,6 +78,21 @@ struct TxRecord {
   bool direct = false;
   bool ok = false;
   bool echoSeen = false;
+};
+
+struct HeltecConfigCache {
+  bool hasLora = false;
+  bool hasDevice = false;
+  bool hasPosition = false;
+  bool hasPower = false;
+  bool hasSerial = false;
+  uint32_t lastConfigMs = 0;
+  uint32_t lastModuleMs = 0;
+  meshtastic_Config_LoRaConfig lora = meshtastic_Config_LoRaConfig_init_zero;
+  meshtastic_Config_DeviceConfig device = meshtastic_Config_DeviceConfig_init_zero;
+  meshtastic_Config_PositionConfig position = meshtastic_Config_PositionConfig_init_zero;
+  meshtastic_Config_PowerConfig power = meshtastic_Config_PowerConfig_init_zero;
+  meshtastic_ModuleConfig_SerialConfig serial = meshtastic_ModuleConfig_SerialConfig_init_zero;
 };
 
 struct DeviceStats {
@@ -98,7 +119,8 @@ enum NodeFilterMode : uint8_t {
   NODE_FILTER_ALL,
   NODE_FILTER_ACTIVE,
   NODE_FILTER_POSITIONED,
-  NODE_FILTER_STALE
+  NODE_FILTER_STALE,
+  NODE_FILTER_NEARBY
 };
 
 struct GpsStats {
@@ -188,6 +210,7 @@ static constexpr size_t CHAT_SIZE = 4096;
 static constexpr size_t PACKET_LOG_SIZE = 4096;
 static constexpr size_t MAX_NODES = 64;
 static constexpr size_t TX_HISTORY_COUNT = 10;
+static constexpr double NODE_NEARBY_METERS = 5000.0;
 static constexpr size_t MAP_DOT_COUNT = MAX_NODES + 1;
 static constexpr size_t MAX_CHANNELS = 8;
 static constexpr size_t FRAME_MAX = 512;
@@ -223,13 +246,15 @@ static constexpr uint32_t COLOR_TEXT = 0xF4FFF9;
 static constexpr uint32_t COLOR_MUTED = 0x8AB7A6;
 static constexpr uint32_t COLOR_ACCENT = 0x68FFC0;
 static constexpr uint32_t COLOR_ACTION = 0x00C985;
-static constexpr int UI_GAP = 8;
+static const lv_font_t* UI_FONT_SMALL = &comic_neue_12;
+static const lv_font_t* UI_FONT_DEFAULT = &comic_neue_14;
+static constexpr int UI_GAP = 6;
 static constexpr int UI_PANEL_W = SCREEN_W - 12;
-static constexpr int UI_ACTION_H = 40;
+static constexpr int UI_ACTION_H = 36;
 static constexpr int UI_ACTION_W = SCREEN_W - 18;
 static constexpr int UI_INPUT_H = 38;
 static constexpr int UI_TILE_W = 106;
-static constexpr int UI_TILE_H = 48;
+static constexpr int UI_TILE_H = 42;
 
 static char* eventLog = nullptr;
 static char* packetLog = nullptr;
@@ -240,6 +265,7 @@ static char lastLocalSentText[234];
 static NodeRecord nodes[MAX_NODES];
 static TxRecord txHistory[TX_HISTORY_COUNT];
 static ChannelRecord channels[MAX_CHANNELS];
+static HeltecConfigCache heltecConfig;
 static size_t nodeCount = 0;
 static size_t txHistoryCount = 0;
 static size_t txHistoryNext = 0;
@@ -420,6 +446,7 @@ static void appendLine(char* buffer, size_t bufferSize, const char* line);
 static void appendPacketEvent(const char* line);
 static void showNodeDetail(uint32_t nodeNum);
 static void directSelectedNode();
+static void showSelectedNodeOnMap();
 static void cycleNodeSort();
 static void cycleNodeFilter();
 static bool retryLastTx();
@@ -1116,6 +1143,8 @@ static void styleDarkBorder(lv_obj_t* obj, uint32_t color) {
 static void styleDarkTextArea(lv_obj_t* ta) {
   styleDarkObject(ta, COLOR_INPUT, 0xE8FFF5);
   styleDarkBorder(ta, 0x2F705F);
+  lv_obj_set_style_text_font(ta, UI_FONT_SMALL, 0);
+  lv_obj_set_style_text_line_space(ta, 1, 0);
   lv_obj_set_style_text_color(ta, lv_color_hex(COLOR_MUTED), LV_PART_TEXTAREA_PLACEHOLDER);
   lv_obj_set_style_bg_color(ta, lv_color_hex(0x16342C), LV_PART_SELECTED);
   lv_obj_set_style_text_color(ta, lv_color_hex(COLOR_TEXT), LV_PART_SELECTED);
@@ -1126,7 +1155,7 @@ static lv_obj_t* makePanel(lv_obj_t* parent) {
   styleDarkObject(panel, COLOR_PANEL);
   styleDarkBorder(panel);
   lv_obj_set_style_radius(panel, 6, 0);
-  lv_obj_set_style_pad_all(panel, 6, 0);
+  lv_obj_set_style_pad_all(panel, 5, 0);
   return panel;
 }
 
@@ -1136,7 +1165,7 @@ static lv_obj_t* makePage(lv_obj_t* parent) {
   lv_obj_align(page, LV_ALIGN_TOP_LEFT, 0, STATUS_BAR_H);
   styleDarkObject(page, COLOR_BG);
   lv_obj_set_style_border_width(page, 0, 0);
-  lv_obj_set_style_pad_all(page, 6, 0);
+  lv_obj_set_style_pad_all(page, 5, 0);
   lv_obj_clear_flag(page, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(page, LV_OBJ_FLAG_HIDDEN);
   return page;
@@ -1164,7 +1193,7 @@ static void buildStatusBar(lv_obj_t* screen) {
   lv_obj_set_width(lblStatus, SCREEN_W - 92);
   lv_label_set_long_mode(lblStatus, LV_LABEL_LONG_DOT);
   lv_obj_set_style_text_color(lblStatus, lv_color_hex(COLOR_MUTED), 0);
-  lv_obj_set_style_text_font(lblStatus, LV_FONT_DEFAULT, 0);
+  lv_obj_set_style_text_font(lblStatus, UI_FONT_SMALL, 0);
   lv_obj_align(lblStatus, LV_ALIGN_LEFT_MID, 0, 0);
 
   lblBatteryStatus = lv_label_create(statusBar);
@@ -1173,7 +1202,7 @@ static void buildStatusBar(lv_obj_t* screen) {
   lv_label_set_long_mode(lblBatteryStatus, LV_LABEL_LONG_DOT);
   lv_obj_set_style_text_align(lblBatteryStatus, LV_TEXT_ALIGN_RIGHT, 0);
   lv_obj_set_style_text_color(lblBatteryStatus, lv_color_hex(COLOR_ACCENT), 0);
-  lv_obj_set_style_text_font(lblBatteryStatus, LV_FONT_DEFAULT, 0);
+  lv_obj_set_style_text_font(lblBatteryStatus, UI_FONT_SMALL, 0);
   lv_obj_align(lblBatteryStatus, LV_ALIGN_RIGHT_MID, 0, 0);
 }
 
@@ -1234,6 +1263,7 @@ static lv_obj_t* makeActionButton(lv_obj_t* parent, const char* text, int y, lv_
   lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
   lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_text_color(label, lv_color_hex(COLOR_TEXT), 0);
+  lv_obj_set_style_text_font(label, UI_FONT_SMALL, 0);
   lv_obj_center(label);
   lv_obj_move_foreground(btn);
   return btn;
@@ -1241,7 +1271,7 @@ static lv_obj_t* makeActionButton(lv_obj_t* parent, const char* text, int y, lv_
 
 static lv_obj_t* makeSmallButton(lv_obj_t* parent, const char* text, int x, int y, int w, lv_event_cb_t cb) {
   lv_obj_t* btn = lv_btn_create(parent);
-  lv_obj_set_size(btn, w, 24);
+  lv_obj_set_size(btn, w, 22);
   lv_obj_align(btn, LV_ALIGN_TOP_LEFT, x, y);
   styleDarkObject(btn, COLOR_PANEL);
   styleDarkBorder(btn, 0x2F705F);
@@ -1255,6 +1285,7 @@ static lv_obj_t* makeSmallButton(lv_obj_t* parent, const char* text, int x, int 
   lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
   lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_text_color(label, lv_color_hex(COLOR_TEXT), 0);
+  lv_obj_set_style_text_font(label, UI_FONT_SMALL, 0);
   lv_obj_center(label);
   lv_obj_move_foreground(btn);
   return btn;
@@ -1281,6 +1312,7 @@ static lv_obj_t* makeSystemTile(lv_obj_t* parent, const char* text, int col, int
   lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
   lv_obj_set_style_text_color(label, lv_color_hex(COLOR_TEXT), 0);
   lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_text_font(label, UI_FONT_SMALL, 0);
   lv_obj_center(label);
   lv_obj_move_foreground(btn);
   return btn;
@@ -1292,7 +1324,7 @@ static lv_obj_t* makePageTitle(lv_obj_t* parent, const char* text) {
   lv_obj_set_width(title, SCREEN_W - 118);
   lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_ACCENT), 0);
-  lv_obj_set_style_text_font(title, LV_FONT_DEFAULT, 0);
+  lv_obj_set_style_text_font(title, UI_FONT_SMALL, 0);
   lv_obj_align(title, LV_ALIGN_TOP_LEFT, 2, 0);
   return title;
 }
@@ -1313,6 +1345,7 @@ static lv_obj_t* makeNavButton(lv_obj_t* parent, const char* text, lv_align_t al
   lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
   lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_text_color(label, lv_color_hex(COLOR_TEXT), 0);
+  lv_obj_set_style_text_font(label, UI_FONT_SMALL, 0);
   lv_obj_center(label);
   lv_obj_move_foreground(btn);
   return btn;
@@ -1350,7 +1383,6 @@ static lv_obj_t* makeReadonlyText(lv_obj_t* parent, int y, int h) {
   lv_obj_align(ta, LV_ALIGN_TOP_MID, 0, y);
   lv_textarea_set_cursor_click_pos(ta, false);
   lv_obj_clear_flag(ta, LV_OBJ_FLAG_CLICK_FOCUSABLE);
-  lv_obj_set_style_text_font(ta, LV_FONT_DEFAULT, 0);
   styleDarkTextArea(ta);
   return ta;
 }
@@ -1389,8 +1421,36 @@ static const char* nodeFilterLabel() {
     case NODE_FILTER_ACTIVE: return "active";
     case NODE_FILTER_POSITIONED: return "position";
     case NODE_FILTER_STALE: return "stale";
+    case NODE_FILTER_NEARBY: return "nearby";
     default: return "all";
   }
+}
+
+static bool nodeHasRange(const NodeRecord& node) {
+  return gpsStats.valid && node.hasPosition;
+}
+
+static double nodeRangeMeters(const NodeRecord& node) {
+  if (!nodeHasRange(node)) return -1.0;
+  return distanceMeters(gpsStats.latitude, gpsStats.longitude, node.latitude, node.longitude);
+}
+
+static const char* nodeStatusLabel(const NodeRecord& node, uint32_t nowMs) {
+  if (nodeAgeSeconds(node, nowMs) > 900) return "STALE";
+  if (node.snr < -10.0f) return "WEAK";
+  return "ACTIVE";
+}
+
+static uint32_t nodeRowBg(const NodeRecord& node, uint32_t nowMs) {
+  if (nodeAgeSeconds(node, nowMs) > 900) return 0x0B100F;
+  if (node.snr < -10.0f) return 0x1D1810;
+  return 0x10201B;
+}
+
+static uint32_t nodeRowBorder(const NodeRecord& node, uint32_t nowMs) {
+  if (nodeAgeSeconds(node, nowMs) > 900) return 0x2A3A35;
+  if (node.snr < -10.0f) return 0x6F5A2E;
+  return 0x2F705F;
 }
 
 static bool nodeMatchesFilter(const NodeRecord& node, uint32_t nowMs) {
@@ -1399,6 +1459,7 @@ static bool nodeMatchesFilter(const NodeRecord& node, uint32_t nowMs) {
     case NODE_FILTER_ACTIVE: return age <= 900;
     case NODE_FILTER_POSITIONED: return node.hasPosition;
     case NODE_FILTER_STALE: return age > 900;
+    case NODE_FILTER_NEARBY: return nodeHasRange(node) && nodeRangeMeters(node) <= NODE_NEARBY_METERS;
     default: return true;
   }
 }
@@ -1452,7 +1513,7 @@ static void cycleNodeSort() {
 }
 
 static void cycleNodeFilter() {
-  nodeFilterMode = (NodeFilterMode)((nodeFilterMode + 1) % 4);
+  nodeFilterMode = (NodeFilterMode)((nodeFilterMode + 1) % 5);
   refreshNodeList(true);
 }
 
@@ -1464,7 +1525,7 @@ static void refreshNodeList(bool force) {
   lv_obj_clean(listNodes);
   if (lblNodeListMode) {
     char modeText[48];
-    snprintf(modeText, sizeof(modeText), "sort %s  filter %s", nodeSortLabel(), nodeFilterLabel());
+    snprintf(modeText, sizeof(modeText), "Sort: %s  Filter: %s", nodeSortLabel(), nodeFilterLabel());
     lv_label_set_text(lblNodeListMode, modeText);
   }
   size_t sorted[MAX_NODES];
@@ -1489,12 +1550,13 @@ static void refreshNodeList(bool force) {
     NodeRecord& node = nodes[sorted[listIndex]];
     char title[48];
     snprintf(title, sizeof(title), "%.30s", node.name[0] ? node.name : nodeName(node.num));
+    uint32_t ageSeconds = nodeAgeSeconds(node, now);
 
     lv_obj_t* row = lv_obj_create(listNodes);
     lv_obj_set_width(row, lv_pct(100));
-    lv_obj_set_height(row, 68);
-    styleDarkObject(row, COLOR_PANEL);
-    styleDarkBorder(row, 0x2F705F);
+    lv_obj_set_height(row, 60);
+    styleDarkObject(row, nodeRowBg(node, now));
+    styleDarkBorder(row, nodeRowBorder(node, now));
     lv_obj_set_style_radius(row, 6, 0);
     lv_obj_set_style_pad_all(row, 6, 0);
     lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
@@ -1503,26 +1565,40 @@ static void refreshNodeList(bool force) {
 
     lv_obj_t* nameLabel = lv_label_create(row);
     lv_label_set_text(nameLabel, title);
-    lv_obj_set_width(nameLabel, lv_pct(100));
+    lv_obj_set_width(nameLabel, 126);
     lv_label_set_long_mode(nameLabel, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_color(nameLabel, lv_color_hex(COLOR_TEXT), 0);
+    lv_obj_set_style_text_font(nameLabel, UI_FONT_SMALL, 0);
     lv_obj_align(nameLabel, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    char badgeText[24];
+    snprintf(badgeText, sizeof(badgeText), "%s %s", nodeStatusLabel(node, now), node.hasPosition ? "GPS" : "NO GPS");
+    lv_obj_t* badgeLabel = lv_label_create(row);
+    lv_label_set_text(badgeLabel, badgeText);
+    lv_obj_set_width(badgeLabel, 78);
+    lv_label_set_long_mode(badgeLabel, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_color(badgeLabel, lv_color_hex(node.hasPosition ? COLOR_ACCENT : COLOR_MUTED), 0);
+    lv_obj_set_style_text_align(badgeLabel, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_set_style_text_font(badgeLabel, UI_FONT_SMALL, 0);
+    lv_obj_align(badgeLabel, LV_ALIGN_TOP_RIGHT, 0, 0);
 
     char rangeText[32];
     formatRangeBearing(node, rangeText, sizeof(rangeText));
     char detail[128];
-    snprintf(detail, sizeof(detail), "!%08lX  %.1f dB  H%u  %lus\n%s",
+    snprintf(detail, sizeof(detail), "!%08lX  H%u  %lus\n%.1f dB  %ld dBm  %s",
              (unsigned long)node.num,
-             node.snr,
              node.hopsAway,
-             (unsigned long)nodeAgeSeconds(node, now),
+             (unsigned long)ageSeconds,
+             node.snr,
+             (long)node.rssi,
              rangeText);
     lv_obj_t* label = lv_label_create(row);
     lv_label_set_text(label, detail);
     lv_obj_set_width(label, lv_pct(100));
     lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_color(label, lv_color_hex(COLOR_MUTED), 0);
-    lv_obj_align(label, LV_ALIGN_TOP_LEFT, 0, 22);
+    lv_obj_set_style_text_font(label, UI_FONT_SMALL, 0);
+    lv_obj_align(label, LV_ALIGN_TOP_LEFT, 0, 16);
   }
 }
 
@@ -1532,6 +1608,15 @@ static void directSelectedNode() {
   snprintf(toText, sizeof(toText), "!%08lX", (unsigned long)selectedNodeNum);
   lv_textarea_set_text(taDirectTo, toText);
   showPage(pageDirectChat);
+}
+
+static void showSelectedNodeOnMap() {
+  if (!selectedNodeNum) return;
+  showPage(pageGps);
+  mapNearbyMode = true;
+  mapRenderPending = true;
+  lastMapUiRefreshMs = 0;
+  refreshMapUi();
 }
 
 static void showNodeDetail(uint32_t nodeNum) {
@@ -1745,6 +1830,7 @@ static void buildScreenUi() {
   lv_obj_t* screen = lv_scr_act();
   mainScreen = screen;
   styleDarkObject(screen, COLOR_BG);
+  lv_obj_set_style_text_font(screen, UI_FONT_DEFAULT, 0);
 
   buildStatusBar(screen);
 
@@ -1775,28 +1861,29 @@ static void buildScreenUi() {
   currentPage = pageLauncher;
   lv_obj_clear_flag(pageLauncher, LV_OBJ_FLAG_HIDDEN);
 
-  makeSystemTile(pageLauncher, "Operate", 0, 0, [](lv_event_t*) { showPage(pageOperate); });
-  makeSystemTile(pageLauncher, "Diagnose", 1, 0, [](lv_event_t*) { showPage(pageDiagnose); });
-  makeSystemTile(pageLauncher, "System", 0, 1, [](lv_event_t*) { showPage(pageSystem); });
-  makeSystemTile(pageLauncher, "Map", 1, 1, [](lv_event_t*) { showPage(pageGps); });
+  makeSystemTile(pageLauncher, "Messages", 0, 0, [](lv_event_t*) { showPage(pageOperate); });
+  makeSystemTile(pageLauncher, "Nodes", 1, 0, [](lv_event_t*) {
+    refreshNodeList(true);
+    showPage(pageNodes);
+  });
+  makeSystemTile(pageLauncher, "Map", 0, 1, [](lv_event_t*) { showPage(pageGps); });
+  makeSystemTile(pageLauncher, "System", 1, 1, [](lv_event_t*) { showPage(pageSystem); });
+  makeSystemTile(pageLauncher, "TX Log", 0, 2, [](lv_event_t*) { showPage(pageTxHistory); });
+  makeSystemTile(pageLauncher, "Diagnose", 1, 2, [](lv_event_t*) { showPage(pageDiagnose); });
 
-  makePageTitle(pageOperate, "Operate");
+  makePageTitle(pageOperate, "Messages");
   makePageScrollable(pageOperate);
   makeSystemTile(pageOperate, "Public", 0, 0, [](lv_event_t*) { showPage(pagePublicChat); });
   makeSystemTile(pageOperate, "Family", 1, 0, [](lv_event_t*) { showPage(pagePrivateChat); });
   makeSystemTile(pageOperate, "Direct", 0, 1, [](lv_event_t*) { showPage(pageDirectChat); });
-  makeSystemTile(pageOperate, "Nodes", 1, 1, [](lv_event_t*) {
-    refreshNodeList(true);
-    showPage(pageNodes);
-  });
-  makeSystemTile(pageOperate, "TX Log", 0, 2, [](lv_event_t*) { showPage(pageTxHistory); });
+  makeSystemTile(pageOperate, "TX Log", 1, 1, [](lv_event_t*) { showPage(pageTxHistory); });
 
   lv_obj_t* operatePanel = makePanel(pageOperate);
   lv_obj_set_size(operatePanel, SCREEN_W - 12, 58);
-  lv_obj_align(operatePanel, LV_ALIGN_TOP_MID, 0, 190);
+  lv_obj_align(operatePanel, LV_ALIGN_TOP_MID, 0, 136);
   lblStats = lv_label_create(operatePanel);
   lv_label_set_text(lblStats, "Waiting for radio...");
-  lv_obj_set_style_text_font(lblStats, LV_FONT_DEFAULT, 0);
+  lv_obj_set_style_text_font(lblStats, UI_FONT_DEFAULT, 0);
   lv_obj_set_style_text_color(lblStats, lv_color_hex(0xF4FFF9), 0);
   lv_obj_set_width(lblStats, lv_pct(100));
 
@@ -1812,25 +1899,28 @@ static void buildScreenUi() {
   makeSystemTile(pageDiagnose, "WiFi", 1, 3, [](lv_event_t*) { showPage(pageWifiStats); });
 
   makePageTitle(pageNodes, "Nodes");
-  makeSmallButton(pageNodes, "Sort", 6, 24, 74, [](lv_event_t*) { cycleNodeSort(); });
-  makeSmallButton(pageNodes, "Filter", 86, 24, 74, [](lv_event_t*) { cycleNodeFilter(); });
+  makeSmallButton(pageNodes, "Sort", 6, 21, 68, [](lv_event_t*) { cycleNodeSort(); });
+  makeSmallButton(pageNodes, "Filter", 80, 21, 72, [](lv_event_t*) { cycleNodeFilter(); });
+  makeSmallButton(pageNodes, "Map", 158, 21, 76, [](lv_event_t*) { showPage(pageGps); });
   lblNodeListMode = lv_label_create(pageNodes);
   lv_label_set_text(lblNodeListMode, "sort heard  filter all");
   lv_obj_set_width(lblNodeListMode, SCREEN_W - 12);
   lv_label_set_long_mode(lblNodeListMode, LV_LABEL_LONG_DOT);
   lv_obj_set_style_text_color(lblNodeListMode, lv_color_hex(COLOR_MUTED), 0);
-  lv_obj_align(lblNodeListMode, LV_ALIGN_TOP_LEFT, 6, 52);
+  lv_obj_set_style_text_font(lblNodeListMode, UI_FONT_SMALL, 0);
+  lv_obj_align(lblNodeListMode, LV_ALIGN_TOP_LEFT, 6, 46);
   listNodes = lv_list_create(pageNodes);
-  lv_obj_set_size(listNodes, SCREEN_W - 12, 174);
-  lv_obj_align(listNodes, LV_ALIGN_TOP_MID, 0, 74);
+  lv_obj_set_size(listNodes, SCREEN_W - 12, 188);
+  lv_obj_align(listNodes, LV_ALIGN_TOP_MID, 0, 62);
   styleDarkObject(listNodes, COLOR_PANEL);
   styleDarkBorder(listNodes, 0x2F705F);
   lv_obj_set_style_pad_all(listNodes, 4, 0);
   lv_obj_set_style_pad_row(listNodes, 6, 0);
 
   makePageTitle(pageNodeDetail, "Node Detail");
-  taNodeDetail = makeReadonlyText(pageNodeDetail, 26, 174);
-  makeActionButton(pageNodeDetail, "Direct Message", 208, [](lv_event_t*) { directSelectedNode(); });
+  taNodeDetail = makeReadonlyText(pageNodeDetail, 22, 184);
+  makeSmallButton(pageNodeDetail, "Direct", 6, 214, 108, [](lv_event_t*) { directSelectedNode(); });
+  makeSmallButton(pageNodeDetail, "Show Map", 126, 214, 108, [](lv_event_t*) { showSelectedNodeOnMap(); });
 
   makePageTitle(pageMeshHealth, "Mesh Health");
   lv_obj_t* meshHealthPanel = makePanel(pageMeshHealth);
@@ -1842,13 +1932,13 @@ static void buildScreenUi() {
   lv_obj_set_width(lblMeshHealth, lv_pct(100));
 
   makePageTitle(pagePacketInspector, "Packets");
-  taPacketInspector = makeReadonlyText(pagePacketInspector, 26, 218);
+  taPacketInspector = makeReadonlyText(pagePacketInspector, 22, 226);
   lv_textarea_set_text(taPacketInspector, "No packets decoded yet");
 
   makePageTitle(pageTxHistory, "TX History");
-  taTxHistory = makeReadonlyText(pageTxHistory, 26, 174);
+  taTxHistory = makeReadonlyText(pageTxHistory, 22, 184);
   lv_textarea_set_text(taTxHistory, "No messages sent yet");
-  makeActionButton(pageTxHistory, "Retry Last", 208, [](lv_event_t*) { retryLastTx(); });
+  makeActionButton(pageTxHistory, "Retry Last", 212, [](lv_event_t*) { retryLastTx(); });
 
   makePageTitle(pagePublicChat, "Public Chat");
   lv_obj_t* publicStats = lv_label_create(pagePublicChat);
@@ -1856,7 +1946,7 @@ static void buildScreenUi() {
   lv_obj_set_style_text_color(publicStats, lv_color_hex(COLOR_MUTED), 0);
   lv_obj_align(publicStats, LV_ALIGN_TOP_LEFT, 2, 18);
 
-  taPublicChat = makeReadonlyText(pagePublicChat, 36, 148);
+  taPublicChat = makeReadonlyText(pagePublicChat, 32, 154);
   lv_textarea_set_text(taPublicChat, "No public chat yet");
   taPublicInput = lv_textarea_create(pagePublicChat);
   lv_obj_set_size(taPublicInput, SCREEN_W - 76, 38);
@@ -1886,7 +1976,7 @@ static void buildScreenUi() {
   lv_obj_set_style_text_color(privateStats, lv_color_hex(COLOR_MUTED), 0);
   lv_obj_align(privateStats, LV_ALIGN_TOP_LEFT, 2, 18);
 
-  taFamilyChat = makeReadonlyText(pagePrivateChat, 36, 148);
+  taFamilyChat = makeReadonlyText(pagePrivateChat, 32, 154);
   lv_textarea_set_text(taFamilyChat, "No family chat yet");
   taFamilyInput = lv_textarea_create(pagePrivateChat);
   lv_obj_set_size(taFamilyInput, SCREEN_W - 76, 38);
@@ -1913,10 +2003,11 @@ static void buildScreenUi() {
   lv_obj_t* privHint = lv_label_create(pagePrivateChat);
   lv_label_set_text(privHint, "Meshtastic channel name: priv");
   lv_obj_set_style_text_color(privHint, lv_color_hex(COLOR_MUTED), 0);
+  lv_obj_set_style_text_font(privHint, UI_FONT_SMALL, 0);
   lv_obj_align(privHint, LV_ALIGN_TOP_LEFT, 2, 236);
 
   makePageTitle(pageDirectChat, "Direct Messages");
-  taDirectChat = makeReadonlyText(pageDirectChat, 26, 126);
+  taDirectChat = makeReadonlyText(pageDirectChat, 22, 132);
   lv_textarea_set_text(taDirectChat, "No direct messages yet");
   taDirectTo = lv_textarea_create(pageDirectChat);
   lv_obj_set_size(taDirectTo, SCREEN_W - 12, 34);
@@ -1948,6 +2039,7 @@ static void buildScreenUi() {
   lv_obj_move_foreground(directSendBtn);
 
   makePageTitle(pageGps, "GPS / Map");
+  makePageScrollable(pageGps);
   lv_obj_t* btnGpsMap = lv_btn_create(pageGps);
   lv_obj_set_size(btnGpsMap, 48, 22);
   lv_obj_align(btnGpsMap, LV_ALIGN_TOP_RIGHT, -58, 0);
@@ -2050,6 +2142,7 @@ static void buildScreenUi() {
   lv_obj_set_width(lblGpsStats, lv_pct(100));
 
   makePageTitle(pageWifi, "WiFi");
+  makePageScrollable(pageWifi);
   lv_obj_t* wifiPanel = makePanel(pageWifi);
   lv_obj_set_size(wifiPanel, UI_PANEL_W, 142);
   lv_obj_align(wifiPanel, LV_ALIGN_TOP_MID, 0, 26);
@@ -2080,10 +2173,10 @@ static void buildScreenUi() {
   lv_obj_set_style_text_color(lblWifiState, lv_color_hex(COLOR_MUTED), 0);
   lv_obj_set_width(lblWifiState, lv_pct(100));
   lv_obj_align(lblWifiState, LV_ALIGN_TOP_LEFT, 2, 80);
-  makeActionButton(pageWifi, "Local Network", 176, [](lv_event_t*) {
+  makeActionButton(pageWifi, "Local Network", 170, [](lv_event_t*) {
     deferWifiAction(1);
   });
-  makeActionButton(pageWifi, "WiFi Stats", 220, [](lv_event_t*) { showPage(pageWifiStats); });
+  makeActionButton(pageWifi, "WiFi Stats", 214, [](lv_event_t*) { showPage(pageWifiStats); });
 
   makePageTitle(pageWifiStats, "WiFi Stats");
   lv_obj_t* wifiStatsPanel = makePanel(pageWifiStats);
@@ -2460,6 +2553,7 @@ static bool placeMapDot(size_t index, double lat, double lon, int zoom, lv_color
   lv_obj_set_size(mapDots[index], size, size);
   lv_obj_set_pos(mapDots[index], x, y);
   lv_obj_set_style_bg_color(mapDots[index], color, 0);
+  lv_obj_set_style_border_width(mapDots[index], 0, 0);
   lv_obj_clear_flag(mapDots[index], LV_OBJ_FLAG_HIDDEN);
   return true;
 }
@@ -2514,11 +2608,27 @@ static void refreshMapUi() {
   size_t plotted = 0;
   size_t remotePlotted = 0;
   const NodeRecord* nearest = nullptr;
+  const NodeRecord* selected = findNode(selectedNodeNum);
+  bool selectedPlotted = false;
+  double selectedMeters = 0.0;
+  double selectedBearing = 0.0;
   double nearestMeters = 0.0;
+  if (selected && selected->hasPosition) {
+    selectedMeters = distanceMeters(gpsStats.latitude, gpsStats.longitude, selected->latitude, selected->longitude);
+    selectedBearing = headingTo(gpsStats.latitude, gpsStats.longitude, selected->latitude, selected->longitude);
+  }
   for (size_t i = 0; i < nodeCount; i++) {
     if (!nodes[i].hasPosition) continue;
-    lv_color_t color = nodes[i].num == stats.myNodeNum ? lv_color_hex(0x00C985) : lv_color_hex(0x68FFC0);
-    if (placeMapDot(i, nodes[i].latitude, nodes[i].longitude, mapZoom, color, 8)) {
+    bool isSelected = selectedNodeNum && nodes[i].num == selectedNodeNum;
+    lv_color_t color = nodes[i].num == stats.myNodeNum ? lv_color_hex(0x00C985) : lv_color_hex(isSelected ? 0xFFD166 : 0x68FFC0);
+    int dotSize = isSelected ? 14 : 8;
+    if (placeMapDot(i, nodes[i].latitude, nodes[i].longitude, mapZoom, color, dotSize)) {
+      if (isSelected) {
+        selectedPlotted = true;
+        lv_obj_set_style_border_width(mapDots[i], 2, 0);
+        lv_obj_set_style_border_color(mapDots[i], lv_color_hex(0xFFF3C4), 0);
+        lv_obj_move_foreground(mapDots[i]);
+      }
       plotted++;
       if (nodes[i].num != stats.myNodeNum) {
         remotePlotted++;
@@ -2537,7 +2647,22 @@ static void refreshMapUi() {
   long tileX = lonToTileX(gpsStats.longitude, mapZoom);
   long tileY = latToTileY(gpsStats.latitude, mapZoom);
 
-  char mapText[320];
+  char selectedText[96];
+  if (selected && selected->hasPosition) {
+    snprintf(selectedText,
+             sizeof(selectedText),
+             "%s %.1f km %.0f deg%s",
+             nodeName(selected->num),
+             selectedMeters / 1000.0,
+             selectedBearing,
+             selectedPlotted ? "" : " off map");
+  } else if (selected) {
+    snprintf(selectedText, sizeof(selectedText), "%s no position", nodeName(selected->num));
+  } else {
+    strlcpy(selectedText, "none", sizeof(selectedText));
+  }
+
+  char mapText[384];
   if (mapNearbyMode) {
     char nearestText[72];
     if (nearest) {
@@ -2548,11 +2673,13 @@ static void refreshMapUi() {
     snprintf(mapText, sizeof(mapText),
              "Nearby Meshtastic nodes\n"
              "Local: %.5f, %.5f\n"
+             "Selected: %s\n"
              "Remote nodes: %u  nearest: %s\n"
              "Tile z%d/%ld/%ld: %s\n"
              "Cache: %s",
              gpsStats.latitude,
              gpsStats.longitude,
+             selectedText,
              (unsigned)remotePlotted,
              nearestText,
              mapZoom,
@@ -2564,12 +2691,14 @@ static void refreshMapUi() {
     snprintf(mapText, sizeof(mapText),
              "CYD GPS: fix  RX %lu bytes\n"
              "Lat/lon: %.5f, %.5f\n"
+             "Selected: %s\n"
              "Offline tile z%d/%ld/%ld: %s\n"
              "Cache: %s\n"
              "%u plotted point%s",
              (unsigned long)gpsBytesFromLocal,
              gpsStats.latitude,
              gpsStats.longitude,
+             selectedText,
              mapZoom,
              tileX,
              tileY,
@@ -2704,13 +2833,17 @@ static void refreshScreenUi() {
 
   if (currentPage == pageNodeDetail && taNodeDetail) {
     NodeRecord* node = findNode(selectedNodeNum);
-    char detailText[720];
+    char detailText[960];
     if (node) {
       uint32_t now = millis();
+      uint32_t ageSeconds = nodeAgeSeconds(*node, now);
+      char rangeText[32];
+      formatRangeBearing(*node, rangeText, sizeof(rangeText));
+      char positionAgeText[24];
+      if (node->hasPosition) snprintf(positionAgeText, sizeof(positionAgeText), "%lu s", (unsigned long)((now - node->lastPositionMs) / 1000));
+      else strlcpy(positionAgeText, "--", sizeof(positionAgeText));
       char positionText[128];
       if (node->hasPosition) {
-        char rangeText[32];
-        formatRangeBearing(*node, rangeText, sizeof(rangeText));
         snprintf(positionText, sizeof(positionText),
                  "%.6f, %.6f\nAlt: %ld m  Pos age: %lu s\n%s",
                  node->latitude,
@@ -2737,6 +2870,11 @@ static void refreshScreenUi() {
       snprintf(detailText, sizeof(detailText),
                "%.39s\n"
                "!%08lX\n\n"
+               "Quick read\n"
+               "%s  %s\n"
+               "Heard: %lu s  Pos: %s\n"
+               "SNR/RSSI: %.1f dB / %ld dBm\n"
+               "Hops: %u  Packets: %lu\n\n"
                "Link\n"
                "SNR: %.1f dB\n"
                "RSSI: %ld dBm\n"
@@ -2754,13 +2892,21 @@ static void refreshScreenUi() {
                "%s",
                node->name,
                (unsigned long)node->num,
+               nodeStatusLabel(*node, now),
+               rangeText,
+               (unsigned long)ageSeconds,
+               positionAgeText,
+               node->snr,
+               (long)node->rssi,
+               node->hopsAway,
+               (unsigned long)node->packetsHeard,
                node->snr,
                (long)node->rssi,
                node->hopsAway,
                node->lastChannel,
                channelName(node->lastChannel),
                (unsigned long)node->lastPortNum,
-               (unsigned long)nodeAgeSeconds(*node, now),
+               (unsigned long)ageSeconds,
                (unsigned long)node->packetsHeard,
                (unsigned long)node->textPackets,
                (unsigned long)node->telemetryPackets,
@@ -3212,6 +3358,30 @@ static const char* channelName(uint8_t index) {
   return index == PUBLIC_CHANNEL_INDEX ? "primary" : "unknown";
 }
 
+static bool isFamilyChannelName(const char* name) {
+  if (!name || !name[0]) return false;
+  return strcasecmp(name, "family") == 0 ||
+         strcasecmp(name, "fam") == 0 ||
+         strcasecmp(name, "priv") == 0 ||
+         strcasecmp(name, "private") == 0;
+}
+
+static void refreshPrivateChannelIndex() {
+  privateChannelIndex = -1;
+  for (size_t i = 0; i < MAX_CHANNELS; i++) {
+    if (!channels[i].enabled || strcmp(channels[i].role, "SECONDARY") != 0) continue;
+    if (isFamilyChannelName(channels[i].name)) {
+      privateChannelIndex = channels[i].index;
+      return;
+    }
+  }
+  for (size_t i = 0; i < MAX_CHANNELS; i++) {
+    if (!channels[i].enabled || strcmp(channels[i].role, "SECONDARY") != 0) continue;
+    privateChannelIndex = channels[i].index;
+    return;
+  }
+}
+
 static void updateChannelRecord(const meshtastic_Channel& channel) {
   if (channel.index < 0 || channel.index >= (int8_t)MAX_CHANNELS) return;
   ChannelRecord& record = channels[channel.index];
@@ -3235,17 +3405,169 @@ static void updateChannelRecord(const meshtastic_Channel& channel) {
   } else {
     record.name[0] = '\0';
   }
-  if (record.enabled && (strcasecmp(record.name, "priv") == 0 || strcasecmp(record.name, "family") == 0)) {
-    privateChannelIndex = record.index;
-  }
+  record.uplink = channel.has_settings && channel.settings.uplink_enabled;
+  record.downlink = channel.has_settings && channel.settings.downlink_enabled;
+  record.pskSize = channel.has_settings ? channel.settings.psk.size : 0;
+  refreshPrivateChannelIndex();
 
   char line[96];
   snprintf(line, sizeof(line), "[radio] channel %d: %s\n", record.index, record.name[0] ? record.name : "(unnamed)");
   appendLine(eventLog, LOG_SIZE, line);
 }
 
+static const char* loraRegionName(meshtastic_Config_LoRaConfig_RegionCode value) {
+  switch (value) {
+    case meshtastic_Config_LoRaConfig_RegionCode_US: return "US";
+    case meshtastic_Config_LoRaConfig_RegionCode_EU_433: return "EU_433";
+    case meshtastic_Config_LoRaConfig_RegionCode_EU_868: return "EU_868";
+    case meshtastic_Config_LoRaConfig_RegionCode_CN: return "CN";
+    case meshtastic_Config_LoRaConfig_RegionCode_JP: return "JP";
+    case meshtastic_Config_LoRaConfig_RegionCode_ANZ: return "ANZ";
+    case meshtastic_Config_LoRaConfig_RegionCode_KR: return "KR";
+    case meshtastic_Config_LoRaConfig_RegionCode_TW: return "TW";
+    case meshtastic_Config_LoRaConfig_RegionCode_RU: return "RU";
+    case meshtastic_Config_LoRaConfig_RegionCode_IN: return "IN";
+    default: return "UNSET";
+  }
+}
+
+static const char* loraPresetName(meshtastic_Config_LoRaConfig_ModemPreset value) {
+  switch (value) {
+    case meshtastic_Config_LoRaConfig_ModemPreset_LONG_SLOW: return "LONG_SLOW";
+    case meshtastic_Config_LoRaConfig_ModemPreset_MEDIUM_FAST: return "MEDIUM_FAST";
+    case meshtastic_Config_LoRaConfig_ModemPreset_MEDIUM_SLOW: return "MEDIUM_SLOW";
+    case meshtastic_Config_LoRaConfig_ModemPreset_SHORT_FAST: return "SHORT_FAST";
+    case meshtastic_Config_LoRaConfig_ModemPreset_SHORT_SLOW: return "SHORT_SLOW";
+    case meshtastic_Config_LoRaConfig_ModemPreset_SHORT_TURBO: return "SHORT_TURBO";
+    case meshtastic_Config_LoRaConfig_ModemPreset_LONG_MODERATE: return "LONG_MODERATE";
+    case meshtastic_Config_LoRaConfig_ModemPreset_LONG_TURBO: return "LONG_TURBO";
+    default: return "LONG_FAST";
+  }
+}
+
+static const char* deviceRoleName(meshtastic_Config_DeviceConfig_Role value) {
+  switch (value) {
+    case meshtastic_Config_DeviceConfig_Role_CLIENT_MUTE: return "CLIENT_MUTE";
+    case meshtastic_Config_DeviceConfig_Role_ROUTER: return "ROUTER";
+    case meshtastic_Config_DeviceConfig_Role_ROUTER_CLIENT: return "ROUTER_CLIENT";
+    case meshtastic_Config_DeviceConfig_Role_REPEATER: return "REPEATER";
+    case meshtastic_Config_DeviceConfig_Role_TRACKER: return "TRACKER";
+    case meshtastic_Config_DeviceConfig_Role_SENSOR: return "SENSOR";
+    case meshtastic_Config_DeviceConfig_Role_TAK: return "TAK";
+    case meshtastic_Config_DeviceConfig_Role_CLIENT_HIDDEN: return "CLIENT_HIDDEN";
+    case meshtastic_Config_DeviceConfig_Role_LOST_AND_FOUND: return "LOST_AND_FOUND";
+    case meshtastic_Config_DeviceConfig_Role_TAK_TRACKER: return "TAK_TRACKER";
+    case meshtastic_Config_DeviceConfig_Role_ROUTER_LATE: return "ROUTER_LATE";
+    case meshtastic_Config_DeviceConfig_Role_CLIENT_BASE: return "CLIENT_BASE";
+    default: return "CLIENT";
+  }
+}
+
+static const char* rebroadcastName(meshtastic_Config_DeviceConfig_RebroadcastMode value) {
+  switch (value) {
+    case meshtastic_Config_DeviceConfig_RebroadcastMode_ALL_SKIP_DECODING: return "ALL_SKIP_DECODING";
+    case meshtastic_Config_DeviceConfig_RebroadcastMode_LOCAL_ONLY: return "LOCAL_ONLY";
+    case meshtastic_Config_DeviceConfig_RebroadcastMode_KNOWN_ONLY: return "KNOWN_ONLY";
+    case meshtastic_Config_DeviceConfig_RebroadcastMode_NONE: return "NONE";
+    case meshtastic_Config_DeviceConfig_RebroadcastMode_CORE_PORTNUMS_ONLY: return "CORE_PORTNUMS_ONLY";
+    default: return "ALL";
+  }
+}
+
+static const char* buzzerName(meshtastic_Config_DeviceConfig_BuzzerMode value) {
+  switch (value) {
+    case meshtastic_Config_DeviceConfig_BuzzerMode_DISABLED: return "DISABLED";
+    case meshtastic_Config_DeviceConfig_BuzzerMode_NOTIFICATIONS_ONLY: return "NOTIFICATIONS_ONLY";
+    case meshtastic_Config_DeviceConfig_BuzzerMode_SYSTEM_ONLY: return "SYSTEM_ONLY";
+    case meshtastic_Config_DeviceConfig_BuzzerMode_DIRECT_MSG_ONLY: return "DIRECT_MSG_ONLY";
+    default: return "ALL_ENABLED";
+  }
+}
+
+static const char* gpsModeName(meshtastic_Config_PositionConfig_GpsMode value) {
+  switch (value) {
+    case meshtastic_Config_PositionConfig_GpsMode_DISABLED: return "DISABLED";
+    case meshtastic_Config_PositionConfig_GpsMode_NOT_PRESENT: return "NOT_PRESENT";
+    default: return "ENABLED";
+  }
+}
+
+static const char* serialBaudName(meshtastic_ModuleConfig_SerialConfig_Serial_Baud value) {
+  switch (value) {
+    case meshtastic_ModuleConfig_SerialConfig_Serial_Baud_BAUD_9600: return "9600";
+    case meshtastic_ModuleConfig_SerialConfig_Serial_Baud_BAUD_19200: return "19200";
+    case meshtastic_ModuleConfig_SerialConfig_Serial_Baud_BAUD_38400: return "38400";
+    case meshtastic_ModuleConfig_SerialConfig_Serial_Baud_BAUD_57600: return "57600";
+    case meshtastic_ModuleConfig_SerialConfig_Serial_Baud_BAUD_230400: return "230400";
+    case meshtastic_ModuleConfig_SerialConfig_Serial_Baud_BAUD_460800: return "460800";
+    case meshtastic_ModuleConfig_SerialConfig_Serial_Baud_BAUD_576000: return "576000";
+    case meshtastic_ModuleConfig_SerialConfig_Serial_Baud_BAUD_921600: return "921600";
+    default: return "115200";
+  }
+}
+
+static const char* serialModeName(meshtastic_ModuleConfig_SerialConfig_Serial_Mode value) {
+  switch (value) {
+    case meshtastic_ModuleConfig_SerialConfig_Serial_Mode_SIMPLE: return "SIMPLE";
+    case meshtastic_ModuleConfig_SerialConfig_Serial_Mode_TEXTMSG: return "TEXTMSG";
+    case meshtastic_ModuleConfig_SerialConfig_Serial_Mode_NMEA: return "NMEA";
+    case meshtastic_ModuleConfig_SerialConfig_Serial_Mode_CALTOPO: return "CALTOPO";
+    case meshtastic_ModuleConfig_SerialConfig_Serial_Mode_WS85: return "WS85";
+    case meshtastic_ModuleConfig_SerialConfig_Serial_Mode_VE_DIRECT: return "VE_DIRECT";
+    case meshtastic_ModuleConfig_SerialConfig_Serial_Mode_MS_CONFIG: return "MS_CONFIG";
+    case meshtastic_ModuleConfig_SerialConfig_Serial_Mode_LOG: return "LOG";
+    case meshtastic_ModuleConfig_SerialConfig_Serial_Mode_LOGTEXT: return "LOGTEXT";
+    default: return "PROTO";
+  }
+}
+
+static void cacheHeltecConfig(const meshtastic_Config& config) {
+  heltecConfig.lastConfigMs = millis();
+  switch (config.which_payload_variant) {
+    case meshtastic_Config_lora_tag:
+      heltecConfig.lora = config.payload_variant.lora;
+      heltecConfig.hasLora = true;
+      appendPacketEvent("[config] LoRa config cached\n");
+      break;
+    case meshtastic_Config_device_tag:
+      heltecConfig.device = config.payload_variant.device;
+      heltecConfig.hasDevice = true;
+      appendPacketEvent("[config] device config cached\n");
+      break;
+    case meshtastic_Config_position_tag:
+      heltecConfig.position = config.payload_variant.position;
+      heltecConfig.hasPosition = true;
+      appendPacketEvent("[config] position config cached\n");
+      break;
+    case meshtastic_Config_power_tag:
+      heltecConfig.power = config.payload_variant.power;
+      heltecConfig.hasPower = true;
+      appendPacketEvent("[config] power config cached\n");
+      break;
+    default:
+      appendPacketEvent("[config] unsupported config cached counter only\n");
+      break;
+  }
+}
+
+static void cacheHeltecModuleConfig(const meshtastic_ModuleConfig& moduleConfig) {
+  heltecConfig.lastModuleMs = millis();
+  if (moduleConfig.which_payload_variant == meshtastic_ModuleConfig_serial_tag) {
+    heltecConfig.serial = moduleConfig.payload_variant.serial;
+    heltecConfig.hasSerial = true;
+    appendPacketEvent("[config] serial module cached\n");
+  } else {
+    appendPacketEvent("[config] unsupported module cached counter only\n");
+  }
+}
+
 static bool isPrivateChannel(uint8_t index) {
   if (privateChannelIndex >= 0) return index == privateChannelIndex;
+  for (size_t i = 0; i < MAX_CHANNELS; i++) {
+    if (channels[i].enabled && channels[i].index == (int8_t)index && strcmp(channels[i].role, "SECONDARY") == 0) {
+      return true;
+    }
+  }
   return index == 1;
 }
 
@@ -3855,8 +4177,12 @@ static void handleDecodedPacket(const meshtastic_MeshPacket& packet) {
     } else {
       appendChatMessage(packet.channel, packet.to, fromThisNode ? "me" : nodeName(packet.from), data.payload.bytes, data.payload.size);
     }
-    snprintf(line, sizeof(line), "[%s] %.*s\n", fromThisNode ? "me" : nodeName(packet.from),
-             (int)data.payload.size, data.payload.bytes);
+    snprintf(line, sizeof(line), "[%s ch%u %s] %.*s\n",
+             fromThisNode ? "me" : nodeName(packet.from),
+             packet.channel,
+             isPrivateChannel(packet.channel) ? "family" : "public",
+             (int)data.payload.size,
+             data.payload.bytes);
     appendLine(eventLog, LOG_SIZE, line);
     appendPacketEvent(line);
   } else if (data.portnum == meshtastic_PortNum_TELEMETRY_APP) {
@@ -3987,7 +4313,13 @@ static void decodeFromRadio(const uint8_t* payload, size_t len) {
              fromRadio.which_payload_variant == meshtastic_FromRadio_moduleConfig_tag ||
              fromRadio.which_payload_variant == meshtastic_FromRadio_config_complete_id_tag) {
     configFrames++;
-    appendPacketEvent("[config] received config frame\n");
+    if (fromRadio.which_payload_variant == meshtastic_FromRadio_config_tag) {
+      cacheHeltecConfig(fromRadio.config);
+    } else if (fromRadio.which_payload_variant == meshtastic_FromRadio_moduleConfig_tag) {
+      cacheHeltecModuleConfig(fromRadio.moduleConfig);
+    } else {
+      appendPacketEvent("[config] received config complete\n");
+    }
   } else {
     otherFrames++;
     appendPacketEvent("[radio] other FromRadio frame\n");
@@ -4155,6 +4487,48 @@ static String buildStatusJson() {
   json += "\"positionedNodes\":" + String(countPositionedNodes()) + ",";
   json += "\"mapCacheStatus\":\"" + jsonEscape(mapCacheStatus) + "\",";
   json += "\"mapCacheLoaded\":" + String(mapCanvasCached ? "true" : "false") + ",";
+  json += "\"heltecConfig\":{";
+  json += "\"ageSec\":" + String(heltecConfig.lastConfigMs ? (millis() - heltecConfig.lastConfigMs) / 1000 : -1) + ",";
+  json += "\"moduleAgeSec\":" + String(heltecConfig.lastModuleMs ? (millis() - heltecConfig.lastModuleMs) / 1000 : -1) + ",";
+  json += "\"lora\":{\"valid\":" + String(heltecConfig.hasLora ? "true" : "false") + ",";
+  json += "\"region\":\"" + String(loraRegionName(heltecConfig.lora.region)) + "\",";
+  json += "\"preset\":\"" + String(loraPresetName(heltecConfig.lora.modem_preset)) + "\",";
+  json += "\"hop\":" + String(heltecConfig.lora.hop_limit) + ",";
+  json += "\"txPower\":" + String(heltecConfig.lora.tx_power) + ",";
+  json += "\"txEnabled\":" + String(heltecConfig.lora.tx_enabled ? "true" : "false") + ",";
+  json += "\"channelNum\":" + String(heltecConfig.lora.channel_num) + "},";
+  json += "\"serial\":{\"valid\":" + String(heltecConfig.hasSerial ? "true" : "false") + ",";
+  json += "\"enabled\":" + String(heltecConfig.serial.enabled ? "true" : "false") + ",";
+  json += "\"echo\":" + String(heltecConfig.serial.echo ? "true" : "false") + ",";
+  json += "\"rxd\":" + String(heltecConfig.serial.rxd) + ",";
+  json += "\"txd\":" + String(heltecConfig.serial.txd) + ",";
+  json += "\"baud\":\"" + String(serialBaudName(heltecConfig.serial.baud)) + "\",";
+  json += "\"mode\":\"" + String(serialModeName(heltecConfig.serial.mode)) + "\",";
+  json += "\"override\":" + String(heltecConfig.serial.override_console_serial_port ? "true" : "false") + "},";
+  json += "\"device\":{\"valid\":" + String(heltecConfig.hasDevice ? "true" : "false") + ",";
+  json += "\"role\":\"" + String(deviceRoleName(heltecConfig.device.role)) + "\",";
+  json += "\"rebroadcast\":\"" + String(rebroadcastName(heltecConfig.device.rebroadcast_mode)) + "\",";
+  json += "\"nodeInfo\":" + String(heltecConfig.device.node_info_broadcast_secs) + ",";
+  json += "\"tz\":\"" + jsonEscape(heltecConfig.device.tzdef) + "\",";
+  json += "\"ledOff\":" + String(heltecConfig.device.led_heartbeat_disabled ? "true" : "false") + ",";
+  json += "\"buzzer\":\"" + String(buzzerName(heltecConfig.device.buzzer_mode)) + "\"},";
+  json += "\"position\":{\"valid\":" + String(heltecConfig.hasPosition ? "true" : "false") + ",";
+  json += "\"gpsEnabled\":" + String(heltecConfig.position.gps_enabled ? "true" : "false") + ",";
+  json += "\"gpsMode\":\"" + String(gpsModeName(heltecConfig.position.gps_mode)) + "\",";
+  json += "\"fixed\":" + String(heltecConfig.position.fixed_position ? "true" : "false") + ",";
+  json += "\"smart\":" + String(heltecConfig.position.position_broadcast_smart_enabled ? "true" : "false") + ",";
+  json += "\"broadcast\":" + String(heltecConfig.position.position_broadcast_secs) + ",";
+  json += "\"gpsUpdate\":" + String(heltecConfig.position.gps_update_interval) + ",";
+  json += "\"gpsAttempt\":" + String(heltecConfig.position.gps_attempt_time) + ",";
+  json += "\"smartMeters\":" + String(heltecConfig.position.broadcast_smart_minimum_distance) + ",";
+  json += "\"smartSecs\":" + String(heltecConfig.position.broadcast_smart_minimum_interval_secs) + "},";
+  json += "\"power\":{\"valid\":" + String(heltecConfig.hasPower ? "true" : "false") + ",";
+  json += "\"saving\":" + String(heltecConfig.power.is_power_saving ? "true" : "false") + ",";
+  json += "\"shutdown\":" + String(heltecConfig.power.on_battery_shutdown_after_secs) + ",";
+  json += "\"waitBt\":" + String(heltecConfig.power.wait_bluetooth_secs) + ",";
+  json += "\"sds\":" + String(heltecConfig.power.sds_secs) + ",";
+  json += "\"ls\":" + String(heltecConfig.power.ls_secs) + ",";
+  json += "\"wake\":" + String(heltecConfig.power.min_wake_secs) + "}},";
   json += "\"log\":\"" + jsonEscape(eventLog) + "\",";
   json += "\"channels\":[";
   bool firstChannel = true;
@@ -4165,7 +4539,10 @@ static String buildStatusJson() {
     json += "{\"index\":" + String(channels[i].index) + ",";
     json += "\"enabled\":" + String(channels[i].enabled ? "true" : "false") + ",";
     json += "\"role\":\"" + jsonEscape(channels[i].role) + "\",";
-    json += "\"name\":\"" + jsonEscape(channels[i].name) + "\"}";
+    json += "\"name\":\"" + jsonEscape(channels[i].name) + "\",";
+    json += "\"uplink\":" + String(channels[i].uplink ? "true" : "false") + ",";
+    json += "\"downlink\":" + String(channels[i].downlink ? "true" : "false") + ",";
+    json += "\"pskSize\":" + String(channels[i].pskSize) + "}";
   }
   json += "],";
   json += "\"nodes\":[";
@@ -4245,7 +4622,12 @@ static void handleSend() {
     server.send(400, "text/plain", "missing msg");
     return;
   }
-  bool ok = sendTextMessage(server.arg("msg").c_str(), PUBLIC_CHANNEL_INDEX);
+  String channel = server.hasArg("channel") ? server.arg("channel") : String("public");
+  int8_t channelIndex = PUBLIC_CHANNEL_INDEX;
+  if (channel == "family" || channel == "private") {
+    channelIndex = privateChannelIndex >= 0 ? privateChannelIndex : 1;
+  }
+  bool ok = sendTextMessage(server.arg("msg").c_str(), channelIndex);
   server.send(ok ? 200 : 500, "text/plain", ok ? "sent" : "send failed");
 }
 
