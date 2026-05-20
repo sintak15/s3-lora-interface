@@ -6,6 +6,23 @@ handheld screen and web interface for a Heltec Meshtastic LoRa device.
 The CYD shows messages, nodes, GPS/map data, battery information, and radio
 diagnostics. It talks to the Heltec over a serial connection.
 
+## Use Case
+
+This project is for situations where phones and normal internet service are not
+something you want to depend on. A Meshtastic LoRa radio can pass short messages
+and location updates directly between nearby radios, even when there is no cell
+signal, WiFi, or cloud service available.
+
+The Heltec board does the radio work. The ESP32-S3 touch display gives that
+radio a small handheld dashboard: you can see incoming messages, nearby nodes,
+GPS position, battery state, radio health, and offline map information without
+digging through a phone app or plugging into a computer.
+
+In plain terms, it is a portable status screen for an off-grid radio network.
+It could be useful for camping, hiking groups, event crews, neighborhood
+emergency planning, field projects, or any small team that wants a simple way to
+see who is nearby and whether messages are moving.
+
 ## Quick Reference
 
 This section is for people who already know the hardware terms and just need the
