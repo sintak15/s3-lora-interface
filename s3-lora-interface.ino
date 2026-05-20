@@ -164,6 +164,10 @@ struct GpsStats {
 };
 
 struct LocalBatteryStats {
+  bool gaugePresent = false;
+  bool gaugeSocReliable = true;
+  bool quickStartSent = false;
+  uint32_t lastGaugeMs = 0;
   uint32_t rawMv = 0;
   uint32_t rawPackMv = 0;
   uint32_t filteredPackMv = 0;
@@ -171,11 +175,31 @@ struct LocalBatteryStats {
   uint32_t learnedBatteryMv = 5000;
   int32_t deltaMvPerMin = 0;
   int32_t deltaMvPerMinTenths = 0;
+  bool chargeRateValid = false;
+  float chargeRatePercentHr = 0.0f;
+  int32_t instantDeltaMv = 0;
+  int16_t calibrationOffsetTenths = 0;
   int16_t calibrationOffsetMv = 0;
   int percent = 100;
+  int gaugePercent = 100;
+  int correctedGaugePercent = 100;
   uint8_t trendSampleCount = 0;
   uint8_t stableSampleCount = 0;
   char powerState[24] = "ext power";
+  char percentSource[32] = "MAX17048";
+  uint16_t gaugeVersion = 0;
+  uint16_t rawGaugeSoc = 0;
+  float gaugeSoc = 100.0f;
+  float correctedGaugeSoc = 100.0f;
+  int voltagePercent = 100;
+  bool charging = false;
+  uint32_t previousPackMv = 0;
+  uint32_t previousSampleMs = 0;
+  uint32_t lastLearnSaveMs = 0;
+  uint8_t trendHead = 0;
+  uint8_t trendCount = 0;
+  uint32_t trendMv[12] = {};
+  uint32_t trendMs[12] = {};
 };
 
 struct SdStorageStats {
@@ -217,7 +241,9 @@ static constexpr size_t FRAME_MAX = 512;
 static constexpr int STATUS_BAR_H = 20;
 static constexpr int NAV_BAR_H = 40;
 static constexpr int MAP_PLOT_W = SCREEN_W - 16;
-static constexpr int MAP_PLOT_H = 136;
+static constexpr int MAP_PLOT_H_NORMAL = 136;
+static constexpr int MAP_PLOT_H_EXPANDED = 214;
+static constexpr int MAP_PLOT_H = MAP_PLOT_H_EXPANDED;
 static constexpr size_t MAP_CANVAS_PIXELS = MAP_PLOT_W * MAP_PLOT_H;
 static constexpr size_t MAP_CANVAS_BYTES = MAP_CANVAS_PIXELS * sizeof(lv_color_t);
 static constexpr int MAP_TILE_SIZE = 256;
@@ -248,6 +274,11 @@ static constexpr uint32_t COLOR_ACCENT = 0x68FFC0;
 static constexpr uint32_t COLOR_ACTION = 0x00C985;
 static const lv_font_t* UI_FONT_SMALL = &comic_neue_12;
 static const lv_font_t* UI_FONT_DEFAULT = &comic_neue_14;
+#if LV_FONT_MONTSERRAT_16
+static const lv_font_t* UI_FONT_READABLE = &lv_font_montserrat_16;
+#else
+static const lv_font_t* UI_FONT_READABLE = LV_FONT_DEFAULT;
+#endif
 static constexpr int UI_GAP = 6;
 static constexpr int UI_PANEL_W = SCREEN_W - 12;
 static constexpr int UI_ACTION_H = 36;
@@ -322,9 +353,16 @@ static uint32_t wifiStoppedMs = 0;
 static uint32_t wifiToggleCount = 0;
 static uint8_t backlightPercent = 10;
 static bool backlightPwmReady = false;
+static bool readableTextMode = false;
 static uint32_t lastLocalSentMs = 0;
 static uint8_t lastLocalSentChannel = PUBLIC_CHANNEL_INDEX;
 static uint32_t lastLocalSentTo = BROADCAST_ADDR;
+static uint16_t unreadPublic = 0;
+static uint16_t unreadFamily = 0;
+static uint16_t unreadDirect = 0;
+static char previewPublic[72] = "";
+static char previewFamily[72] = "";
+static char previewDirect[72] = "";
 
 static lv_disp_draw_buf_t drawBuf;
 static lv_disp_drv_t dispDrv;
@@ -363,6 +401,13 @@ static lv_obj_t* navBar = nullptr;
 static lv_obj_t* lblStatus = nullptr;
 static lv_obj_t* lblBatteryStatus = nullptr;
 static lv_obj_t* lblStats = nullptr;
+static lv_obj_t* lblHomeLink = nullptr;
+static lv_obj_t* lblHomeMessages = nullptr;
+static lv_obj_t* lblHomeGps = nullptr;
+static lv_obj_t* lblHomePower = nullptr;
+static lv_obj_t* lblMsgPublic = nullptr;
+static lv_obj_t* lblMsgFamily = nullptr;
+static lv_obj_t* lblMsgDirect = nullptr;
 static lv_obj_t* listNodes = nullptr;
 static lv_obj_t* lblNodeListMode = nullptr;
 static lv_obj_t* taNodeDetail = nullptr;
@@ -382,6 +427,8 @@ static lv_obj_t* taWifiPass = nullptr;
 static lv_obj_t* listWifiScan = nullptr;
 static lv_obj_t* sliderBacklight = nullptr;
 static lv_obj_t* lblBacklight = nullptr;
+static lv_obj_t* swReadableText = nullptr;
+static lv_obj_t* lblTextMode = nullptr;
 static lv_obj_t* lblBatteryStats = nullptr;
 static lv_obj_t* lblGpsStats = nullptr;
 static lv_obj_t* lblMapStats = nullptr;
@@ -415,6 +462,9 @@ static uint32_t lastSerialDiagMs = 0;
 static uint32_t lastSdDiagMs = 0;
 static uint32_t lastMapUiRefreshMs = 0;
 static bool mapNearbyMode = false;
+static bool mapFocusSelectedNode = false;
+static bool mapExpanded = false;
+static bool mapZoomedOut = false;
 static bool mapCanvasCached = false;
 static bool mapRenderPending = false;
 static uint32_t selectedNodeNum = 0;
@@ -426,6 +476,7 @@ static long cachedMapTileX = LONG_MIN;
 static long cachedMapTileY = LONG_MIN;
 static int cachedMapPixelX = INT_MIN;
 static int cachedMapPixelY = INT_MIN;
+static uint16_t cachedMapHeight = 0;
 static bool cachedMapTileFound = false;
 static double cachedMapLat = 0.0;
 static double cachedMapLon = 0.0;
@@ -444,19 +495,25 @@ static NodeRecord* findOrCreateNode(uint32_t num);
 static void allocateRuntimeBuffers();
 static void appendLine(char* buffer, size_t bufferSize, const char* line);
 static void appendPacketEvent(const char* line);
+static void refreshDashboardLabels();
 static void showNodeDetail(uint32_t nodeNum);
 static void directSelectedNode();
 static void showSelectedNodeOnMap();
 static void cycleNodeSort();
 static void cycleNodeFilter();
+static void clearNodeList();
 static bool retryLastTx();
 static void refreshTxHistoryView();
 static void refreshNodeList(bool force = false);
 static void refreshMapUi();
 static double distanceMeters(double lat1, double lon1, double lat2, double lon2);
 static void loadMapCacheFromSd();
+static void printSdTileSummary();
+static void printSdTileFastSummary();
 static void refreshChatViews();
 static void setMapNearbyMode(bool enabled);
+static void setReadableTextMode(bool enabled, bool save);
+static void rebuildScreenUi(lv_obj_t* targetPage = nullptr);
 static void styleDarkObject(lv_obj_t* obj, uint32_t bg, uint32_t text = COLOR_TEXT);
 static void styleDarkBorder(lv_obj_t* obj, uint32_t color = COLOR_BORDER);
 static void showPage(lv_obj_t* target, bool remember = true);
@@ -614,6 +671,226 @@ static void refreshSdUsage() {
   // and diagnostics cannot stall the display loop.
 }
 
+static const char* pathBasename(const char* path) {
+  if (!path) return "";
+  const char* slash = strrchr(path, '/');
+  return slash ? slash + 1 : path;
+}
+
+static long parseTileNumber(const char* text) {
+  if (!text || !text[0]) return -1;
+  char temp[24];
+  strlcpy(temp, pathBasename(text), sizeof(temp));
+  char* dot = strchr(temp, '.');
+  if (dot) *dot = '\0';
+  char* end = nullptr;
+  long value = strtol(temp, &end, 10);
+  return end == temp ? -1 : value;
+}
+
+static void printSdTileSummary() {
+  Serial.println("[tiles] begin");
+  if (!sdStorage.available) {
+    Serial.printf("[tiles] SD unavailable: %s\n", sdStorage.status);
+    Serial.println("[tiles] end");
+    return;
+  }
+  Serial.printf("[tiles] card=%s total=%llu used=%llu root=%s/tiles\n",
+                sdStorage.cardType,
+                (unsigned long long)sdStorage.totalBytes,
+                (unsigned long long)sdStorage.usedBytes,
+                SD_DIR);
+  for (int zoom = MAP_TILE_MIN_ZOOM; zoom <= MAP_TILE_MAX_ZOOM; zoom++) {
+    char zoomPath[40];
+    snprintf(zoomPath, sizeof(zoomPath), "%s/tiles/%d", SD_DIR, zoom);
+    if (!SD_MMC.exists(zoomPath)) {
+      Serial.printf("[tiles] z%d missing\n", zoom);
+      continue;
+    }
+    File zoomDir = SD_MMC.open(zoomPath);
+    if (!zoomDir || !zoomDir.isDirectory()) {
+      Serial.printf("[tiles] z%d not a directory\n", zoom);
+      if (zoomDir) zoomDir.close();
+      continue;
+    }
+
+    uint32_t xDirs = 0;
+    uint32_t tileCount = 0;
+    uint64_t totalBytes = 0;
+    uint32_t badSize = 0;
+    long minX = LONG_MAX;
+    long maxX = LONG_MIN;
+    long minY = LONG_MAX;
+    long maxY = LONG_MIN;
+
+    File xDir = zoomDir.openNextFile();
+    while (xDir) {
+      if (xDir.isDirectory()) {
+        long x = parseTileNumber(xDir.name());
+        if (x >= 0) {
+          xDirs++;
+          if (xDirs % 25 == 0) {
+            Serial.printf("[tiles] z%d scanning xdirs=%lu tiles=%lu\n",
+                          zoom,
+                          (unsigned long)xDirs,
+                          (unsigned long)tileCount);
+          }
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+        }
+        File tile = xDir.openNextFile();
+        while (tile) {
+          if (!tile.isDirectory()) {
+            const char* name = tile.name();
+            size_t len = strlen(name);
+            if (len >= 7 && strcmp(name + len - 7, ".rgb565") == 0) {
+              long y = parseTileNumber(name);
+              if (y >= 0) {
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+              }
+              size_t tileSize = tile.size();
+              totalBytes += tileSize;
+              tileCount++;
+              if (tileSize != MAP_TILE_SIZE * MAP_TILE_SIZE * 2) badSize++;
+            }
+          }
+          tile.close();
+          delay(0);
+          tile = xDir.openNextFile();
+        }
+      }
+      xDir.close();
+      delay(1);
+      xDir = zoomDir.openNextFile();
+    }
+    zoomDir.close();
+
+    if (tileCount == 0) {
+      Serial.printf("[tiles] z%d empty dirs=%lu\n", zoom, (unsigned long)xDirs);
+    } else {
+      Serial.printf("[tiles] z%d tiles=%lu xdirs=%lu x=%ld..%ld y=%ld..%ld bytes=%llu badSize=%lu\n",
+                    zoom,
+                    (unsigned long)tileCount,
+                    (unsigned long)xDirs,
+                    minX,
+                    maxX,
+                    minY,
+                    maxY,
+                    (unsigned long long)totalBytes,
+                    (unsigned long)badSize);
+    }
+  }
+  Serial.println("[tiles] end");
+}
+
+static void inspectTileYRange(File& xDir, uint32_t* count, long* minY, long* maxY) {
+  if (count) *count = 0;
+  if (minY) *minY = LONG_MAX;
+  if (maxY) *maxY = LONG_MIN;
+  File tile = xDir.openNextFile();
+  while (tile) {
+    if (!tile.isDirectory()) {
+      const char* name = tile.name();
+      size_t len = strlen(name);
+      if (len >= 7 && strcmp(name + len - 7, ".rgb565") == 0) {
+        long y = parseTileNumber(name);
+        if (y >= 0) {
+          if (count) (*count)++;
+          if (minY && y < *minY) *minY = y;
+          if (maxY && y > *maxY) *maxY = y;
+        }
+      }
+    }
+    tile.close();
+    tile = xDir.openNextFile();
+  }
+}
+
+static void printSdTileFastSummary() {
+  Serial.println("[tilesfast] begin");
+  if (!sdStorage.available) {
+    Serial.printf("[tilesfast] SD unavailable: %s\n", sdStorage.status);
+    Serial.println("[tilesfast] end");
+    return;
+  }
+  Serial.printf("[tilesfast] card=%s total=%llu used=%llu root=%s/tiles\n",
+                sdStorage.cardType,
+                (unsigned long long)sdStorage.totalBytes,
+                (unsigned long long)sdStorage.usedBytes,
+                SD_DIR);
+  for (int zoom = MAP_TILE_MIN_ZOOM; zoom <= MAP_TILE_MAX_ZOOM; zoom++) {
+    char zoomPath[40];
+    snprintf(zoomPath, sizeof(zoomPath), "%s/tiles/%d", SD_DIR, zoom);
+    if (!SD_MMC.exists(zoomPath)) {
+      Serial.printf("[tilesfast] z%d missing\n", zoom);
+      continue;
+    }
+    File zoomDir = SD_MMC.open(zoomPath);
+    if (!zoomDir || !zoomDir.isDirectory()) {
+      Serial.printf("[tilesfast] z%d not a directory\n", zoom);
+      if (zoomDir) zoomDir.close();
+      continue;
+    }
+
+    uint32_t xDirs = 0;
+    long minX = LONG_MAX;
+    long maxX = LONG_MIN;
+    char sampleMinXPath[48] = "";
+    char sampleMaxXPath[48] = "";
+    File xDir = zoomDir.openNextFile();
+    while (xDir) {
+      if (xDir.isDirectory()) {
+        long x = parseTileNumber(xDir.name());
+        if (x >= 0) {
+          xDirs++;
+          if (x < minX) {
+            minX = x;
+            strlcpy(sampleMinXPath, xDir.name(), sizeof(sampleMinXPath));
+          }
+          if (x > maxX) {
+            maxX = x;
+            strlcpy(sampleMaxXPath, xDir.name(), sizeof(sampleMaxXPath));
+          }
+        }
+      }
+      xDir.close();
+      xDir = zoomDir.openNextFile();
+    }
+    zoomDir.close();
+
+    uint32_t minXTileCount = 0;
+    uint32_t maxXTileCount = 0;
+    long minXMinY = LONG_MAX;
+    long minXMaxY = LONG_MIN;
+    long maxXMinY = LONG_MAX;
+    long maxXMaxY = LONG_MIN;
+    if (sampleMinXPath[0]) {
+      File sample = SD_MMC.open(sampleMinXPath);
+      if (sample && sample.isDirectory()) inspectTileYRange(sample, &minXTileCount, &minXMinY, &minXMaxY);
+      if (sample) sample.close();
+    }
+    if (sampleMaxXPath[0] && strcmp(sampleMaxXPath, sampleMinXPath) != 0) {
+      File sample = SD_MMC.open(sampleMaxXPath);
+      if (sample && sample.isDirectory()) inspectTileYRange(sample, &maxXTileCount, &maxXMinY, &maxXMaxY);
+      if (sample) sample.close();
+    }
+
+    Serial.printf("[tilesfast] z%d xdirs=%lu x=%ld..%ld sampleMinX=%lu y=%ld..%ld sampleMaxX=%lu y=%ld..%ld\n",
+                  zoom,
+                  (unsigned long)xDirs,
+                  minX,
+                  maxX,
+                  (unsigned long)minXTileCount,
+                  minXTileCount ? minXMinY : -1,
+                  minXTileCount ? minXMaxY : -1,
+                  (unsigned long)maxXTileCount,
+                  maxXTileCount ? maxXMinY : -1,
+                  maxXTileCount ? maxXMaxY : -1);
+  }
+  Serial.println("[tilesfast] end");
+}
+
 static void logPositionToSd(uint32_t from, const char* sourceKind, double lat, double lon, int32_t alt) {
   if (!sdStorage.available) return;
   char line[180];
@@ -727,9 +1004,220 @@ static unsigned long bytesToWholeMb(uint64_t bytes) {
   return (unsigned long)((bytes + (1024ULL * 1024ULL - 1ULL)) / (1024ULL * 1024ULL));
 }
 
+static bool max17048ReadReg16(uint8_t reg, uint16_t& value) {
+  Wire.beginTransmission(MAX17048_ADDR);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) return false;
+  if (Wire.requestFrom(MAX17048_ADDR, (uint8_t)2) != 2) return false;
+  uint8_t msb = Wire.read();
+  uint8_t lsb = Wire.read();
+  value = ((uint16_t)msb << 8) | lsb;
+  return true;
+}
+
+static bool max17048WriteReg16(uint8_t reg, uint16_t value) {
+  Wire.beginTransmission(MAX17048_ADDR);
+  Wire.write(reg);
+  Wire.write((uint8_t)(value >> 8));
+  Wire.write((uint8_t)(value & 0xFF));
+  return Wire.endTransmission() == 0;
+}
+
+static bool readMax17048ChargeRate(float& percentPerHour) {
+  uint16_t rawCrate = 0;
+  if (!max17048ReadReg16(0x16, rawCrate)) return false;
+  percentPerHour = (float)((int16_t)rawCrate) * 0.208f;
+  return true;
+}
+
+static int estimateLiPoPercentFromMv(uint32_t mv) {
+  if (mv >= 4200) return 100;
+  if (mv >= 4100) return map(mv, 4100, 4200, 90, 100);
+  if (mv >= 4000) return map(mv, 4000, 4100, 78, 90);
+  if (mv >= 3900) return map(mv, 3900, 4000, 62, 78);
+  if (mv >= 3800) return map(mv, 3800, 3900, 45, 62);
+  if (mv >= 3700) return map(mv, 3700, 3800, 28, 45);
+  if (mv >= 3600) return map(mv, 3600, 3700, 12, 28);
+  if (mv >= 3300) return map(mv, 3300, 3600, 0, 12);
+  return 0;
+}
+
+static void updateBatteryTrend(uint32_t packMv, uint32_t nowMs) {
+  static constexpr uint8_t TREND_WINDOW = sizeof(localBattery.trendMv) / sizeof(localBattery.trendMv[0]);
+  localBattery.trendMv[localBattery.trendHead] = packMv;
+  localBattery.trendMs[localBattery.trendHead] = nowMs;
+  localBattery.trendHead = (localBattery.trendHead + 1) % TREND_WINDOW;
+  if (localBattery.trendCount < TREND_WINDOW) localBattery.trendCount++;
+  localBattery.trendSampleCount = localBattery.trendCount;
+
+  if (localBattery.trendCount < 4) {
+    localBattery.deltaMvPerMin = 0;
+    localBattery.deltaMvPerMinTenths = 0;
+    return;
+  }
+
+  uint8_t newestIndex = (localBattery.trendHead + TREND_WINDOW - 1) % TREND_WINDOW;
+  uint8_t oldestIndex = (localBattery.trendHead + TREND_WINDOW - localBattery.trendCount) % TREND_WINDOW;
+  uint32_t newestMs = localBattery.trendMs[newestIndex];
+  uint32_t oldestMs = localBattery.trendMs[oldestIndex];
+  if (newestMs <= oldestMs) return;
+
+  uint32_t windowMs = newestMs - oldestMs;
+  int32_t deltaMv = (int32_t)localBattery.trendMv[newestIndex] - (int32_t)localBattery.trendMv[oldestIndex];
+  if (windowMs < 20000 || abs(deltaMv) < 3) {
+    localBattery.deltaMvPerMin = 0;
+    localBattery.deltaMvPerMinTenths = 0;
+    return;
+  }
+
+  localBattery.deltaMvPerMinTenths = (int32_t)((int64_t)deltaMv * 600000LL / (int64_t)windowMs);
+  localBattery.deltaMvPerMin = localBattery.deltaMvPerMinTenths / 10;
+}
+
+static bool decideBatteryCharging(bool chargeRateValid, float chargeRate, uint32_t packMv, uint32_t nowMs) {
+  int32_t deltaMv = 0;
+  uint32_t elapsedMs = 0;
+  if (localBattery.previousSampleMs) {
+    deltaMv = (int32_t)packMv - (int32_t)localBattery.previousPackMv;
+    elapsedMs = nowMs - localBattery.previousSampleMs;
+  }
+  localBattery.instantDeltaMv = deltaMv;
+  localBattery.previousPackMv = packMv;
+  localBattery.previousSampleMs = nowMs;
+
+  if (!chargeRateValid) return localBattery.charging;
+  if (chargeRate >= 1.0f) return true;
+  if (chargeRate <= 0.0f) return false;
+
+  bool fastVoltageDrop = elapsedMs > 0 && elapsedMs <= 4000 && deltaMv <= -5;
+  if (localBattery.charging && fastVoltageDrop) return false;
+  if (!localBattery.charging && chargeRate >= 0.4f) return true;
+  return localBattery.charging;
+}
+
+static int chooseDisplayedBatteryPercent(float soc, int voltagePercent, bool socReliable, bool charging) {
+  localBattery.gaugePercent = constrain((int)roundf(soc), 0, 100);
+  float correctedSoc = soc + ((float)localBattery.calibrationOffsetTenths / 10.0f);
+  if (correctedSoc < 0.0f) correctedSoc = 0.0f;
+  if (correctedSoc > 100.0f) correctedSoc = 100.0f;
+  localBattery.correctedGaugeSoc = correctedSoc;
+  localBattery.correctedGaugePercent = constrain((int)roundf(correctedSoc), 0, 100);
+  localBattery.calibrationOffsetMv = 0;
+
+  if (!socReliable) {
+    strlcpy(localBattery.percentSource, "code voltage estimate", sizeof(localBattery.percentSource));
+    return voltagePercent;
+  }
+
+  int disagreement = abs(localBattery.correctedGaugePercent - voltagePercent);
+  if (!charging && disagreement >= 35) {
+    strlcpy(localBattery.percentSource, "code sanity estimate", sizeof(localBattery.percentSource));
+    return voltagePercent;
+  }
+
+  if (!charging && disagreement >= 20) {
+    strlcpy(localBattery.percentSource, "MAX17048 sanity blend", sizeof(localBattery.percentSource));
+    return constrain((localBattery.correctedGaugePercent * 3 + voltagePercent) / 4, 0, 100);
+  }
+
+  strlcpy(localBattery.percentSource,
+          localBattery.calibrationOffsetTenths ? "MAX17048 + learned trim" : "MAX17048",
+          sizeof(localBattery.percentSource));
+  return localBattery.correctedGaugePercent;
+}
+
+static void updateBatteryLearning(float soc, int voltagePercent, bool socReliable, bool charging,
+                                  bool chargeRateValid, float chargeRate, uint32_t nowMs) {
+  if (!socReliable || charging) {
+    localBattery.stableSampleCount = 0;
+    return;
+  }
+
+  if (chargeRateValid && fabsf(chargeRate) > 1.5f) {
+    localBattery.stableSampleCount = 0;
+    return;
+  }
+
+  if (abs(localBattery.instantDeltaMv) > 3) {
+    localBattery.stableSampleCount = 0;
+    return;
+  }
+
+  int targetOffsetTenths = (int)roundf(((float)voltagePercent - soc) * 10.0f);
+  targetOffsetTenths = constrain(targetOffsetTenths, -120, 120);
+  int errorTenths = targetOffsetTenths - localBattery.calibrationOffsetTenths;
+  if (abs(errorTenths) < 10) {
+    localBattery.stableSampleCount = min<uint8_t>(localBattery.stableSampleCount + 1, 255);
+    return;
+  }
+
+  localBattery.stableSampleCount = min<uint8_t>(localBattery.stableSampleCount + 1, 255);
+  if (localBattery.stableSampleCount < 30) return;
+
+  localBattery.calibrationOffsetTenths += errorTenths > 0 ? 1 : -1;
+  localBattery.calibrationOffsetTenths = constrain(localBattery.calibrationOffsetTenths, -120, 120);
+  localBattery.stableSampleCount = 0;
+
+  if (!localBattery.lastLearnSaveMs || nowMs - localBattery.lastLearnSaveMs > 60000) {
+    prefs.putShort("batTrim10", localBattery.calibrationOffsetTenths);
+    localBattery.lastLearnSaveMs = nowMs;
+  }
+}
+
+static bool sampleMax17048() {
+  uint16_t rawVcell = 0;
+  uint16_t rawSoc = 0;
+  if (!max17048ReadReg16(0x02, rawVcell) || !max17048ReadReg16(0x04, rawSoc)) {
+    localBattery.gaugePresent = false;
+    strlcpy(localBattery.powerState, "gauge missing", sizeof(localBattery.powerState));
+    return false;
+  }
+
+  uint16_t rawVersion = 0;
+  if (max17048ReadReg16(0x08, rawVersion)) localBattery.gaugeVersion = rawVersion;
+
+  uint32_t packMv = (uint32_t)(((rawVcell >> 4) * 125UL + 50UL) / 100UL);
+  float soc = (float)(rawSoc >> 8) + ((float)(rawSoc & 0xFF) / 256.0f);
+  if (soc < 0.0f) soc = 0.0f;
+  if (soc > 100.0f) soc = 100.0f;
+  int voltagePercent = estimateLiPoPercentFromMv(packMv);
+  float chargeRate = 0.0f;
+  bool chargeRateValid = readMax17048ChargeRate(chargeRate);
+  bool socReliable = !(soc < 1.0f && packMv > 3350);
+  if (!socReliable && !localBattery.quickStartSent) {
+    if (max17048WriteReg16(0x06, 0x4000)) {
+      localBattery.quickStartSent = true;
+      appendLine(eventLog, LOG_SIZE, "[battery] MAX17048 quick-start sent\n");
+    }
+  }
+
+  uint32_t now = millis();
+  bool charging = decideBatteryCharging(chargeRateValid, chargeRate, packMv, now);
+  updateBatteryLearning(soc, voltagePercent, socReliable, charging, chargeRateValid, chargeRate, now);
+  int displayedPercent = chooseDisplayedBatteryPercent(soc, voltagePercent, socReliable, charging);
+  localBattery.gaugePresent = true;
+  localBattery.lastGaugeMs = now;
+  localBattery.rawMv = packMv;
+  localBattery.rawPackMv = packMv;
+  localBattery.filteredPackMv = packMv;
+  localBattery.batteryMv = packMv;
+  localBattery.learnedBatteryMv = packMv;
+  localBattery.rawGaugeSoc = rawSoc;
+  localBattery.gaugeSoc = soc;
+  localBattery.gaugeSocReliable = socReliable;
+  localBattery.voltagePercent = voltagePercent;
+  localBattery.chargeRateValid = chargeRateValid;
+  localBattery.chargeRatePercentHr = chargeRateValid ? chargeRate : 0.0f;
+  localBattery.charging = charging;
+  localBattery.percent = displayedPercent;
+  updateBatteryTrend(packMv, now);
+  strlcpy(localBattery.powerState, localBattery.percentSource, sizeof(localBattery.powerState));
+  return true;
+}
+
 static void sampleLocalBattery() {
-  // Battery is now read via MT3608 boost converter to the 5V rail.
-  // We can no longer read the LiPo directly via the board's divider.
+  if (localBattery.lastGaugeMs && millis() - localBattery.lastGaugeMs < 1000) return;
+  sampleMax17048();
 }
 
 static void appendLine(char* buffer, size_t bufferSize, const char* line) {
@@ -765,7 +1253,8 @@ static void appendPacketEvent(const char* line) {
 
 static void startWifiAp() {
   WiFi.mode(WIFI_AP);
-  bool ok = WiFi.softAP(INTERFACE_AP_SSID, INTERFACE_AP_PASS);
+  WiFi.softAPsetHostname(DEVICE_HOSTNAME);
+  bool ok = WiFi.softAP(INTERFACE_AP_SSID, INTERFACE_AP_PASS, WIFI_AP_CHANNEL);
   if (ok) {
     server.begin();
     wifiEnabled = true;
@@ -784,6 +1273,7 @@ static void startWifiLocal() {
     return;
   }
   WiFi.mode(WIFI_STA);
+  WiFi.setHostname(DEVICE_HOSTNAME);
   WiFi.begin(wifiLocalSsid, wifiLocalPass);
   server.begin();
   wifiEnabled = true;
@@ -1071,6 +1561,16 @@ static void initBacklight() {
   applyBacklight();
 }
 
+static void applyFontMode() {
+  if (readableTextMode) {
+    UI_FONT_SMALL = LV_FONT_DEFAULT;
+    UI_FONT_DEFAULT = UI_FONT_READABLE;
+  } else {
+    UI_FONT_SMALL = &comic_neue_12;
+    UI_FONT_DEFAULT = &comic_neue_14;
+  }
+}
+
 static void backlightSliderEvent(lv_event_t* e) {
   lv_obj_t* slider = (lv_obj_t*)lv_event_get_target(e);
   backlightPercent = constrain((int)lv_slider_get_value(slider), 10, 100);
@@ -1190,7 +1690,7 @@ static void buildStatusBar(lv_obj_t* screen) {
 
   lblStatus = lv_label_create(statusBar);
   lv_label_set_text(lblStatus, "booting");
-  lv_obj_set_width(lblStatus, SCREEN_W - 92);
+  lv_obj_set_width(lblStatus, SCREEN_W - 102);
   lv_label_set_long_mode(lblStatus, LV_LABEL_LONG_DOT);
   lv_obj_set_style_text_color(lblStatus, lv_color_hex(COLOR_MUTED), 0);
   lv_obj_set_style_text_font(lblStatus, UI_FONT_SMALL, 0);
@@ -1198,11 +1698,12 @@ static void buildStatusBar(lv_obj_t* screen) {
 
   lblBatteryStatus = lv_label_create(statusBar);
   lv_label_set_text(lblBatteryStatus, "Batt --%");
-  lv_obj_set_width(lblBatteryStatus, 82);
+  lv_obj_set_width(lblBatteryStatus, 92);
   lv_label_set_long_mode(lblBatteryStatus, LV_LABEL_LONG_DOT);
   lv_obj_set_style_text_align(lblBatteryStatus, LV_TEXT_ALIGN_RIGHT, 0);
   lv_obj_set_style_text_color(lblBatteryStatus, lv_color_hex(COLOR_ACCENT), 0);
-  lv_obj_set_style_text_font(lblBatteryStatus, UI_FONT_SMALL, 0);
+  // LVGL symbols require the built-in symbol-capable font.
+  lv_obj_set_style_text_font(lblBatteryStatus, LV_FONT_DEFAULT, 0);
   lv_obj_align(lblBatteryStatus, LV_ALIGN_RIGHT_MID, 0, 0);
 }
 
@@ -1222,8 +1723,12 @@ static void showPage(lv_obj_t* target, bool remember) {
   }
   if (keyboard) lv_obj_add_flag(keyboard, LV_OBJ_FLAG_HIDDEN);
   currentPage = target;
+  if (target == pagePublicChat) unreadPublic = 0;
+  if (target == pagePrivateChat) unreadFamily = 0;
+  if (target == pageDirectChat) unreadDirect = 0;
+  refreshDashboardLabels();
   if (target == pageGps) {
-    mapNearbyMode = false;
+    if (!mapFocusSelectedNode) mapNearbyMode = false;
     mapRenderPending = true;
     lastMapUiRefreshMs = millis();
     if (mapCanvasCached && lblMapStats) {
@@ -1242,9 +1747,119 @@ static void showPage(lv_obj_t* target, bool remember) {
 
 static void setMapNearbyMode(bool enabled) {
   mapNearbyMode = enabled;
+  mapFocusSelectedNode = false;
   mapRenderPending = true;
   lastMapUiRefreshMs = 0;
   refreshMapUi();
+}
+
+static int activeMapPlotHeight() {
+  return mapExpanded ? MAP_PLOT_H_EXPANDED : MAP_PLOT_H_NORMAL;
+}
+
+static void setMapExpanded(bool expanded) {
+  mapExpanded = expanded;
+  mapCanvasCached = false;
+  mapRenderPending = true;
+  lastMapUiRefreshMs = 0;
+  if (mapPlot) lv_obj_set_size(mapPlot, MAP_PLOT_W, activeMapPlotHeight());
+  if (lblMapStats) {
+    if (expanded) lv_obj_add_flag(lblMapStats, LV_OBJ_FLAG_HIDDEN);
+    else {
+      lv_obj_clear_flag(lblMapStats, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_align(lblMapStats, LV_ALIGN_TOP_LEFT, 6, 164);
+    }
+  }
+  refreshMapUi();
+}
+
+static void setMapZoomedOut(bool zoomedOut) {
+  mapZoomedOut = zoomedOut;
+  mapCanvasCached = false;
+  mapRenderPending = true;
+  lastMapUiRefreshMs = 0;
+  refreshMapUi();
+}
+
+static void clearUiObjectPointers() {
+  pageLauncher = nullptr;
+  pageOperate = nullptr;
+  pageDiagnose = nullptr;
+  pageNodes = nullptr;
+  pageNodeDetail = nullptr;
+  pageMeshHealth = nullptr;
+  pagePacketInspector = nullptr;
+  pageTxHistory = nullptr;
+  pagePublicChat = nullptr;
+  pagePrivateChat = nullptr;
+  pageDirectChat = nullptr;
+  pageGps = nullptr;
+  pageSystem = nullptr;
+  pageSystemInterface = nullptr;
+  pageSystemSerial = nullptr;
+  pageSystemRadio = nullptr;
+  pageSystemGps = nullptr;
+  pageWifi = nullptr;
+  pageWifiStats = nullptr;
+  pageWifiLocal = nullptr;
+  pageWifiScan = nullptr;
+  pageBacklight = nullptr;
+  pageBattery = nullptr;
+  currentPage = nullptr;
+  previousPage = nullptr;
+  statusBar = nullptr;
+  navBar = nullptr;
+  lblStatus = nullptr;
+  lblBatteryStatus = nullptr;
+  lblStats = nullptr;
+  lblHomeLink = nullptr;
+  lblHomeMessages = nullptr;
+  lblHomeGps = nullptr;
+  lblHomePower = nullptr;
+  lblMsgPublic = nullptr;
+  lblMsgFamily = nullptr;
+  lblMsgDirect = nullptr;
+  listNodes = nullptr;
+  lblNodeListMode = nullptr;
+  taNodeDetail = nullptr;
+  lblMeshHealth = nullptr;
+  taPacketInspector = nullptr;
+  taTxHistory = nullptr;
+  lblSystemInterface = nullptr;
+  lblSystemSerial = nullptr;
+  lblSystemRadio = nullptr;
+  lblWifiState = nullptr;
+  lblWifiStats = nullptr;
+  lblWifiScanStatus = nullptr;
+  swWifiEnabled = nullptr;
+  swWifiApMode = nullptr;
+  taWifiSsid = nullptr;
+  taWifiPass = nullptr;
+  listWifiScan = nullptr;
+  sliderBacklight = nullptr;
+  lblBacklight = nullptr;
+  swReadableText = nullptr;
+  lblTextMode = nullptr;
+  lblBatteryStats = nullptr;
+  lblGpsStats = nullptr;
+  lblMapStats = nullptr;
+  mapPlot = nullptr;
+  mapCanvas = nullptr;
+  memset(mapDots, 0, sizeof(mapDots));
+  taPublicChat = nullptr;
+  taFamilyChat = nullptr;
+  taDirectChat = nullptr;
+  taScreenLog = nullptr;
+  taScreenNodes = nullptr;
+  taPublicInput = nullptr;
+  taFamilyInput = nullptr;
+  taDirectTo = nullptr;
+  taDirectInput = nullptr;
+  activeChatInput = nullptr;
+  keyboard = nullptr;
+  mainScreen = nullptr;
+  wifiLocalPageBuilt = false;
+  wifiScanPageBuilt = false;
 }
 
 static lv_obj_t* makeActionButton(lv_obj_t* parent, const char* text, int y, lv_event_cb_t cb) {
@@ -1313,6 +1928,46 @@ static lv_obj_t* makeSystemTile(lv_obj_t* parent, const char* text, int col, int
   lv_obj_set_style_text_color(label, lv_color_hex(COLOR_TEXT), 0);
   lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_text_font(label, UI_FONT_SMALL, 0);
+  lv_obj_center(label);
+  lv_obj_move_foreground(btn);
+  return btn;
+}
+
+static lv_obj_t* makeDashboardLabel(lv_obj_t* parent, int x, int y, int w, int h) {
+  lv_obj_t* panel = makePanel(parent);
+  lv_obj_set_size(panel, w, h);
+  lv_obj_align(panel, LV_ALIGN_TOP_LEFT, x, y);
+  lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t* label = lv_label_create(panel);
+  lv_obj_set_width(label, w - 10);
+  lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_text_font(label, UI_FONT_SMALL, 0);
+  lv_obj_set_style_text_color(label, lv_color_hex(COLOR_TEXT), 0);
+  lv_obj_align(label, LV_ALIGN_LEFT_MID, 0, 0);
+  return label;
+}
+
+static lv_obj_t* makeDashboardAction(lv_obj_t* parent, const char* text, int col, int row, lv_event_cb_t cb) {
+  const int w = 108;
+  const int h = 34;
+  const int x = 6 + col * 114;
+  const int y = 158 + row * 38;
+  lv_obj_t* btn = lv_btn_create(parent);
+  lv_obj_set_size(btn, w, h);
+  lv_obj_align(btn, LV_ALIGN_TOP_LEFT, x, y);
+  styleDarkObject(btn, col == 0 && row == 0 ? COLOR_ACTION : COLOR_PANEL, col == 0 && row == 0 ? 0x001B12 : COLOR_TEXT);
+  styleDarkBorder(btn, 0x2F705F);
+  lv_obj_set_style_radius(btn, 6, 0);
+  lv_obj_set_style_shadow_width(btn, 0, 0);
+  lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* label = lv_label_create(btn);
+  lv_label_set_text(label, text);
+  lv_obj_set_width(label, w - 10);
+  lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_text_font(label, UI_FONT_SMALL, 0);
+  lv_obj_set_style_text_color(label, lv_color_hex(col == 0 && row == 0 ? 0x001B12 : COLOR_TEXT), 0);
   lv_obj_center(label);
   lv_obj_move_foreground(btn);
   return btn;
@@ -1517,6 +2172,17 @@ static void cycleNodeFilter() {
   refreshNodeList(true);
 }
 
+static void clearNodeList() {
+  memset(nodes, 0, sizeof(nodes));
+  nodeCount = 0;
+  selectedNodeNum = 0;
+  lastNodeListRefreshMs = 0;
+  mapRenderPending = true;
+  appendLine(eventLog, LOG_SIZE, "[local] node list cleared\n");
+  refreshNodeList(true);
+  refreshDashboardLabels();
+}
+
 static void refreshNodeList(bool force) {
   if (!listNodes) return;
   uint32_t now = millis();
@@ -1612,8 +2278,9 @@ static void directSelectedNode() {
 
 static void showSelectedNodeOnMap() {
   if (!selectedNodeNum) return;
-  showPage(pageGps);
   mapNearbyMode = true;
+  mapFocusSelectedNode = true;
+  showPage(pageGps);
   mapRenderPending = true;
   lastMapUiRefreshMs = 0;
   refreshMapUi();
@@ -1877,15 +2544,9 @@ static void buildScreenUi() {
   makeSystemTile(pageOperate, "Family", 1, 0, [](lv_event_t*) { showPage(pagePrivateChat); });
   makeSystemTile(pageOperate, "Direct", 0, 1, [](lv_event_t*) { showPage(pageDirectChat); });
   makeSystemTile(pageOperate, "TX Log", 1, 1, [](lv_event_t*) { showPage(pageTxHistory); });
-
-  lv_obj_t* operatePanel = makePanel(pageOperate);
-  lv_obj_set_size(operatePanel, SCREEN_W - 12, 58);
-  lv_obj_align(operatePanel, LV_ALIGN_TOP_MID, 0, 136);
-  lblStats = lv_label_create(operatePanel);
-  lv_label_set_text(lblStats, "Waiting for radio...");
-  lv_obj_set_style_text_font(lblStats, UI_FONT_DEFAULT, 0);
-  lv_obj_set_style_text_color(lblStats, lv_color_hex(0xF4FFF9), 0);
-  lv_obj_set_width(lblStats, lv_pct(100));
+  lblMsgPublic = makeDashboardLabel(pageOperate, 6, 120, 228, 34);
+  lblMsgFamily = makeDashboardLabel(pageOperate, 6, 160, 228, 34);
+  lblMsgDirect = makeDashboardLabel(pageOperate, 6, 200, 228, 34);
 
   makePageTitle(pageDiagnose, "Diagnose");
   makePageScrollable(pageDiagnose);
@@ -1899,9 +2560,10 @@ static void buildScreenUi() {
   makeSystemTile(pageDiagnose, "WiFi", 1, 3, [](lv_event_t*) { showPage(pageWifiStats); });
 
   makePageTitle(pageNodes, "Nodes");
-  makeSmallButton(pageNodes, "Sort", 6, 21, 68, [](lv_event_t*) { cycleNodeSort(); });
-  makeSmallButton(pageNodes, "Filter", 80, 21, 72, [](lv_event_t*) { cycleNodeFilter(); });
-  makeSmallButton(pageNodes, "Map", 158, 21, 76, [](lv_event_t*) { showPage(pageGps); });
+  makeSmallButton(pageNodes, "Sort", 6, 21, 48, [](lv_event_t*) { cycleNodeSort(); });
+  makeSmallButton(pageNodes, "Filter", 60, 21, 56, [](lv_event_t*) { cycleNodeFilter(); });
+  makeSmallButton(pageNodes, "Map", 122, 21, 46, [](lv_event_t*) { showPage(pageGps); });
+  makeSmallButton(pageNodes, "Clear", 174, 21, 60, [](lv_event_t*) { clearNodeList(); });
   lblNodeListMode = lv_label_create(pageNodes);
   lv_label_set_text(lblNodeListMode, "sort heard  filter all");
   lv_obj_set_width(lblNodeListMode, SCREEN_W - 12);
@@ -2041,8 +2703,8 @@ static void buildScreenUi() {
   makePageTitle(pageGps, "GPS / Map");
   makePageScrollable(pageGps);
   lv_obj_t* btnGpsMap = lv_btn_create(pageGps);
-  lv_obj_set_size(btnGpsMap, 48, 22);
-  lv_obj_align(btnGpsMap, LV_ALIGN_TOP_RIGHT, -58, 0);
+  lv_obj_set_size(btnGpsMap, 32, 22);
+  lv_obj_align(btnGpsMap, LV_ALIGN_TOP_RIGHT, -126, 0);
   styleDarkObject(btnGpsMap, COLOR_PANEL);
   styleDarkBorder(btnGpsMap, 0x2F705F);
   lv_obj_set_style_radius(btnGpsMap, 6, 0);
@@ -2054,8 +2716,8 @@ static void buildScreenUi() {
   lv_obj_center(lblGpsMap);
 
   lv_obj_t* btnNodeMap = lv_btn_create(pageGps);
-  lv_obj_set_size(btnNodeMap, 52, 22);
-  lv_obj_align(btnNodeMap, LV_ALIGN_TOP_RIGHT, -2, 0);
+  lv_obj_set_size(btnNodeMap, 42, 22);
+  lv_obj_align(btnNodeMap, LV_ALIGN_TOP_RIGHT, -80, 0);
   styleDarkObject(btnNodeMap, COLOR_ACTION, 0x001B12);
   lv_obj_set_style_radius(btnNodeMap, 6, 0);
   lv_obj_set_style_shadow_width(btnNodeMap, 0, 0);
@@ -2065,8 +2727,34 @@ static void buildScreenUi() {
   lv_obj_set_style_text_color(lblNodeMap, lv_color_hex(0x001B12), 0);
   lv_obj_center(lblNodeMap);
 
+  lv_obj_t* btnMapWide = lv_btn_create(pageGps);
+  lv_obj_set_size(btnMapWide, 38, 22);
+  lv_obj_align(btnMapWide, LV_ALIGN_TOP_RIGHT, -38, 0);
+  styleDarkObject(btnMapWide, COLOR_PANEL);
+  styleDarkBorder(btnMapWide, 0x2F705F);
+  lv_obj_set_style_radius(btnMapWide, 6, 0);
+  lv_obj_set_style_shadow_width(btnMapWide, 0, 0);
+  lv_obj_add_event_cb(btnMapWide, [](lv_event_t*) { setMapZoomedOut(!mapZoomedOut); }, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* lblMapWide = lv_label_create(btnMapWide);
+  lv_label_set_text(lblMapWide, "Wide");
+  lv_obj_set_style_text_color(lblMapWide, lv_color_hex(COLOR_TEXT), 0);
+  lv_obj_center(lblMapWide);
+
+  lv_obj_t* btnMapFull = lv_btn_create(pageGps);
+  lv_obj_set_size(btnMapFull, 34, 22);
+  lv_obj_align(btnMapFull, LV_ALIGN_TOP_RIGHT, -2, 0);
+  styleDarkObject(btnMapFull, COLOR_PANEL);
+  styleDarkBorder(btnMapFull, 0x2F705F);
+  lv_obj_set_style_radius(btnMapFull, 6, 0);
+  lv_obj_set_style_shadow_width(btnMapFull, 0, 0);
+  lv_obj_add_event_cb(btnMapFull, [](lv_event_t*) { setMapExpanded(!mapExpanded); }, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* lblMapFull = lv_label_create(btnMapFull);
+  lv_label_set_text(lblMapFull, "Full");
+  lv_obj_set_style_text_color(lblMapFull, lv_color_hex(COLOR_TEXT), 0);
+  lv_obj_center(lblMapFull);
+
   mapPlot = makePanel(pageGps);
-  lv_obj_set_size(mapPlot, MAP_PLOT_W, MAP_PLOT_H);
+  lv_obj_set_size(mapPlot, MAP_PLOT_W, activeMapPlotHeight());
   lv_obj_align(mapPlot, LV_ALIGN_TOP_MID, 0, 22);
   lv_obj_set_style_bg_color(mapPlot, lv_color_hex(COLOR_INPUT), 0);
   lv_obj_set_style_pad_all(mapPlot, 0, 0);
@@ -2102,7 +2790,7 @@ static void buildScreenUi() {
   makeSystemTile(pageSystem, "Radio", 0, 1, [](lv_event_t*) { showPage(pageSystemRadio); });
   makeSystemTile(pageSystem, "GPS", 1, 1, [](lv_event_t*) { showPage(pageSystemGps); });
   makeSystemTile(pageSystem, "WiFi", 0, 2, [](lv_event_t*) { showPage(pageWifi); });
-  makeSystemTile(pageSystem, "Backlight", 1, 2, [](lv_event_t*) { showPage(pageBacklight); });
+  makeSystemTile(pageSystem, "Display", 1, 2, [](lv_event_t*) { showPage(pageBacklight); });
   makeSystemTile(pageSystem, "Battery", 0, 3, [](lv_event_t*) { showPage(pageBattery); });
 
   makePageTitle(pageSystemInterface, "Interface");
@@ -2187,9 +2875,9 @@ static void buildScreenUi() {
   lv_obj_set_style_text_color(lblWifiStats, lv_color_hex(COLOR_TEXT), 0);
   lv_obj_set_width(lblWifiStats, lv_pct(100));
 
-  makePageTitle(pageBacklight, "Backlight");
+  makePageTitle(pageBacklight, "Display");
   lv_obj_t* backlightPanel = makePanel(pageBacklight);
-  lv_obj_set_size(backlightPanel, SCREEN_W - 12, 150);
+  lv_obj_set_size(backlightPanel, SCREEN_W - 12, 206);
   lv_obj_align(backlightPanel, LV_ALIGN_TOP_MID, 0, 30);
   lblBacklight = lv_label_create(backlightPanel);
   lv_label_set_text(lblBacklight, "Brightness: 10%");
@@ -2204,11 +2892,26 @@ static void buildScreenUi() {
   lv_obj_set_style_bg_color(sliderBacklight, lv_color_hex(COLOR_ACTION), LV_PART_INDICATOR);
   lv_obj_set_style_bg_color(sliderBacklight, lv_color_hex(COLOR_TEXT), LV_PART_KNOB);
   lv_obj_add_event_cb(sliderBacklight, backlightSliderEvent, LV_EVENT_VALUE_CHANGED, nullptr);
+  lv_obj_t* readableLabel = lv_label_create(backlightPanel);
+  lv_label_set_text(readableLabel, "Readable Text");
+  lv_obj_set_style_text_color(readableLabel, lv_color_hex(COLOR_TEXT), 0);
+  lv_obj_align(readableLabel, LV_ALIGN_TOP_LEFT, 2, 92);
+  swReadableText = lv_switch_create(backlightPanel);
+  lv_obj_align(swReadableText, LV_ALIGN_TOP_RIGHT, -2, 86);
+  if (readableTextMode) lv_obj_add_state(swReadableText, LV_STATE_CHECKED);
+  lv_obj_add_event_cb(swReadableText, [](lv_event_t* e) {
+    setReadableTextMode(lv_obj_has_state((lv_obj_t*)lv_event_get_target(e), LV_STATE_CHECKED), true);
+  }, LV_EVENT_VALUE_CHANGED, nullptr);
+  lblTextMode = lv_label_create(backlightPanel);
+  lv_label_set_text(lblTextMode, readableTextMode ? "Standard font, larger text" : "Comic font, compact text");
+  lv_obj_set_style_text_color(lblTextMode, lv_color_hex(COLOR_MUTED), 0);
+  lv_obj_set_width(lblTextMode, lv_pct(100));
+  lv_obj_align(lblTextMode, LV_ALIGN_TOP_LEFT, 2, 126);
   lv_obj_t* backlightHint = lv_label_create(backlightPanel);
   lv_label_set_text(backlightHint, "Lower brightness extends battery runtime.");
   lv_obj_set_style_text_color(backlightHint, lv_color_hex(COLOR_MUTED), 0);
   lv_obj_set_width(backlightHint, lv_pct(100));
-  lv_obj_align(backlightHint, LV_ALIGN_TOP_LEFT, 2, 96);
+  lv_obj_align(backlightHint, LV_ALIGN_TOP_LEFT, 2, 164);
 
   makePageTitle(pageBattery, "Battery");
   lv_obj_t* batteryPanel = makePanel(pageBattery);
@@ -2230,6 +2933,51 @@ static void buildScreenUi() {
   lv_obj_set_style_border_color(keyboard, lv_color_hex(0x315B50), LV_PART_ITEMS);
   lv_obj_set_style_border_width(keyboard, 1, LV_PART_ITEMS);
   lv_obj_add_flag(keyboard, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void rebuildScreenUi(lv_obj_t* targetPage) {
+  if (!display) return;
+  lv_obj_t* screen = lv_scr_act();
+  if (!screen) return;
+  if (keyboardScreen) {
+    lv_obj_del(keyboardScreen);
+    keyboardScreen = nullptr;
+    keyboardPrompt = nullptr;
+    keyboardText = nullptr;
+    landscapeKeyboard = nullptr;
+    landscapeKeyboardOpen = false;
+  }
+  lv_obj_clean(screen);
+  clearUiObjectPointers();
+  buildScreenUi();
+  buildLandscapeKeyboardScreen();
+  if (taWifiSsid) lv_textarea_set_text(taWifiSsid, wifiLocalSsid);
+  if (taWifiPass) lv_textarea_set_text(taWifiPass, wifiLocalPass);
+  if (swWifiApMode) {
+    if (wifiApMode) lv_obj_add_state(swWifiApMode, LV_STATE_CHECKED);
+    else lv_obj_clear_state(swWifiApMode, LV_STATE_CHECKED);
+  }
+  if (targetPage) showPage(targetPage, false);
+  refreshDashboardLabels();
+  refreshScreenUi();
+}
+
+static void setReadableTextMode(bool enabled, bool save) {
+  if (readableTextMode == enabled && !save) return;
+  readableTextMode = enabled;
+  applyFontMode();
+  if (save) prefs.putBool("readableText", readableTextMode);
+  if (lblTextMode) {
+    lv_label_set_text(lblTextMode, readableTextMode ? "Standard font, larger text" : "Comic font, compact text");
+  }
+  if (swReadableText) {
+    if (readableTextMode) lv_obj_add_state(swReadableText, LV_STATE_CHECKED);
+    else lv_obj_clear_state(swReadableText, LV_STATE_CHECKED);
+  }
+  if (mainScreen) {
+    rebuildScreenUi(nullptr);
+    showPage(pageBacklight, false);
+  }
 }
 
 static void initScreen() {
@@ -2381,7 +3129,7 @@ static void loadMapCacheFromSd() {
   if (header.magic != MAP_CACHE_MAGIC ||
       header.version != MAP_CACHE_VERSION ||
       header.width != MAP_PLOT_W ||
-      header.height != MAP_PLOT_H) {
+      (header.height != MAP_PLOT_H_NORMAL && header.height != MAP_PLOT_H_EXPANDED)) {
     file.close();
     strlcpy(mapCacheStatus, "header mismatch", sizeof(mapCacheStatus));
     Serial.printf("[MAPCACHE] %s magic=%08lX ver=%u size=%ux%u expected=%ux%u\n",
@@ -2391,7 +3139,7 @@ static void loadMapCacheFromSd() {
                   (unsigned)header.width,
                   (unsigned)header.height,
                   (unsigned)MAP_PLOT_W,
-                  (unsigned)MAP_PLOT_H);
+                  (unsigned)MAP_PLOT_H_EXPANDED);
     return;
   }
   size_t expected = MAP_CANVAS_BYTES;
@@ -2410,6 +3158,7 @@ static void loadMapCacheFromSd() {
   cachedMapPixelY = header.pixelY;
   cachedMapLat = header.lat;
   cachedMapLon = header.lon;
+  cachedMapHeight = header.height;
   cachedMapTileFound = header.tileFound != 0;
   mapCanvasCached = true;
   strlcpy(mapCacheStatus, "loaded", sizeof(mapCacheStatus));
@@ -2440,7 +3189,7 @@ static void saveMapCacheToSd() {
   header.magic = MAP_CACHE_MAGIC;
   header.version = MAP_CACHE_VERSION;
   header.width = MAP_PLOT_W;
-  header.height = MAP_PLOT_H;
+  header.height = activeMapPlotHeight();
   header.zoom = cachedMapZoom;
   header.tileX = cachedMapTileX;
   header.tileY = cachedMapTileY;
@@ -2466,6 +3215,7 @@ static void saveMapCacheToSd() {
 
 static bool renderOfflineTileMap(double lat, double lon, int zoom, char* centerPath, size_t centerPathSize) {
   if (!mapCanvas || !sdStorage.available) return false;
+  int plotH = activeMapPlotHeight();
 
   double centerX = lonToGlobalPixelX(lon, zoom);
   double centerY = latToGlobalPixelY(lat, zoom);
@@ -2481,18 +3231,19 @@ static bool renderOfflineTileMap(double lat, double lon, int zoom, char* centerP
       cachedMapTileY == centerTileY &&
       abs(cachedMapPixelX - centerPixelX) < 32 &&
       abs(cachedMapPixelY - centerPixelY) < 32 &&
+      cachedMapHeight == plotH &&
       cachedMapTileFound == centerTileFound) {
     return centerTileFound;
   }
 
-  for (int y = 0; y < MAP_PLOT_H; y++) {
+  for (int y = 0; y < plotH; y++) {
     for (int x = 0; x < MAP_PLOT_W; x++) {
       mapCanvasBuf[y * MAP_PLOT_W + x] = lv_color_hex(0x07100D);
     }
   }
 
-  for (int y = 0; y < MAP_PLOT_H; y++) {
-    long globalY = centerPixelY - (MAP_PLOT_H / 2) + y;
+  for (int y = 0; y < plotH; y++) {
+    long globalY = centerPixelY - (plotH / 2) + y;
     if (globalY < 0) continue;
     long tileY = globalY / MAP_TILE_SIZE;
     int inTileY = globalY % MAP_TILE_SIZE;
@@ -2529,6 +3280,7 @@ static bool renderOfflineTileMap(double lat, double lon, int zoom, char* centerP
   cachedMapTileY = centerTileY;
   cachedMapPixelX = centerPixelX;
   cachedMapPixelY = centerPixelY;
+  cachedMapHeight = activeMapPlotHeight();
   cachedMapLat = lat;
   cachedMapLon = lon;
   cachedMapTileFound = centerTileFound;
@@ -2538,15 +3290,16 @@ static bool renderOfflineTileMap(double lat, double lon, int zoom, char* centerP
   return centerTileFound;
 }
 
-static bool placeMapDot(size_t index, double lat, double lon, int zoom, lv_color_t color, int size) {
-  if (index >= MAP_DOT_COUNT || !mapDots[index] || !gpsStats.valid) return false;
-  double centerX = lonToGlobalPixelX(gpsStats.longitude, zoom);
-  double centerY = latToGlobalPixelY(gpsStats.latitude, zoom);
+static bool placeMapDot(size_t index, double centerLat, double centerLon, double lat, double lon, int zoom, lv_color_t color, int size) {
+  if (index >= MAP_DOT_COUNT || !mapDots[index]) return false;
+  int plotH = activeMapPlotHeight();
+  double centerX = lonToGlobalPixelX(centerLon, zoom);
+  double centerY = latToGlobalPixelY(centerLat, zoom);
   double pointX = lonToGlobalPixelX(lon, zoom);
   double pointY = latToGlobalPixelY(lat, zoom);
   int x = (MAP_PLOT_W / 2) + (int)round(pointX - centerX) - (size / 2);
-  int y = (MAP_PLOT_H / 2) + (int)round(pointY - centerY) - (size / 2);
-  if (x < -size || y < -size || x > MAP_PLOT_W || y > MAP_PLOT_H) {
+  int y = (plotH / 2) + (int)round(pointY - centerY) - (size / 2);
+  if (x < -size || y < -size || x > MAP_PLOT_W || y > plotH) {
     lv_obj_add_flag(mapDots[index], LV_OBJ_FLAG_HIDDEN);
     return false;
   }
@@ -2558,6 +3311,55 @@ static bool placeMapDot(size_t index, double lat, double lon, int zoom, lv_color
   return true;
 }
 
+static const char* linkHealthText() {
+  if (!lastByteMs) return "No radio";
+  uint32_t age = (millis() - lastByteMs) / 1000;
+  if (age > 45) return "No recent traffic";
+  if (decodeErrors > 0 && decodeErrors > framesDecoded / 2) return "Weak";
+  return age > 15 ? "Stale" : "Good";
+}
+
+static void formatPreviewLine(const char* name, uint16_t unread, const char* preview, char* out, size_t outSize) {
+  if (!out || outSize == 0) return;
+  const char* body = preview && preview[0] ? preview : "No messages";
+  if (unread) snprintf(out, outSize, "%s %u new: %s", name, unread, body);
+  else snprintf(out, outSize, "%s: %s", name, body);
+}
+
+static void refreshDashboardLabels() {
+  char line[160];
+  if (lblHomeLink) {
+    snprintf(line, sizeof(line), "LoRa\n%s", linkHealthText());
+    lv_label_set_text(lblHomeLink, line);
+  }
+  if (lblHomeGps) {
+    snprintf(line, sizeof(line), "GPS\n%s", gpsStats.valid ? "Fix" : "Waiting");
+    lv_label_set_text(lblHomeGps, line);
+  }
+  if (lblHomeMessages) {
+    uint16_t unreadTotal = unreadPublic + unreadFamily + unreadDirect;
+    const char* latest = previewFamily[0] ? previewFamily : (previewPublic[0] ? previewPublic : (previewDirect[0] ? previewDirect : "No messages yet"));
+    snprintf(line, sizeof(line), "Messages %u new\n%s", unreadTotal, latest);
+    lv_label_set_text(lblHomeMessages, line);
+  }
+  if (lblHomePower) {
+    snprintf(line, sizeof(line), "Power: Ext  Family: %s", privateChannelIndex >= 0 ? "ready" : "not found");
+    lv_label_set_text(lblHomePower, line);
+  }
+  if (lblMsgPublic) {
+    formatPreviewLine("Public", unreadPublic, previewPublic, line, sizeof(line));
+    lv_label_set_text(lblMsgPublic, line);
+  }
+  if (lblMsgFamily) {
+    formatPreviewLine("Family", unreadFamily, previewFamily, line, sizeof(line));
+    lv_label_set_text(lblMsgFamily, line);
+  }
+  if (lblMsgDirect) {
+    formatPreviewLine("Direct", unreadDirect, previewDirect, line, sizeof(line));
+    lv_label_set_text(lblMsgDirect, line);
+  }
+}
+
 static void refreshMapUi() {
   if (!mapPlot || !lblMapStats) return;
   if (currentPage != pageGps) return;
@@ -2566,12 +3368,17 @@ static void refreshMapUi() {
   lastMapUiRefreshMs = millis();
   mapRenderPending = false;
 
+  const NodeRecord* selected = findNode(selectedNodeNum);
   const bool hasLocalFix = gpsStats.valid;
+  const bool focusSelected = mapFocusSelectedNode && selected && selected->hasPosition;
+  const bool hasMapCenter = hasLocalFix || focusSelected;
+  double centerLat = focusSelected ? selected->latitude : gpsStats.latitude;
+  double centerLon = focusSelected ? selected->longitude : gpsStats.longitude;
   for (size_t i = 0; i < MAP_DOT_COUNT; i++) {
     if (mapDots[i]) lv_obj_add_flag(mapDots[i], LV_OBJ_FLAG_HIDDEN);
   }
 
-  if (!hasLocalFix) {
+  if (!hasMapCenter) {
     if (mapCanvas && !mapCanvasCached) {
       lv_canvas_fill_bg(mapCanvas, lv_color_hex(0x07100D), LV_OPA_COVER);
     }
@@ -2603,17 +3410,17 @@ static void refreshMapUi() {
   }
 
   char tilePath[96];
-  int mapZoom = findBestMapZoom(gpsStats.latitude, gpsStats.longitude, tilePath, sizeof(tilePath));
-  bool centerTileFound = renderOfflineTileMap(gpsStats.latitude, gpsStats.longitude, mapZoom, tilePath, sizeof(tilePath));
+  int mapZoom = findBestMapZoom(centerLat, centerLon, tilePath, sizeof(tilePath));
+  if (mapZoomedOut) mapZoom = max(MAP_TILE_MIN_ZOOM, mapZoom - 2);
+  bool centerTileFound = renderOfflineTileMap(centerLat, centerLon, mapZoom, tilePath, sizeof(tilePath));
   size_t plotted = 0;
   size_t remotePlotted = 0;
   const NodeRecord* nearest = nullptr;
-  const NodeRecord* selected = findNode(selectedNodeNum);
   bool selectedPlotted = false;
   double selectedMeters = 0.0;
   double selectedBearing = 0.0;
   double nearestMeters = 0.0;
-  if (selected && selected->hasPosition) {
+  if (hasLocalFix && selected && selected->hasPosition) {
     selectedMeters = distanceMeters(gpsStats.latitude, gpsStats.longitude, selected->latitude, selected->longitude);
     selectedBearing = headingTo(gpsStats.latitude, gpsStats.longitude, selected->latitude, selected->longitude);
   }
@@ -2622,7 +3429,7 @@ static void refreshMapUi() {
     bool isSelected = selectedNodeNum && nodes[i].num == selectedNodeNum;
     lv_color_t color = nodes[i].num == stats.myNodeNum ? lv_color_hex(0x00C985) : lv_color_hex(isSelected ? 0xFFD166 : 0x68FFC0);
     int dotSize = isSelected ? 14 : 8;
-    if (placeMapDot(i, nodes[i].latitude, nodes[i].longitude, mapZoom, color, dotSize)) {
+    if (placeMapDot(i, centerLat, centerLon, nodes[i].latitude, nodes[i].longitude, mapZoom, color, dotSize)) {
       if (isSelected) {
         selectedPlotted = true;
         lv_obj_set_style_border_width(mapDots[i], 2, 0);
@@ -2632,7 +3439,7 @@ static void refreshMapUi() {
       plotted++;
       if (nodes[i].num != stats.myNodeNum) {
         remotePlotted++;
-        double meters = distanceMeters(gpsStats.latitude, gpsStats.longitude, nodes[i].latitude, nodes[i].longitude);
+        double meters = distanceMeters(centerLat, centerLon, nodes[i].latitude, nodes[i].longitude);
         if (!nearest || meters < nearestMeters) {
           nearest = &nodes[i];
           nearestMeters = meters;
@@ -2641,11 +3448,13 @@ static void refreshMapUi() {
     }
   }
 
-  placeMapDot(MAP_DOT_COUNT - 1, gpsStats.latitude, gpsStats.longitude, mapZoom, lv_color_hex(0x00C985), 10);
-  plotted++;
+  if (hasLocalFix) {
+    placeMapDot(MAP_DOT_COUNT - 1, centerLat, centerLon, gpsStats.latitude, gpsStats.longitude, mapZoom, lv_color_hex(0x00C985), 10);
+    plotted++;
+  }
 
-  long tileX = lonToTileX(gpsStats.longitude, mapZoom);
-  long tileY = latToTileY(gpsStats.latitude, mapZoom);
+  long tileX = lonToTileX(centerLon, mapZoom);
+  long tileY = latToTileY(centerLat, mapZoom);
 
   char selectedText[96];
   if (selected && selected->hasPosition) {
@@ -2655,7 +3464,7 @@ static void refreshMapUi() {
              nodeName(selected->num),
              selectedMeters / 1000.0,
              selectedBearing,
-             selectedPlotted ? "" : " off map");
+             selectedPlotted ? (focusSelected ? " centered" : "") : " off map");
   } else if (selected) {
     snprintf(selectedText, sizeof(selectedText), "%s no position", nodeName(selected->num));
   } else {
@@ -2671,14 +3480,15 @@ static void refreshMapUi() {
       strlcpy(nearestText, "none yet", sizeof(nearestText));
     }
     snprintf(mapText, sizeof(mapText),
-             "Nearby Meshtastic nodes\n"
-             "Local: %.5f, %.5f\n"
+             "%s\n"
+             "Center: %.5f, %.5f\n"
              "Selected: %s\n"
              "Remote nodes: %u  nearest: %s\n"
              "Tile z%d/%ld/%ld: %s\n"
              "Cache: %s",
-             gpsStats.latitude,
-             gpsStats.longitude,
+             focusSelected ? (mapZoomedOut ? "Selected wide map" : "Selected node map") : (mapZoomedOut ? "Wide node map" : "Nearby Meshtastic nodes"),
+             centerLat,
+             centerLon,
              selectedText,
              (unsigned)remotePlotted,
              nearestText,
@@ -2689,12 +3499,13 @@ static void refreshMapUi() {
              mapCacheStatus);
   } else {
     snprintf(mapText, sizeof(mapText),
-             "CYD GPS: fix  RX %lu bytes\n"
+             "%s  RX %lu bytes\n"
              "Lat/lon: %.5f, %.5f\n"
              "Selected: %s\n"
              "Offline tile z%d/%ld/%ld: %s\n"
              "Cache: %s\n"
              "%u plotted point%s",
+             mapZoomedOut ? "CYD GPS wide" : "CYD GPS",
              (unsigned long)gpsBytesFromLocal,
              gpsStats.latitude,
              gpsStats.longitude,
@@ -2725,20 +3536,25 @@ static void refreshScreenUi() {
   lv_label_set_text(lblStatus, status);
 
   if (lblBatteryStatus) {
-    lv_label_set_text(lblBatteryStatus, "Ext Power");
+    char batteryStatus[32];
+    if (localBattery.gaugePresent) {
+      if (localBattery.charging) {
+        snprintf(batteryStatus, sizeof(batteryStatus), LV_SYMBOL_CHARGE " %d%%", localBattery.percent);
+      } else {
+        const char* icon = LV_SYMBOL_BATTERY_EMPTY;
+        if (localBattery.percent >= 90) icon = LV_SYMBOL_BATTERY_FULL;
+        else if (localBattery.percent >= 65) icon = LV_SYMBOL_BATTERY_3;
+        else if (localBattery.percent >= 35) icon = LV_SYMBOL_BATTERY_2;
+        else if (localBattery.percent >= 12) icon = LV_SYMBOL_BATTERY_1;
+        snprintf(batteryStatus, sizeof(batteryStatus), "%s %d%%", icon, localBattery.percent);
+      }
+    } else {
+      strlcpy(batteryStatus, "No gauge", sizeof(batteryStatus));
+    }
+    lv_label_set_text(lblBatteryStatus, batteryStatus);
   }
 
-  char statsText[256];
-  snprintf(statsText, sizeof(statsText),
-           "%s  !%08lX\nRX/TX %lu/%lu  Nodes %u/%u\nFamily: %s",
-           nodeName(stats.myNodeNum),
-           (unsigned long)stats.myNodeNum,
-           (unsigned long)stats.packetsRx,
-           (unsigned long)stats.packetsTx,
-           stats.onlineNodes,
-           stats.totalNodes,
-           privateChannelIndex >= 0 ? "found" : "not found");
-  lv_label_set_text(lblStats, statsText);
+  refreshDashboardLabels();
 
   if (currentPage == pageSystemInterface && lblSystemInterface) {
     String wifiIp = wifiEnabled ? (wifiApMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString()) : String("off");
@@ -3084,28 +3900,71 @@ static void refreshScreenUi() {
   }
 
   if (currentPage == pageBattery && lblBatteryStats) {
-    char batteryText[520];
-    snprintf(batteryText, sizeof(batteryText),
-             "S3 power\n"
-             "Level: 100%%\n"
-             "Power: %s\n\n"
-             "S3 interface power\n"
-             "Uptime: %lu s\n"
-             "Heap free/min: %lu/%lu KB\n"
-             "PSRAM free: %lu KB\n\n"
-             "Heltec radio\n"
-             "Packets RX/TX: %lu/%lu\n"
-             "Channel use: %.2f%%\n"
-             "Air TX use: %.2f%%",
-             localBattery.powerState,
-             (unsigned long)(millis() / 1000),
-             (unsigned long)(ESP.getFreeHeap() / 1024),
-             (unsigned long)(ESP.getMinFreeHeap() / 1024),
-             (unsigned long)(ESP.getFreePsram() / 1024),
-             (unsigned long)stats.packetsRx,
-             (unsigned long)stats.packetsTx,
-             stats.channelUtilization,
-             stats.airUtilTx);
+    char batteryText[720];
+    uint32_t gaugeAge = localBattery.lastGaugeMs ? (millis() - localBattery.lastGaugeMs) / 1000 : 0;
+    if (localBattery.gaugePresent) {
+      snprintf(batteryText, sizeof(batteryText),
+               "LiPo fuel gauge\n"
+               "Chip: MAX17048  v0x%04X\n"
+               "Displayed: %d%%\n"
+               "Displayed source: %s\n"
+               "Gauge SOC: %.1f%%  raw 0x%04X\n"
+               "MAX corrected: %d%%  trim %.1f%%\n"
+               "Pack: %.3f V\n"
+               "Code voltage estimate: %d%%\n"
+               "Charge rate: %.1f%%/hr\n"
+               "Last change: %ld mV\n"
+               "Voltage trend: %.1f mV/min\n"
+               "Charging: %s\n"
+               "Learning samples: %u\n"
+               "Quick-start: %s\n"
+               "Updated: %lu s ago\n\n"
+               "Power path\n"
+               "LiPo > charger > booster > 5V pins\n\n"
+               "S3 interface\n"
+               "Uptime: %lu s\n"
+               "Heap free/min: %lu/%lu KB\n"
+               "PSRAM free: %lu KB",
+               localBattery.gaugeVersion,
+               localBattery.percent,
+               localBattery.percentSource,
+               localBattery.gaugeSoc,
+               localBattery.rawGaugeSoc,
+               localBattery.correctedGaugePercent,
+               localBattery.calibrationOffsetTenths / 10.0f,
+               localBattery.batteryMv / 1000.0f,
+               localBattery.voltagePercent,
+               localBattery.chargeRateValid ? localBattery.chargeRatePercentHr : 0.0f,
+               (long)localBattery.instantDeltaMv,
+               localBattery.deltaMvPerMinTenths / 10.0f,
+               localBattery.charging ? "yes" : "no",
+               localBattery.stableSampleCount,
+               localBattery.quickStartSent ? "sent" : "not needed",
+               (unsigned long)gaugeAge,
+               (unsigned long)(millis() / 1000),
+               (unsigned long)(ESP.getFreeHeap() / 1024),
+               (unsigned long)(ESP.getMinFreeHeap() / 1024),
+               (unsigned long)(ESP.getFreePsram() / 1024));
+    } else {
+      snprintf(batteryText, sizeof(batteryText),
+               "LiPo fuel gauge\n"
+               "MAX17048 not detected\n"
+               "I2C: SDA GPIO%d  SCL GPIO%d\n"
+               "Address: 0x%02X\n\n"
+               "Power path\n"
+               "LiPo > charger > booster > 5V pins\n\n"
+               "S3 interface\n"
+               "Uptime: %lu s\n"
+               "Heap free/min: %lu/%lu KB\n"
+               "PSRAM free: %lu KB",
+               TOUCH_SDA,
+               TOUCH_SCL,
+               MAX17048_ADDR,
+               (unsigned long)(millis() / 1000),
+               (unsigned long)(ESP.getFreeHeap() / 1024),
+               (unsigned long)(ESP.getMinFreeHeap() / 1024),
+               (unsigned long)(ESP.getFreePsram() / 1024));
+    }
     lv_label_set_text(lblBatteryStats, batteryText);
   }
 
@@ -3328,6 +4187,37 @@ static void printSerialDiagnostics() {
       (unsigned)lastTouchY,
       lastTouchMs ? (unsigned long)((millis() - lastTouchMs) / 1000) : 0
     );
+  }
+}
+
+static void serviceUsbSerialCommands() {
+  static char command[48];
+  static size_t commandLen = 0;
+  while (Serial.available()) {
+    char c = (char)Serial.read();
+    if (c == '\r') continue;
+    if (c == '\n') {
+      command[commandLen] = '\0';
+      if (strcmp(command, "tiles") == 0 || strcmp(command, "maps") == 0) {
+        printSdTileSummary();
+      } else if (strcmp(command, "tilesfast") == 0) {
+        printSdTileFastSummary();
+      } else if (strcmp(command, "sd") == 0) {
+        Serial.printf("[sd] available=%s status=%s type=%s total=%llu used=%llu\n",
+                      sdStorage.available ? "true" : "false",
+                      sdStorage.status,
+                      sdStorage.cardType,
+                      (unsigned long long)sdStorage.totalBytes,
+                      (unsigned long long)sdStorage.usedBytes);
+      } else if (commandLen > 0) {
+        Serial.printf("[serial] unknown command: %s\n", command);
+        Serial.println("[serial] commands: sd, tiles, tilesfast");
+      }
+      commandLen = 0;
+      command[0] = '\0';
+    } else if (commandLen + 1 < sizeof(command)) {
+      command[commandLen++] = c;
+    }
   }
 }
 
@@ -3719,6 +4609,38 @@ static bool isDirectAddress(uint32_t to) {
   return to != 0 && to != BROADCAST_ADDR;
 }
 
+static void copyChatPreview(char* out, size_t outSize, const char* sender, const uint8_t* text, size_t len) {
+  if (!out || outSize == 0) return;
+  size_t pos = 0;
+  if (sender && sender[0] && strcmp(sender, "me") != 0) {
+    pos = snprintf(out, outSize, "%s: ", sender);
+    if (pos >= outSize) {
+      out[outSize - 1] = '\0';
+      return;
+    }
+  }
+  for (size_t i = 0; i < len && pos + 1 < outSize; i++) {
+    char c = (char)text[i];
+    out[pos++] = (c == '\n' || c == '\r' || c == '\t') ? ' ' : c;
+  }
+  out[pos] = '\0';
+}
+
+static void recordChatActivity(uint8_t channel, uint32_t to, const char* sender, const uint8_t* text, size_t len) {
+  bool isLocal = sender && strcmp(sender, "me") == 0;
+  if (isDirectAddress(to)) {
+    copyChatPreview(previewDirect, sizeof(previewDirect), sender, text, len);
+    if (!isLocal && currentPage != pageDirectChat && unreadDirect < 999) unreadDirect++;
+  } else if (isPrivateChannel(channel)) {
+    copyChatPreview(previewFamily, sizeof(previewFamily), sender, text, len);
+    if (!isLocal && currentPage != pagePrivateChat && unreadFamily < 999) unreadFamily++;
+  } else {
+    copyChatPreview(previewPublic, sizeof(previewPublic), sender, text, len);
+    if (!isLocal && currentPage != pagePublicChat && unreadPublic < 999) unreadPublic++;
+  }
+  refreshDashboardLabels();
+}
+
 static void appendChatMessage(uint8_t channel, uint32_t to, const char* sender, const uint8_t* text, size_t len) {
   if (!text || len == 0) return;
   char stamp[28];
@@ -3727,6 +4649,7 @@ static void appendChatMessage(uint8_t channel, uint32_t to, const char* sender, 
   snprintf(line, sizeof(line), "[%s] [%s] %.*s\n", stamp, sender && sender[0] ? sender : "unknown", (int)len, text);
   if (isDirectAddress(to)) appendLine(directChatLog, CHAT_SIZE, line);
   else appendLine(isPrivateChannel(channel) ? familyChatLog : publicChatLog, CHAT_SIZE, line);
+  recordChatActivity(channel, to, sender, text, len);
   refreshChatViews();
 }
 
@@ -4449,13 +5372,36 @@ static String buildStatusJson() {
   json += "\"myNodeName\":\"" + jsonEscape(nodeName(stats.myNodeNum)) + "\",";
   json += "\"battery\":" + String(localBattery.percent) + ",";
   json += "\"voltage\":" + String(localBattery.batteryMv / 1000.0f, 2) + ",";
+  json += "\"fuelGauge\":\"" + String(localBattery.gaugePresent ? "MAX17048" : "none") + "\",";
+  json += "\"fuelGaugePresent\":" + String(localBattery.gaugePresent ? "true" : "false") + ",";
+  json += "\"fuelGaugeSoc\":" + String(localBattery.gaugeSoc, 1) + ",";
+  json += "\"fuelGaugeCorrectedSoc\":" + String(localBattery.correctedGaugeSoc, 1) + ",";
+  json += "\"fuelGaugeCorrectedPercent\":" + String(localBattery.correctedGaugePercent) + ",";
+  json += "\"fuelGaugeSocReliable\":" + String(localBattery.gaugeSocReliable ? "true" : "false") + ",";
+  json += "\"fuelGaugeRawSoc\":\"0x" + String(localBattery.rawGaugeSoc, HEX) + "\",";
+  json += "\"fuelGaugeQuickStartSent\":" + String(localBattery.quickStartSent ? "true" : "false") + ",";
+  json += "\"voltageBatteryEstimate\":" + String(localBattery.voltagePercent) + ",";
+  json += "\"fuelGaugeVersion\":\"0x" + String(localBattery.gaugeVersion, HEX) + "\",";
   json += "\"senseVoltage\":" + String(localBattery.filteredPackMv / 1000.0f, 2) + ",";
   json += "\"rawSenseVoltage\":" + String(localBattery.rawPackMv / 1000.0f, 2) + ",";
-  json += "\"batterySource\":\"S3\",";
+  json += "\"batterySource\":\"" + jsonEscape(localBattery.percentSource) + "\",";
   json += "\"powerState\":\"" + jsonEscape(localBattery.powerState) + "\",";
   json += "\"batteryTrend\":" + String(localBattery.deltaMvPerMinTenths / 10.0f, 1) + ",";
   json += "\"batteryTrendMvPerMin\":" + String(localBattery.deltaMvPerMin) + ",";
-  json += "\"batteryTrendWindowSec\":" + String(localBattery.trendSampleCount ? localBattery.trendSampleCount - 1 : 0) + ",";
+  json += "\"batteryChargeRatePercentHr\":" + String(localBattery.chargeRatePercentHr, 1) + ",";
+  json += "\"batteryChargeRateValid\":" + String(localBattery.chargeRateValid ? "true" : "false") + ",";
+  json += "\"batteryCharging\":" + String(localBattery.charging ? "true" : "false") + ",";
+  uint32_t trendWindowSec = 0;
+  if (localBattery.trendCount >= 2) {
+    uint8_t trendWindow = sizeof(localBattery.trendMv) / sizeof(localBattery.trendMv[0]);
+    uint8_t newestIndex = (localBattery.trendHead + trendWindow - 1) % trendWindow;
+    uint8_t oldestIndex = (localBattery.trendHead + trendWindow - localBattery.trendCount) % trendWindow;
+    if (localBattery.trendMs[newestIndex] > localBattery.trendMs[oldestIndex]) {
+      trendWindowSec = (localBattery.trendMs[newestIndex] - localBattery.trendMs[oldestIndex]) / 1000;
+    }
+  }
+  json += "\"batteryTrendWindowSec\":" + String(trendWindowSec) + ",";
+  json += "\"batteryCalibrationOffsetPercent\":" + String(localBattery.calibrationOffsetTenths / 10.0f, 1) + ",";
   json += "\"batteryCalibrationOffsetMv\":" + String(localBattery.calibrationOffsetMv) + ",";
   json += "\"batteryLearnedVoltage\":" + String(localBattery.learnedBatteryMv / 1000.0f, 2) + ",";
   json += "\"batteryStableSamples\":" + String(localBattery.stableSampleCount) + ",";
@@ -4654,15 +5600,22 @@ void setup() {
   SerialLoRa.setRxBufferSize(4096);
   SerialLoRa.begin(LORA_BAUD, SERIAL_8N1, LORA_RX_PIN, LORA_TX_PIN);
   SerialGPS.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
+  Serial.println("[boot] prefs");
+  prefs.begin("s3-lora", false);
+  wifiApMode = prefs.getBool("wifiApMode", true);
+  readableTextMode = prefs.getBool("readableText", false);
+  localBattery.calibrationOffsetTenths = prefs.getShort("batTrim10", 0);
+  localBattery.calibrationOffsetTenths = constrain(localBattery.calibrationOffsetTenths, -120, 120);
+  localBattery.calibrationOffsetMv = 0;
+  applyFontMode();
   Serial.println("[boot] init screen");
   initScreen();
   Serial.println("[boot] init sd");
   initSdStorage();
 
-  appendLine(eventLog, LOG_SIZE, "[boot] Heltec LoRa interface starting\n");
-  Serial.println("[boot] prefs");
-  prefs.begin("s3-lora", false);
-  wifiApMode = prefs.getBool("wifiApMode", true);
+  char bootLine[96];
+  snprintf(bootLine, sizeof(bootLine), "[boot] %s starting\n", DEVICE_NAME);
+  appendLine(eventLog, LOG_SIZE, bootLine);
   strlcpy(wifiLocalSsid, "SOB", sizeof(wifiLocalSsid));
   strlcpy(wifiLocalPass, "CestLaVie629!", sizeof(wifiLocalPass));
   if (taWifiSsid) lv_textarea_set_text(taWifiSsid, wifiLocalSsid);
@@ -4797,6 +5750,7 @@ void setup() {
 
 void loop() {
   pollLocalGps();
+  serviceUsbSerialCommands();
   pollLoRa();
   serviceConfigRequests();
   if (wifiEnabled) server.handleClient();

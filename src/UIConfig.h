@@ -3,7 +3,7 @@
 
 namespace UI {
     namespace Labels {
-        static const char* AppTitle = "Heltec LoRa Interface";
+        static const char* AppTitle = DEVICE_NAME;
     }
 }
 
