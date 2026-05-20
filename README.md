@@ -23,6 +23,18 @@ It could be useful for camping, hiking groups, event crews, neighborhood
 emergency planning, field projects, or any small team that wants a simple way to
 see who is nearby and whether messages are moving.
 
+## Parts List
+
+- 2500 mAh 18650 LiPo battery
+- TP4056 LiPo charger module
+- MT3608 5V boost converter
+- Heltec V3.2 Meshtastic LoRa device
+- HOSYUND ESP32-S3 touch display / CYD:
+  <https://www.lcdwiki.com/2.8inch_ESP32-S3_Display>
+- GY-NEO6MV2 GPS module
+- MAX17048 LiPo fuel gauge module
+- Optional MicroSD card for logs, snapshots, and offline map tiles
+
 ## Quick Reference
 
 This section is for people who already know the hardware terms and just need the
