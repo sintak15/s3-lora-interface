@@ -963,6 +963,7 @@ static void updateLocalGpsStats() {
   }
   strlcpy(gpsStats.sourceKind, "CYD GPS UART", sizeof(gpsStats.sourceKind));
   gpsStats.lastUpdateMs = millis();
+  mapRenderPending = true;
   saveLastLocationToSd(gpsStats.latitude, gpsStats.longitude, gpsStats.altitude);
 
   if (stats.myNodeNum != 0) {
@@ -2617,6 +2618,7 @@ static void buildScreenUi() {
   lv_textarea_set_one_line(taPublicInput, true);
   lv_textarea_set_max_length(taPublicInput, 233);
   lv_textarea_set_placeholder_text(taPublicInput, "Public message");
+  lv_textarea_set_text(taPublicInput, "");
   lv_obj_add_event_cb(taPublicInput, inputEvent, LV_EVENT_ALL, nullptr);
 
   lv_obj_t* publicSendBtn = lv_btn_create(pagePublicChat);
@@ -2647,6 +2649,7 @@ static void buildScreenUi() {
   lv_textarea_set_one_line(taFamilyInput, true);
   lv_textarea_set_max_length(taFamilyInput, 233);
   lv_textarea_set_placeholder_text(taFamilyInput, "Family message");
+  lv_textarea_set_text(taFamilyInput, "");
   lv_obj_add_event_cb(taFamilyInput, inputEvent, LV_EVENT_ALL, nullptr);
 
   lv_obj_t* privateSendBtn = lv_btn_create(pagePrivateChat);
@@ -2678,6 +2681,7 @@ static void buildScreenUi() {
   lv_textarea_set_one_line(taDirectTo, true);
   lv_textarea_set_max_length(taDirectTo, 9);
   lv_textarea_set_placeholder_text(taDirectTo, "To: !1234ABCD");
+  lv_textarea_set_text(taDirectTo, "");
   lv_obj_add_event_cb(taDirectTo, inputEvent, LV_EVENT_ALL, nullptr);
   taDirectInput = lv_textarea_create(pageDirectChat);
   lv_obj_set_size(taDirectInput, SCREEN_W - 76, 38);
@@ -2686,6 +2690,7 @@ static void buildScreenUi() {
   lv_textarea_set_one_line(taDirectInput, true);
   lv_textarea_set_max_length(taDirectInput, 233);
   lv_textarea_set_placeholder_text(taDirectInput, "Direct message");
+  lv_textarea_set_text(taDirectInput, "");
   lv_obj_add_event_cb(taDirectInput, inputEvent, LV_EVENT_ALL, nullptr);
   lv_obj_t* directSendBtn = lv_btn_create(pageDirectChat);
   lv_obj_set_size(directSendBtn, 56, 38);
@@ -4256,6 +4261,29 @@ static bool isFamilyChannelName(const char* name) {
          strcasecmp(name, "private") == 0;
 }
 
+static bool isPublicChannelName(const char* name) {
+  if (!name || !name[0]) return false;
+  return strcasecmp(name, "public") == 0 ||
+         strcasecmp(name, "primary") == 0 ||
+         strcasecmp(name, "longfast") == 0 ||
+         strcasecmp(name, "long fast") == 0 ||
+         strcasecmp(name, "default") == 0;
+}
+
+static ChannelRecord* channelRecordByIndex(uint8_t index) {
+  for (size_t i = 0; i < MAX_CHANNELS; i++) {
+    if (channels[i].enabled && channels[i].index == (int8_t)index) return &channels[i];
+  }
+  return nullptr;
+}
+
+static bool hasEnabledChannelRecords() {
+  for (size_t i = 0; i < MAX_CHANNELS; i++) {
+    if (channels[i].enabled) return true;
+  }
+  return false;
+}
+
 static void refreshPrivateChannelIndex() {
   privateChannelIndex = -1;
   for (size_t i = 0; i < MAX_CHANNELS; i++) {
@@ -4264,11 +4292,6 @@ static void refreshPrivateChannelIndex() {
       privateChannelIndex = channels[i].index;
       return;
     }
-  }
-  for (size_t i = 0; i < MAX_CHANNELS; i++) {
-    if (!channels[i].enabled || strcmp(channels[i].role, "SECONDARY") != 0) continue;
-    privateChannelIndex = channels[i].index;
-    return;
   }
 }
 
@@ -4452,13 +4475,13 @@ static void cacheHeltecModuleConfig(const meshtastic_ModuleConfig& moduleConfig)
 }
 
 static bool isPrivateChannel(uint8_t index) {
-  if (privateChannelIndex >= 0) return index == privateChannelIndex;
-  for (size_t i = 0; i < MAX_CHANNELS; i++) {
-    if (channels[i].enabled && channels[i].index == (int8_t)index && strcmp(channels[i].role, "SECONDARY") == 0) {
-      return true;
-    }
+  ChannelRecord* record = channelRecordByIndex(index);
+  if (record) {
+    if (strcmp(record->role, "PRIMARY") == 0 || isPublicChannelName(record->name)) return false;
+    if (isFamilyChannelName(record->name)) return true;
   }
-  return index == 1;
+  if (privateChannelIndex >= 0) return index == privateChannelIndex;
+  return !hasEnabledChannelRecords() && index == 1;
 }
 
 static void refreshChatViews() {
@@ -5081,7 +5104,8 @@ static void handleDecodedPacket(const meshtastic_MeshPacket& packet) {
   const meshtastic_Data& data = packet.decoded;
   char line[320];
 
-  if (data.portnum == meshtastic_PortNum_TEXT_MESSAGE_APP) {
+  if (data.portnum == meshtastic_PortNum_TEXT_MESSAGE_APP ||
+      data.portnum == meshtastic_PortNum_TEXT_MESSAGE_COMPRESSED_APP) {
     textPackets++;
     lastPortNum = data.portnum;
     if (node) {
@@ -5094,18 +5118,27 @@ static void handleDecodedPacket(const meshtastic_MeshPacket& packet) {
       snprintf(fromText, sizeof(fromText), "!%08lX", (unsigned long)packet.from);
       lv_textarea_set_text(taDirectTo, fromText);
     }
-    bool localEcho = fromThisNode && isRecentLocalEcho(packet.channel, packet.to, data.payload.bytes, data.payload.size);
+    bool compressedText = data.portnum == meshtastic_PortNum_TEXT_MESSAGE_COMPRESSED_APP;
+    const uint8_t* chatBytes = data.payload.bytes;
+    size_t chatLen = data.payload.size;
+    static const char compressedNotice[] = "(compressed text received)";
+    if (compressedText) {
+      chatBytes = (const uint8_t*)compressedNotice;
+      chatLen = strlen(compressedNotice);
+    }
+    bool localEcho = !compressedText && fromThisNode && isRecentLocalEcho(packet.channel, packet.to, data.payload.bytes, data.payload.size);
     if (localEcho) {
       markTxEchoSeen(packet.channel, packet.to, data.payload.bytes, data.payload.size);
     } else {
-      appendChatMessage(packet.channel, packet.to, fromThisNode ? "me" : nodeName(packet.from), data.payload.bytes, data.payload.size);
+      appendChatMessage(packet.channel, packet.to, fromThisNode ? "me" : nodeName(packet.from), chatBytes, chatLen);
     }
-    snprintf(line, sizeof(line), "[%s ch%u %s] %.*s\n",
+    snprintf(line, sizeof(line), "[%s ch%u %s%s] %.*s\n",
              fromThisNode ? "me" : nodeName(packet.from),
              packet.channel,
              isPrivateChannel(packet.channel) ? "family" : "public",
-             (int)data.payload.size,
-             data.payload.bytes);
+             compressedText ? " compressed" : "",
+             (int)chatLen,
+             chatBytes);
     appendLine(eventLog, LOG_SIZE, line);
     appendPacketEvent(line);
   } else if (data.portnum == meshtastic_PortNum_TELEMETRY_APP) {
