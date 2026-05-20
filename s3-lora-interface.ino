@@ -2,9 +2,11 @@
 #include <limits.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include <Update.h>
 #include <Preferences.h>
 #include <esp_wifi.h>
 #include <esp_heap_caps.h>
+#include <esp_ota_ops.h>
 #include <Wire.h>
 #include <SD_MMC.h>
 #include <FS.h>
@@ -262,8 +264,11 @@ static const char* SD_POSITIONS_PATH = "/s3-lora/positions.csv";
 static const char* SD_MAP_CACHE_PATH = "/s3-lora/map_cache.bin";
 static const char* SD_LAST_LOCATION_PATH = "/s3-lora/last_location.txt";
 static const char* SD_STATUS_SNAPSHOT_PATH = "/s3-lora/status_snapshot.json";
-static const char* WEBUI_USER = "sintak";
-static const char* WEBUI_PASS = "Brielle!13";
+static const char* WEBUI_USER = WEBUI_AUTH_USER;
+static const char* WEBUI_PASS = WEBUI_AUTH_PASS;
+static bool otaRestartPending = false;
+static uint32_t otaRestartAtMs = 0;
+static bool otaUploadOk = false;
 static constexpr uint32_t COLOR_BG = 0x050807;
 static constexpr uint32_t COLOR_PANEL = 0x101816;
 static constexpr uint32_t COLOR_INPUT = 0x07100D;
@@ -5375,8 +5380,15 @@ static String buildStatusJson() {
   if (lastByteMs) snprintf(rxAge, sizeof(rxAge), "%lus ago", (unsigned long)((millis() - lastByteMs) / 1000));
   else strlcpy(rxAge, "never", sizeof(rxAge));
   String wifiIp = wifiEnabled ? (wifiApMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString()) : String("off");
+  const esp_partition_t* runningPartition = esp_ota_get_running_partition();
   String json = "{";
   json += "\"title\":\"" + String(UI::Labels::AppTitle) + "\",";
+  json += "\"firmwareVersion\":\"" + String(FIRMWARE_VERSION) + "\",";
+  json += "\"buildDate\":\"" + String(__DATE__) + "\",";
+  json += "\"buildTime\":\"" + String(__TIME__) + "\",";
+  json += "\"runningPartition\":\"" + String(runningPartition ? runningPartition->label : "unknown") + "\",";
+  json += "\"sketchSize\":" + String(ESP.getSketchSize()) + ",";
+  json += "\"freeSketchSpace\":" + String(ESP.getFreeSketchSpace()) + ",";
   json += "\"ip\":\"" + wifiIp + "\",";
   json += "\"wifiEnabled\":" + String(wifiEnabled ? "true" : "false") + ",";
   json += "\"wifiMode\":\"" + String(wifiApMode ? "AP" : "Local") + "\",";
@@ -5625,6 +5637,68 @@ static void handleRoot() {
   if (!requireWebAuth()) return;
   server.send_P(200, "text/html", WEB_UI_HTML);
 }
+
+static void handleFirmwareUpload() {
+  if (!server.authenticate(WEBUI_USER, WEBUI_PASS)) {
+    otaUploadOk = false;
+    return;
+  }
+
+  HTTPUpload& upload = server.upload();
+
+  if (upload.status == UPLOAD_FILE_START) {
+    otaUploadOk = false;
+    Serial.printf("[ota] upload start: %s\n", upload.filename.c_str());
+    appendLine(eventLog, LOG_SIZE, "[ota] firmware upload started\n");
+
+    if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) {
+      Serial.printf("[ota] begin failed: %u\n", Update.getError());
+      appendLine(eventLog, LOG_SIZE, "[ota] begin failed\n");
+    }
+
+  } else if (upload.status == UPLOAD_FILE_WRITE) {
+    if (!Update.hasError()) {
+      size_t written = Update.write(upload.buf, upload.currentSize);
+      if (written != upload.currentSize) {
+        Serial.printf("[ota] short write: %u/%u error=%u\n",
+                      (unsigned)written,
+                      (unsigned)upload.currentSize,
+                      Update.getError());
+      }
+    }
+
+  } else if (upload.status == UPLOAD_FILE_END) {
+    if (!Update.hasError() && Update.end(true)) {
+      otaUploadOk = true;
+      Serial.printf("[ota] upload complete: %u bytes\n", (unsigned)upload.totalSize);
+      appendLine(eventLog, LOG_SIZE, "[ota] firmware upload complete, reboot pending\n");
+    } else {
+      otaUploadOk = false;
+      Serial.printf("[ota] end failed: %u\n", Update.getError());
+      appendLine(eventLog, LOG_SIZE, "[ota] firmware upload failed\n");
+      Update.abort();
+    }
+
+  } else if (upload.status == UPLOAD_FILE_ABORTED) {
+    otaUploadOk = false;
+    Update.abort();
+    Serial.println("[ota] upload aborted");
+    appendLine(eventLog, LOG_SIZE, "[ota] firmware upload aborted\n");
+  }
+}
+
+static void handleFirmwareUpdateDone() {
+  if (!requireWebAuth()) return;
+
+  if (otaUploadOk) {
+    otaRestartPending = true;
+    otaRestartAtMs = millis() + 1200;
+    server.send(200, "text/plain", "Firmware update complete. Rebooting...");
+  } else {
+    server.send(500, "text/plain", String("Firmware update failed. Error ") + Update.getError());
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   delay(3000);
@@ -5663,6 +5737,7 @@ void setup() {
   server.on("/status", HTTP_GET, handleStatus);
   server.on("/send", HTTP_POST, handleSend);
   server.on("/serial_cmd", HTTP_POST, handleSerialCmd);
+  server.on("/firmware", HTTP_POST, handleFirmwareUpdateDone, handleFirmwareUpload);
   server.on("/sd/events", HTTP_GET, []() { handleSdDownload(SD_EVENTS_PATH, "events.log", "text/plain"); });
   server.on("/sd/public", HTTP_GET, []() { handleSdDownload(SD_PUBLIC_CHAT_PATH, "public_chat.log", "text/plain"); });
   server.on("/sd/private", HTTP_GET, []() { handleSdDownload(SD_FAMILY_CHAT_PATH, "private_family_chat.log", "text/plain"); });
@@ -5787,6 +5862,11 @@ void loop() {
   pollLoRa();
   serviceConfigRequests();
   if (wifiEnabled) server.handleClient();
+  if (otaRestartPending && (int32_t)(millis() - otaRestartAtMs) >= 0) {
+    Serial.println("[ota] restarting");
+    delay(100);
+    ESP.restart();
+  }
   serviceScreen();
   printSerialDiagnostics();
   delay(2);

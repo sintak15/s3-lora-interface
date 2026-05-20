@@ -134,7 +134,7 @@ Then copy `.\sdcard\s3-lora\tiles` to the SD card as `/s3-lora/tiles`.
 
 1. Flash `s3-lora-interface.ino` to the CYD.
 2. Connect to the CYD WiFi network.
-3. Use password `12345678`.
+3. Use the password configured as `INTERFACE_AP_PASS`.
 4. Open `http://192.168.4.1/`.
 
 The WiFi network name comes from the selected device config, such as `jjs-node`
@@ -254,7 +254,7 @@ show more detail.
 After flashing the CYD:
 
 1. Look for the WiFi network from the CYD.
-2. Connect using password `12345678`.
+2. Connect using the password configured as `INTERFACE_AP_PASS`.
 3. Open `http://192.168.4.1/` in your browser.
 
 The web page shows radio stats, events, chat messages, known nodes, battery

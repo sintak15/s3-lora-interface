@@ -1,7 +1,11 @@
 param(
   [Parameter(Mandatory = $true)]
   [ValidateSet('jjs-node', 'babs-node')]
-  [string] $Name
+  [string] $Name,
+
+  [string] $ApPass = "12345678",
+
+  [string] $WebPass = "admin"
 )
 
 $channels = @{
@@ -20,8 +24,9 @@ $channel = $channels[$Name]
 #define DEVICE_NAME "$Name"
 #define DEVICE_HOSTNAME DEVICE_NAME
 #define INTERFACE_AP_SSID DEVICE_NAME
-#define INTERFACE_AP_PASS "12345678"
+#define INTERFACE_AP_PASS "$ApPass"
 #define WIFI_AP_CHANNEL $channel
+#define WEBUI_AUTH_PASS "$WebPass"
 "@ | Set-Content -LiteralPath $configPath -Encoding ascii
 
 Write-Host "Selected $Name on AP channel $channel"

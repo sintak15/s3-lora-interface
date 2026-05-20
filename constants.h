@@ -65,3 +65,11 @@
 #ifndef WIFI_AP_CHANNEL
 #define WIFI_AP_CHANNEL 6
 #endif
+
+#ifndef WEBUI_AUTH_USER
+#define WEBUI_AUTH_USER "sintak"
+#endif
+
+#ifndef WEBUI_AUTH_PASS
+#define WEBUI_AUTH_PASS "admin"
+#endif
