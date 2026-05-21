@@ -1464,9 +1464,14 @@ static void renderWifiScanResults(int16_t status) {
     lv_obj_add_event_cb(btn, [](lv_event_t* e) {
       size_t index = (size_t)lv_event_get_user_data(e);
       if (index >= wifiScanResultCount) return;
+      ensureWifiLocalPage();
       if (taWifiSsid) lv_textarea_set_text(taWifiSsid, wifiScanSsids[index]);
       setWifiApMode(false);
       showPage(pageWifiLocal);
+      if (taWifiPass) {
+        lv_textarea_set_text(taWifiPass, "");
+        lv_event_send(taWifiPass, LV_EVENT_FOCUSED, nullptr);
+      }
     }, LV_EVENT_CLICKED, (void*)i);
   }
   WiFi.scanDelete();
@@ -1512,9 +1517,14 @@ static void renderIdfWifiScanResults(uint16_t count) {
     lv_obj_add_event_cb(btn, [](lv_event_t* e) {
       size_t index = (size_t)lv_event_get_user_data(e);
       if (index >= wifiScanResultCount) return;
+      ensureWifiLocalPage();
       if (taWifiSsid) lv_textarea_set_text(taWifiSsid, wifiScanSsids[index]);
       setWifiApMode(false);
       showPage(pageWifiLocal);
+      if (taWifiPass) {
+        lv_textarea_set_text(taWifiPass, "");
+        lv_event_send(taWifiPass, LV_EVENT_FOCUSED, nullptr);
+      }
     }, LV_EVENT_CLICKED, (void*)i);
   }
 }
@@ -1546,9 +1556,14 @@ static void renderStoredWifiScanResults(int16_t status) {
     lv_obj_add_event_cb(btn, [](lv_event_t* e) {
       size_t index = (size_t)lv_event_get_user_data(e);
       if (index >= wifiScanResultCount) return;
+      ensureWifiLocalPage();
       if (taWifiSsid) lv_textarea_set_text(taWifiSsid, wifiScanSsids[index]);
       setWifiApMode(false);
       showPage(pageWifiLocal);
+      if (taWifiPass) {
+        lv_textarea_set_text(taWifiPass, "");
+        lv_event_send(taWifiPass, LV_EVENT_FOCUSED, nullptr);
+      }
     }, LV_EVENT_CLICKED, (void*)i);
   }
 }
@@ -1577,17 +1592,11 @@ static void wifiScanTask(void*) {
 }
 
 static void requestWifiScan() {
-  wifiScanRequested = false;
+  wifiScanRequested = true;
   wifiScanActive = false;
   if (listWifiScan) lv_obj_clean(listWifiScan);
   if (lblWifiScanStatus) {
-    lv_label_set_text(lblWifiScanStatus, "Scan disabled");
-  }
-  if (listWifiScan) {
-    lv_obj_t* note = lv_label_create(listWifiScan);
-    lv_label_set_text(note, "WiFi scanning freezes this board/core.\nUse AP mode for now.");
-    lv_obj_set_style_text_color(note, lv_color_hex(COLOR_TEXT), 0);
-    lv_obj_set_width(note, lv_pct(100));
+    lv_label_set_text(lblWifiScanStatus, "Scan requested...");
   }
 }
 
@@ -2506,7 +2515,7 @@ static void ensureWifiLocalPage() {
 
   makePageTitle(pageWifiLocal, "Local Network");
   lv_obj_t* localWifiPanel = makePanel(pageWifiLocal);
-  lv_obj_set_size(localWifiPanel, SCREEN_W - 12, 126);
+  lv_obj_set_size(localWifiPanel, SCREEN_W - 12, 220);
   lv_obj_align(localWifiPanel, LV_ALIGN_TOP_MID, 0, 24);
 
   lv_obj_t* btnScanWifi = lv_btn_create(localWifiPanel);
@@ -2520,11 +2529,37 @@ static void ensureWifiLocalPage() {
     deferWifiAction(2);
   }, LV_EVENT_CLICKED, nullptr);
 
-  lv_obj_t* localHint = lv_label_create(localWifiPanel);
-  lv_label_set_text(localHint, "Password entry appears after selecting a network.");
-  lv_obj_set_style_text_color(localHint, lv_color_hex(COLOR_MUTED), 0);
-  lv_obj_set_width(localHint, lv_pct(100));
-  lv_obj_align(localHint, LV_ALIGN_TOP_LEFT, 4, 64);
+  taWifiSsid = lv_textarea_create(localWifiPanel);
+  lv_obj_set_size(taWifiSsid, SCREEN_W - 40, 36);
+  lv_obj_align(taWifiSsid, LV_ALIGN_TOP_MID, 0, 56);
+  styleDarkTextArea(taWifiSsid);
+  lv_textarea_set_one_line(taWifiSsid, true);
+  lv_textarea_set_max_length(taWifiSsid, 32);
+  lv_textarea_set_placeholder_text(taWifiSsid, "SSID");
+  lv_textarea_set_text(taWifiSsid, wifiLocalSsid);
+  lv_obj_add_event_cb(taWifiSsid, wifiInputEvent, LV_EVENT_FOCUSED, nullptr);
+
+  taWifiPass = lv_textarea_create(localWifiPanel);
+  lv_obj_set_size(taWifiPass, SCREEN_W - 40, 36);
+  lv_obj_align(taWifiPass, LV_ALIGN_TOP_MID, 0, 100);
+  styleDarkTextArea(taWifiPass);
+  lv_textarea_set_one_line(taWifiPass, true);
+  lv_textarea_set_password_mode(taWifiPass, true);
+  lv_textarea_set_max_length(taWifiPass, 64);
+  lv_textarea_set_placeholder_text(taWifiPass, "Password");
+  lv_textarea_set_text(taWifiPass, wifiLocalPass);
+  lv_obj_add_event_cb(taWifiPass, wifiInputEvent, LV_EVENT_FOCUSED, nullptr);
+
+  lv_obj_t* btnSaveWifi = lv_btn_create(localWifiPanel);
+  lv_obj_set_size(btnSaveWifi, SCREEN_W - 40, 40);
+  lv_obj_align(btnSaveWifi, LV_ALIGN_TOP_MID, 0, 144);
+  styleDarkObject(btnSaveWifi, COLOR_ACTION, 0xFFFFFF);
+  lv_obj_t* lblSaveWifi = lv_label_create(btnSaveWifi);
+  lv_label_set_text(lblSaveWifi, "Save & Connect");
+  lv_obj_center(lblSaveWifi);
+  lv_obj_add_event_cb(btnSaveWifi, [](lv_event_t*) {
+    saveWifiCredentials();
+  }, LV_EVENT_CLICKED, nullptr);
 }
 
 static void ensureWifiScanPage() {
