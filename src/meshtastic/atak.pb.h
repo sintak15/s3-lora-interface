@@ -96,7 +96,7 @@ typedef struct _meshtastic_Status {
 } meshtastic_Status;
 
 /* ATAK Contact
- <contact endpoint='0.0.0.0:4242:tcp' phone='+12345678' callsign='FALKE'/> */
+ <contact endpoint='0.0.0.0:4242:tcp' phone='+10000000' callsign='FALKE'/> */
 typedef struct _meshtastic_Contact {
     /* Callsign */
     char callsign[120];

@@ -70,6 +70,8 @@ struct ChannelRecord {
   bool uplink = false;
   bool downlink = false;
   uint8_t pskSize = 0;
+  bool hasPositionPrecision = false;
+  uint32_t positionPrecision = 0;
 };
 
 struct TxRecord {
@@ -255,6 +257,9 @@ static constexpr uint32_t MAP_CACHE_MAGIC = 0x4D415031UL;
 static constexpr uint16_t MAP_CACHE_VERSION = 1;
 static constexpr int8_t PUBLIC_CHANNEL_INDEX = 0;
 static constexpr uint32_t BROADCAST_ADDR = 0xFFFFFFFFUL;
+static const char* SETUP_DEVICE_NAME = "s3-lora-interface";
+static const char* SETUP_AUTH_USER = "admin";
+static const char* SETUP_AUTH_PASS = "setup1234";
 static const char* SD_DIR = "/s3-lora";
 static const char* SD_EVENTS_PATH = "/s3-lora/events.log";
 static const char* SD_PUBLIC_CHAT_PATH = "/s3-lora/public_chat.log";
@@ -264,8 +269,13 @@ static const char* SD_POSITIONS_PATH = "/s3-lora/positions.csv";
 static const char* SD_MAP_CACHE_PATH = "/s3-lora/map_cache.bin";
 static const char* SD_LAST_LOCATION_PATH = "/s3-lora/last_location.txt";
 static const char* SD_STATUS_SNAPSHOT_PATH = "/s3-lora/status_snapshot.json";
-static const char* WEBUI_USER = WEBUI_AUTH_USER;
-static const char* WEBUI_PASS = WEBUI_AUTH_PASS;
+static char interfaceDeviceName[33] = DEVICE_NAME;
+static char interfaceHostname[33] = DEVICE_HOSTNAME;
+static char interfaceApSsid[33] = INTERFACE_AP_SSID;
+static char interfaceApPass[65] = INTERFACE_AP_PASS;
+static char webUiUser[33] = WEBUI_AUTH_USER;
+static char webUiPass[65] = WEBUI_AUTH_PASS;
+static uint8_t interfaceApChannel = WIFI_AP_CHANNEL;
 static bool otaRestartPending = false;
 static uint32_t otaRestartAtMs = 0;
 static bool otaUploadOk = false;
@@ -338,6 +348,7 @@ static uint32_t lastLocalGpsFixLogMs = 0;
 static bool localGpsHasFix = false;
 static bool wifiEnabled = true;
 static bool wifiApMode = true;
+static bool forcedOwnerNamePending = FORCE_INTERFACE_SETTINGS != 0;
 static bool wifiScanActive = false;
 static bool wifiScanRequested = false;
 static bool wifiScanStoppedWifi = false;
@@ -347,8 +358,8 @@ static esp_err_t wifiScanStartResult = ESP_OK;
 static volatile bool wifiScanTaskRunning = false;
 static volatile bool wifiScanTaskDone = false;
 static volatile int16_t wifiScanTaskStatus = WIFI_SCAN_FAILED;
-static char wifiLocalSsid[33] = "SOB";
-static char wifiLocalPass[65] = "CestLaVie629!";
+static char wifiLocalSsid[33] = "";
+static char wifiLocalPass[65] = "";
 static constexpr size_t WIFI_SCAN_MAX_RESULTS = 16;
 static char wifiScanSsids[WIFI_SCAN_MAX_RESULTS][33];
 static int32_t wifiScanRssi[WIFI_SCAN_MAX_RESULTS];
@@ -1257,10 +1268,96 @@ static void appendPacketEvent(const char* line) {
   appendLine(packetLog, PACKET_LOG_SIZE, line);
 }
 
+static void copyPreferenceString(const char* key, char* dest, size_t destSize, const char* fallback) {
+  String value = prefs.getString(key, fallback);
+  value.trim();
+  if (!value.length()) value = fallback;
+  strlcpy(dest, value.c_str(), destSize);
+}
+
+static void loadInterfaceSettings() {
+  bool needsSeed = !prefs.isKey("devName");
+  copyPreferenceString("devName", interfaceDeviceName, sizeof(interfaceDeviceName), DEVICE_NAME);
+  copyPreferenceString("hostname", interfaceHostname, sizeof(interfaceHostname), DEVICE_HOSTNAME);
+  copyPreferenceString("apSsid", interfaceApSsid, sizeof(interfaceApSsid), INTERFACE_AP_SSID);
+  copyPreferenceString("apPass", interfaceApPass, sizeof(interfaceApPass), INTERFACE_AP_PASS);
+  copyPreferenceString("webUser", webUiUser, sizeof(webUiUser), WEBUI_AUTH_USER);
+  copyPreferenceString("webPass", webUiPass, sizeof(webUiPass), WEBUI_AUTH_PASS);
+  interfaceApChannel = prefs.getUChar("apChannel", WIFI_AP_CHANNEL);
+  if (interfaceApChannel < 1 || interfaceApChannel > 13) interfaceApChannel = WIFI_AP_CHANNEL;
+  bool savedGenericSetup =
+    strcmp(interfaceDeviceName, SETUP_DEVICE_NAME) == 0 &&
+    strcmp(webUiUser, SETUP_AUTH_USER) == 0 &&
+    strcmp(webUiPass, SETUP_AUTH_PASS) == 0;
+  if (FORCE_INTERFACE_SETTINGS ||
+      (savedGenericSetup &&
+      (strcmp(DEVICE_NAME, SETUP_DEVICE_NAME) != 0 ||
+       strcmp(WEBUI_AUTH_PASS, SETUP_AUTH_PASS) != 0 ||
+       strcmp(INTERFACE_AP_PASS, SETUP_AUTH_PASS) != 0))) {
+    strlcpy(interfaceDeviceName, DEVICE_NAME, sizeof(interfaceDeviceName));
+    strlcpy(interfaceHostname, DEVICE_HOSTNAME, sizeof(interfaceHostname));
+    strlcpy(interfaceApSsid, INTERFACE_AP_SSID, sizeof(interfaceApSsid));
+    strlcpy(interfaceApPass, INTERFACE_AP_PASS, sizeof(interfaceApPass));
+    strlcpy(webUiUser, WEBUI_AUTH_USER, sizeof(webUiUser));
+    strlcpy(webUiPass, WEBUI_AUTH_PASS, sizeof(webUiPass));
+    interfaceApChannel = WIFI_AP_CHANNEL;
+    needsSeed = true;
+  }
+  if (needsSeed) {
+    prefs.putString("devName", interfaceDeviceName);
+    prefs.putString("hostname", interfaceHostname);
+    prefs.putString("apSsid", interfaceApSsid);
+    prefs.putString("apPass", interfaceApPass);
+    prefs.putString("webUser", webUiUser);
+    prefs.putString("webPass", webUiPass);
+    prefs.putUChar("apChannel", interfaceApChannel);
+  }
+}
+
+static bool usingDefaultWebCredentials() {
+  return strcmp(webUiUser, SETUP_AUTH_USER) == 0 && strcmp(webUiPass, SETUP_AUTH_PASS) == 0;
+}
+
+static bool setupRouteAllowed() {
+  String uri = server.uri();
+  return uri == "/" || uri == "/status" || uri == "/interface";
+}
+
+static void saveInterfaceSettings(const String& deviceName, const String& hostname, const String& apSsid, uint8_t apChannel, const String& user, const String& pass) {
+  String cleanDeviceName = deviceName;
+  String cleanHostname = hostname;
+  String cleanApSsid = apSsid;
+  cleanDeviceName.trim();
+  cleanHostname.trim();
+  cleanApSsid.trim();
+  if (cleanDeviceName.length()) {
+    strlcpy(interfaceDeviceName, cleanDeviceName.c_str(), sizeof(interfaceDeviceName));
+    prefs.putString("devName", interfaceDeviceName);
+  }
+  if (!cleanHostname.length()) cleanHostname = interfaceDeviceName;
+  strlcpy(interfaceHostname, cleanHostname.c_str(), sizeof(interfaceHostname));
+  prefs.putString("hostname", interfaceHostname);
+  if (!cleanApSsid.length()) cleanApSsid = interfaceDeviceName;
+  strlcpy(interfaceApSsid, cleanApSsid.c_str(), sizeof(interfaceApSsid));
+  prefs.putString("apSsid", interfaceApSsid);
+  interfaceApChannel = constrain(apChannel, (uint8_t)1, (uint8_t)13);
+  prefs.putUChar("apChannel", interfaceApChannel);
+  if (user.length()) {
+    strlcpy(webUiUser, user.c_str(), sizeof(webUiUser));
+    prefs.putString("webUser", webUiUser);
+  }
+  if (pass.length()) {
+    strlcpy(interfaceApPass, pass.c_str(), sizeof(interfaceApPass));
+    prefs.putString("apPass", interfaceApPass);
+    strlcpy(webUiPass, pass.c_str(), sizeof(webUiPass));
+    prefs.putString("webPass", webUiPass);
+  }
+}
+
 static void startWifiAp() {
   WiFi.mode(WIFI_AP);
-  WiFi.softAPsetHostname(DEVICE_HOSTNAME);
-  bool ok = WiFi.softAP(INTERFACE_AP_SSID, INTERFACE_AP_PASS, WIFI_AP_CHANNEL);
+  WiFi.softAPsetHostname(interfaceHostname);
+  bool ok = WiFi.softAP(interfaceApSsid, interfaceApPass, interfaceApChannel);
   if (ok) {
     server.begin();
     wifiEnabled = true;
@@ -1279,7 +1376,7 @@ static void startWifiLocal() {
     return;
   }
   WiFi.mode(WIFI_STA);
-  WiFi.setHostname(DEVICE_HOSTNAME);
+  WiFi.setHostname(interfaceHostname);
   WiFi.begin(wifiLocalSsid, wifiLocalPass);
   server.begin();
   wifiEnabled = true;
@@ -3855,7 +3952,7 @@ static void refreshScreenUi() {
     snprintf(wifiStateText, sizeof(wifiStateText),
              "Status: %s\nSSID: %s\nIP: %s",
              wifiState,
-             wifiEnabled ? (wifiApMode ? INTERFACE_AP_SSID : wifiLocalSsid) : "-",
+             wifiEnabled ? (wifiApMode ? interfaceApSsid : wifiLocalSsid) : "-",
              wifiIp.c_str());
     lv_label_set_text(lblWifiState, wifiStateText);
   }
@@ -3886,7 +3983,7 @@ static void refreshScreenUi() {
              "Port: 80",
              wifiApMode ? "AP" : "Local",
              wifiEnabled ? "on" : "off",
-             wifiEnabled ? (wifiApMode ? INTERFACE_AP_SSID : wifiLocalSsid) : "-",
+             wifiEnabled ? (wifiApMode ? interfaceApSsid : wifiLocalSsid) : "-",
              wifiIp.c_str(),
              wifiMac.c_str(),
              (wifiEnabled && wifiApMode) ? WiFi.softAPgetStationNum() : 0,
@@ -4329,6 +4426,8 @@ static void updateChannelRecord(const meshtastic_Channel& channel) {
   record.uplink = channel.has_settings && channel.settings.uplink_enabled;
   record.downlink = channel.has_settings && channel.settings.downlink_enabled;
   record.pskSize = channel.has_settings ? channel.settings.psk.size : 0;
+  record.hasPositionPrecision = channel.has_settings && channel.settings.has_module_settings;
+  record.positionPrecision = record.hasPositionPrecision ? channel.settings.module_settings.position_precision : 0;
   refreshPrivateChannelIndex();
 
   char line[96];
@@ -5025,7 +5124,7 @@ static bool sendHeltecCommit() {
   return ok;
 }
 
-static bool sendHeltecChannelConfig(uint8_t index, const String& role, const String& name, const String& psk, bool uplink, bool downlink) {
+static bool sendHeltecChannelConfig(uint8_t index, const String& role, const String& name, const String& psk, bool uplink, bool downlink, int32_t positionPrecision) {
   meshtastic_AdminMessage admin = meshtastic_AdminMessage_init_zero;
   admin.which_payload_variant = meshtastic_AdminMessage_set_channel_tag;
   admin.set_channel.index = min<uint8_t>(index, 7);
@@ -5038,6 +5137,10 @@ static bool sendHeltecChannelConfig(uint8_t index, const String& role, const Str
     if (psk.length()) {
       admin.set_channel.settings.psk.size = min<size_t>(psk.length(), sizeof(admin.set_channel.settings.psk.bytes));
       memcpy(admin.set_channel.settings.psk.bytes, psk.c_str(), admin.set_channel.settings.psk.size);
+    }
+    if (positionPrecision >= 0) {
+      admin.set_channel.settings.has_module_settings = true;
+      admin.set_channel.settings.module_settings.position_precision = min<uint32_t>((uint32_t)positionPrecision, 32);
     }
   }
   bool ok = sendLocalAdmin(admin);
@@ -5223,6 +5326,10 @@ static void decodeFromRadio(const uint8_t* payload, size_t len) {
     char line[96];
     snprintf(line, sizeof(line), "[radio] connected as !%08lX\n", (unsigned long)stats.myNodeNum);
     appendLine(eventLog, LOG_SIZE, line);
+    if (forcedOwnerNamePending && stats.myNodeNum) {
+      forcedOwnerNamePending = false;
+      sendHeltecOwnerName(interfaceDeviceName, String(interfaceDeviceName).substring(0, min<size_t>(4, strlen(interfaceDeviceName))));
+    }
   } else if (fromRadio.which_payload_variant == meshtastic_FromRadio_node_info_tag) {
     nodeInfoPackets++;
     NodeRecord* node = findOrCreateNode(fromRadio.node_info.num);
@@ -5371,7 +5478,13 @@ static String jsonEscape(const char* text) {
 }
 
 static bool requireWebAuth() {
-  if (server.authenticate(WEBUI_USER, WEBUI_PASS)) return true;
+  if (server.authenticate(webUiUser, webUiPass)) {
+    if (usingDefaultWebCredentials() && !setupRouteAllowed()) {
+      server.send(403, "text/plain", "setup required");
+      return false;
+    }
+    return true;
+  }
   server.requestAuthentication(BASIC_AUTH, "Heltec LoRa Interface");
   return false;
 }
@@ -5385,7 +5498,13 @@ static String buildStatusJson() {
   String wifiIp = wifiEnabled ? (wifiApMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString()) : String("off");
   const esp_partition_t* runningPartition = esp_ota_get_running_partition();
   String json = "{";
-  json += "\"title\":\"" + String(UI::Labels::AppTitle) + "\",";
+  json += "\"title\":\"" + jsonEscape(interfaceDeviceName) + "\",";
+  json += "\"deviceName\":\"" + jsonEscape(interfaceDeviceName) + "\",";
+  json += "\"hostname\":\"" + jsonEscape(interfaceHostname) + "\",";
+  json += "\"apSsid\":\"" + jsonEscape(interfaceApSsid) + "\",";
+  json += "\"apChannel\":" + String(interfaceApChannel) + ",";
+  json += "\"webUser\":\"" + jsonEscape(webUiUser) + "\",";
+  json += "\"setupRequired\":" + String(usingDefaultWebCredentials() ? "true" : "false") + ",";
   json += "\"firmwareVersion\":\"" + String(FIRMWARE_VERSION) + "\",";
   json += "\"buildDate\":\"" + String(__DATE__) + "\",";
   json += "\"buildTime\":\"" + String(__TIME__) + "\",";
@@ -5536,7 +5655,9 @@ static String buildStatusJson() {
     json += "\"name\":\"" + jsonEscape(channels[i].name) + "\",";
     json += "\"uplink\":" + String(channels[i].uplink ? "true" : "false") + ",";
     json += "\"downlink\":" + String(channels[i].downlink ? "true" : "false") + ",";
-    json += "\"pskSize\":" + String(channels[i].pskSize) + "}";
+    json += "\"pskSize\":" + String(channels[i].pskSize) + ",";
+    json += "\"hasPositionPrecision\":" + String(channels[i].hasPositionPrecision ? "true" : "false") + ",";
+    json += "\"positionPrecision\":" + String(channels[i].positionPrecision) + "}";
   }
   json += "],";
   json += "\"nodes\":[";
@@ -5642,7 +5763,11 @@ static void handleRoot() {
 }
 
 static void handleFirmwareUpload() {
-  if (!server.authenticate(WEBUI_USER, WEBUI_PASS)) {
+  if (!server.authenticate(webUiUser, webUiPass)) {
+    otaUploadOk = false;
+    return;
+  }
+  if (usingDefaultWebCredentials()) {
     otaUploadOk = false;
     return;
   }
@@ -5717,6 +5842,7 @@ void setup() {
   localBattery.calibrationOffsetTenths = prefs.getShort("batTrim10", 0);
   localBattery.calibrationOffsetTenths = constrain(localBattery.calibrationOffsetTenths, -120, 120);
   localBattery.calibrationOffsetMv = 0;
+  loadInterfaceSettings();
   applyFontMode();
   Serial.println("[boot] init screen");
   initScreen();
@@ -5724,10 +5850,10 @@ void setup() {
   initSdStorage();
 
   char bootLine[96];
-  snprintf(bootLine, sizeof(bootLine), "[boot] %s starting\n", DEVICE_NAME);
+  snprintf(bootLine, sizeof(bootLine), "[boot] %s starting\n", interfaceDeviceName);
   appendLine(eventLog, LOG_SIZE, bootLine);
-  strlcpy(wifiLocalSsid, "SOB", sizeof(wifiLocalSsid));
-  strlcpy(wifiLocalPass, "CestLaVie629!", sizeof(wifiLocalPass));
+  copyPreferenceString("wifiSsid", wifiLocalSsid, sizeof(wifiLocalSsid), "");
+  copyPreferenceString("wifiPass", wifiLocalPass, sizeof(wifiLocalPass), "");
   if (taWifiSsid) lv_textarea_set_text(taWifiSsid, wifiLocalSsid);
   if (taWifiPass) lv_textarea_set_text(taWifiPass, wifiLocalPass);
   if (swWifiApMode) {
@@ -5741,6 +5867,32 @@ void setup() {
   server.on("/send", HTTP_POST, handleSend);
   server.on("/serial_cmd", HTTP_POST, handleSerialCmd);
   server.on("/firmware", HTTP_POST, handleFirmwareUpdateDone, handleFirmwareUpload);
+  server.on("/interface", HTTP_POST, []() {
+    if (!requireWebAuth()) return;
+    String newPass = server.arg("webPass");
+    if (usingDefaultWebCredentials() && newPass.length() < 8) {
+      server.send(400, "text/plain", "new password required");
+      return;
+    }
+    if (newPass.length() && newPass.length() < 8) {
+      server.send(400, "text/plain", "password must be at least 8 characters");
+      return;
+    }
+    bool wasEnabled = wifiEnabled;
+    if (wasEnabled) stopWifi();
+    saveInterfaceSettings(server.arg("deviceName"),
+                          server.arg("hostname"),
+                          server.arg("apSsid"),
+                          (uint8_t)server.arg("apChannel").toInt(),
+                          server.arg("webUser"),
+                          newPass);
+    if (server.arg("deviceName").length()) {
+      sendHeltecOwnerName(server.arg("deviceName"), server.arg("deviceName").substring(0, min<size_t>(4, server.arg("deviceName").length())));
+    }
+    if (wasEnabled) startWifi();
+    appendLine(eventLog, LOG_SIZE, "[web] interface settings saved\n");
+    server.send(200, "text/plain", "interface settings saved");
+  });
   server.on("/sd/events", HTTP_GET, []() { handleSdDownload(SD_EVENTS_PATH, "events.log", "text/plain"); });
   server.on("/sd/public", HTTP_GET, []() { handleSdDownload(SD_PUBLIC_CHAT_PATH, "public_chat.log", "text/plain"); });
   server.on("/sd/private", HTTP_GET, []() { handleSdDownload(SD_FAMILY_CHAT_PATH, "private_family_chat.log", "text/plain"); });
@@ -5840,7 +5992,8 @@ void setup() {
                                       server.arg("name"),
                                       server.arg("psk"),
                                       server.arg("uplink") == "1",
-                                      server.arg("downlink") == "1");
+                                      server.arg("downlink") == "1",
+                                      server.hasArg("positionPrecision") ? server.arg("positionPrecision").toInt() : -1);
     server.send(ok ? 200 : 500, "text/plain", ok ? "channel sent" : "channel failed");
   });
   Serial.println("[boot] wifi");

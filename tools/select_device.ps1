@@ -3,9 +3,11 @@ param(
   [ValidateSet('jjs-node', 'babs-node')]
   [string] $Name,
 
-  [string] $ApPass = "12345678",
+  [string] $ApPass = "setup1234",
 
-  [string] $WebPass = "admin"
+  [string] $WebPass = $ApPass,
+
+  [switch] $ForceInterfaceSettings
 )
 
 $channels = @{
@@ -18,6 +20,7 @@ $configPath = Join-Path $configDir 'device_config.local.h'
 New-Item -ItemType Directory -Force $configDir | Out-Null
 
 $channel = $channels[$Name]
+$forceValue = if ($ForceInterfaceSettings) { 1 } else { 0 }
 @"
 #pragma once
 
@@ -26,7 +29,9 @@ $channel = $channels[$Name]
 #define INTERFACE_AP_SSID DEVICE_NAME
 #define INTERFACE_AP_PASS "$ApPass"
 #define WIFI_AP_CHANNEL $channel
+#define WEBUI_AUTH_USER "admin"
 #define WEBUI_AUTH_PASS "$WebPass"
+#define FORCE_INTERFACE_SETTINGS $forceValue
 "@ | Set-Content -LiteralPath $configPath -Encoding ascii
 
 Write-Host "Selected $Name on AP channel $channel"

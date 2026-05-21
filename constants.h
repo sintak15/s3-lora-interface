@@ -6,10 +6,10 @@
 #include "config/device_config.example.h"
 #endif
 
-#define FIRMWARE_VERSION "v0.1.0"
+#define FIRMWARE_VERSION "v0.1.9"
 
 #ifndef DEVICE_NAME
-#define DEVICE_NAME "jjs-node"
+#define DEVICE_NAME "s3-lora-interface"
 #endif
 
 #ifndef DEVICE_HOSTNAME
@@ -59,7 +59,7 @@
 #endif
 
 #ifndef INTERFACE_AP_PASS
-#define INTERFACE_AP_PASS "12345678"
+#define INTERFACE_AP_PASS "setup1234"
 #endif
 
 #ifndef WIFI_AP_CHANNEL
@@ -67,9 +67,20 @@
 #endif
 
 #ifndef WEBUI_AUTH_USER
-#define WEBUI_AUTH_USER "sintak"
+#define WEBUI_AUTH_USER "admin"
 #endif
 
 #ifndef WEBUI_AUTH_PASS
-#define WEBUI_AUTH_PASS "admin"
+#define WEBUI_AUTH_PASS "setup1234"
 #endif
+
+#ifndef FORCE_INTERFACE_SETTINGS
+#define FORCE_INTERFACE_SETTINGS 0
+#endif
+
+
+
+
+
+
+
