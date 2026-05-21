@@ -1,6 +1,6 @@
 C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\libraries\lvgl\misc\lv_mem.c.o: \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\misc\lv_mem.c \
- constants.h \
+ constants.h config/device_config.local.h \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\misc\lv_mem.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/lv_conf_internal.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/lv_conf_kconfig.h \
@@ -33,4 +33,9 @@ C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\libraries\lvgl\misc
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/core/lv_obj_pos.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/misc/lv_area.h \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\misc\lv_assert.h \
- C:\Users\justi\Documents\Arduino\libraries\lvgl\src\misc\lv_log.h
+ C:\Users\justi\Documents\Arduino\libraries\lvgl\src\misc\lv_log.h \
+ C:\Users\justi\AppData\Local\Arduino15\packages\esp32\tools\esp32s3-libs\3.3.7/include/heap/include/esp_heap_caps.h \
+ C:\Users\justi\AppData\Local\Arduino15\packages\esp32\tools\esp32s3-libs\3.3.7/include/heap/include/multi_heap.h \
+ C:\Users\justi\AppData\Local\Arduino15\packages\esp32\tools\esp32s3-libs\3.3.7/include/esp_common/include/esp_err.h \
+ C:\Users\justi\AppData\Local\Arduino15\packages\esp32\tools\esp32s3-libs\3.3.7/include/newlib/platform_include/stdio.h \
+ C:\Users\justi\AppData\Local\Arduino15\packages\esp32\tools\esp32s3-libs\3.3.7/include/esp_common/include/esp_compiler.h

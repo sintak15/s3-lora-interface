@@ -1,6 +1,6 @@
 C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\libraries\lvgl\extra\libs\tiny_ttf\lv_tiny_ttf.c.o: \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\extra\libs\tiny_ttf\lv_tiny_ttf.c \
- constants.h \
+ constants.h config/device_config.local.h \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\extra\libs\tiny_ttf\lv_tiny_ttf.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/lvgl.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/lvgl.h \

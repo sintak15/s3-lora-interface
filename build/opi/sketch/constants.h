@@ -1,7 +1,21 @@
 #line 1 "C:\\Users\\justi\\Documents\\Arduino\\s3-lora-interface\\constants.h"
 #pragma once
 
+#if __has_include("config/device_config.local.h")
+#include "config/device_config.local.h"
+#else
+#include "config/device_config.example.h"
+#endif
+
 #define FIRMWARE_VERSION "v0.1.0"
+
+#ifndef DEVICE_NAME
+#define DEVICE_NAME "jjs-node"
+#endif
+
+#ifndef DEVICE_HOSTNAME
+#define DEVICE_HOSTNAME DEVICE_NAME
+#endif
 
 // UART connection from this ESP32-S3 interface board to the Heltec LoRa unit.
 // Cross TX/RX between boards: interface TX -> Heltec RX, interface RX -> Heltec TX.
@@ -25,6 +39,10 @@
 #define TOUCH_SDA 16
 #define TOUCH_SCL 15
 
+// Optional MAX17048 fuel gauge on the shared CYD I2C bus.
+// Wire MAX17048 SDA -> GPIO16 and SCL -> GPIO15.
+#define MAX17048_ADDR 0x36
+
 // Built-in MicroSD socket on the LCDWiki 2.8" ESP32-S3 display.
 // The socket uses the ESP32-S3 SDMMC/SDIO peripheral, not the TFT SPI bus.
 #define SD_CLK_PIN 38
@@ -36,11 +54,23 @@
 #define SD_MMC_ONE_BIT false
 #define SD_MMC_FREQ 20000
 
-// Local battery sense on the ESP32-S3 display board.
-// The board's divider presents about half the LiPo voltage to the ADC.
-#define BATT_ADC_PIN 9
-#define BATT_ADC_MULTIPLIER 2.0f
-
 // Browser interface served by this board.
-#define INTERFACE_AP_SSID "Heltec-LoRa-Interface"
+#ifndef INTERFACE_AP_SSID
+#define INTERFACE_AP_SSID DEVICE_NAME
+#endif
+
+#ifndef INTERFACE_AP_PASS
 #define INTERFACE_AP_PASS "12345678"
+#endif
+
+#ifndef WIFI_AP_CHANNEL
+#define WIFI_AP_CHANNEL 6
+#endif
+
+#ifndef WEBUI_AUTH_USER
+#define WEBUI_AUTH_USER "sintak"
+#endif
+
+#ifndef WEBUI_AUTH_PASS
+#define WEBUI_AUTH_PASS "admin"
+#endif

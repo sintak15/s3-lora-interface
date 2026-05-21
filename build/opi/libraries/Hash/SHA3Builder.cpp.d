@@ -1,6 +1,6 @@
 C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\libraries\Hash\SHA3Builder.cpp.o: \
  C:\Users\justi\AppData\Local\Arduino15\packages\esp32\hardware\esp32\3.3.7\libraries\Hash\src\SHA3Builder.cpp \
- constants.h \
+ constants.h config/device_config.local.h \
  C:\Users\justi\AppData\Local\Arduino15\packages\esp32\hardware\esp32\3.3.7\cores\esp32/esp32-hal-log.h \
  C:\Users\justi\AppData\Local\Arduino15\packages\esp32\tools\esp32s3-libs\3.3.7/include/esp_timer/include/esp_timer.h \
  C:\Users\justi\AppData\Local\Arduino15\packages\esp32\tools\esp32s3-libs\3.3.7/include/newlib/platform_include/stdio.h \

@@ -1,6 +1,6 @@
 C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\libraries\lvgl\extra\others\monkey\lv_monkey.c.o: \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\extra\others\monkey\lv_monkey.c \
- constants.h \
+ constants.h config/device_config.local.h \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\extra\others\monkey\lv_monkey.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/lvgl.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/lvgl.h \

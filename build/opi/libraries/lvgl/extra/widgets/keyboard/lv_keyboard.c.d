@@ -1,6 +1,6 @@
 C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\libraries\lvgl\extra\widgets\keyboard\lv_keyboard.c.o: \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\extra\widgets\keyboard\lv_keyboard.c \
- constants.h \
+ constants.h config/device_config.local.h \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\extra\widgets\keyboard\lv_keyboard.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/widgets/lv_btnmatrix.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/lv_conf_internal.h \

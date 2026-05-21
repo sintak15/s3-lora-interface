@@ -1,6 +1,6 @@
 C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\libraries\lvgl\misc\lv_anim_timeline.c.o: \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\misc\lv_anim_timeline.c \
- constants.h \
+ constants.h config/device_config.local.h \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\misc\lv_anim_timeline.h \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\misc\lv_anim.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/lv_conf_internal.h \

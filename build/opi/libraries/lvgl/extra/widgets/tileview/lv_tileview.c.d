@@ -1,6 +1,6 @@
 C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\libraries\lvgl\extra\widgets\tileview\lv_tileview.c.o: \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\extra\widgets\tileview\lv_tileview.c \
- constants.h \
+ constants.h config/device_config.local.h \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\extra\widgets\tileview\lv_tileview.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/core/lv_obj.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/lv_conf_internal.h \

@@ -1,6 +1,6 @@
 C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\libraries\lvgl\extra\layouts\flex\lv_flex.c.o: \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\extra\layouts\flex\lv_flex.c \
- constants.h \
+ constants.h config/device_config.local.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/extra/layouts/lv_layouts.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/extra/layouts/flex/lv_flex.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/core/lv_obj.h \

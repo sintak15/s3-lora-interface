@@ -1,6 +1,6 @@
 C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\libraries\lvgl\extra\widgets\win\lv_win.c.o: \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\extra\widgets\win\lv_win.c \
- constants.h \
+ constants.h config/device_config.local.h \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\extra\widgets\win\lv_win.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/lvgl.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/lvgl.h \

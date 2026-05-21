@@ -1,6 +1,6 @@
 C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\sketch\s3-lora-interface.ino.cpp.o: \
  C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\sketch\s3-lora-interface.ino.cpp \
- constants.h \
+ constants.h config/device_config.local.h \
  C:\Users\justi\AppData\Local\Arduino15\packages\esp32\hardware\esp32\3.3.7\cores\esp32/Arduino.h \
  C:\Users\justi\AppData\Local\Arduino15\packages\esp32\tools\esp32s3-libs\3.3.7/include/newlib/platform_include/stdio.h \
  C:\Users\justi\AppData\Local\Arduino15\packages\esp32\tools\esp32s3-libs\3.3.7/qio_opi/include/sdkconfig.h \
@@ -225,6 +225,11 @@ C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\sketch\s3-lora-inte
  C:\Users\justi\AppData\Local\Arduino15\packages\esp32\hardware\esp32\3.3.7\libraries\WebServer\src/Uri.h \
  C:\Users\justi\AppData\Local\Arduino15\packages\esp32\hardware\esp32\3.3.7\libraries\WebServer\src/middleware/Middleware.h \
  C:\Users\justi\AppData\Local\Arduino15\packages\esp32\hardware\esp32\3.3.7\libraries\WebServer\src/detail/RequestHandler.h \
+ C:\Users\justi\AppData\Local\Arduino15\packages\esp32\hardware\esp32\3.3.7\libraries\Update\src/Update.h \
+ C:\Users\justi\AppData\Local\Arduino15\packages\esp32\hardware\esp32\3.3.7\cores\esp32/MD5Builder.h \
+ C:\Users\justi\AppData\Local\Arduino15\packages\esp32\tools\esp32s3-libs\3.3.7/include/esp_rom/include/esp_rom_md5.h \
+ C:\Users\justi\AppData\Local\Arduino15\packages\esp32\hardware\esp32\3.3.7\cores\esp32/HashBuilder.h \
+ C:\Users\justi\AppData\Local\Arduino15\packages\esp32\hardware\esp32\3.3.7\cores\esp32/HEXBuilder.h \
  C:\Users\justi\AppData\Local\Arduino15\packages\esp32\hardware\esp32\3.3.7\libraries\Preferences\src/Preferences.h \
  C:\Users\justi\AppData\Local\Arduino15\packages\esp32\tools\esp32s3-libs\3.3.7/include/esp_wifi/include/esp_wifi.h \
  C:\Users\justi\AppData\Local\Arduino15\packages\esp32\tools\esp32s3-libs\3.3.7/include/esp_wifi/include/esp_wifi_crypto_types.h \
@@ -232,6 +237,11 @@ C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\sketch\s3-lora-inte
  C:\Users\justi\AppData\Local\Arduino15\packages\esp32\tools\esp32s3-libs\3.3.7/include/esp_netif/include/esp_netif.h \
  C:\Users\justi\AppData\Local\Arduino15\packages\esp32\tools\esp32s3-libs\3.3.7/include/esp_netif/include/esp_netif_types.h \
  C:\Users\justi\AppData\Local\Arduino15\packages\esp32\tools\esp32s3-libs\3.3.7/include/esp_netif/include/esp_netif_defaults.h \
+ C:\Users\justi\AppData\Local\Arduino15\packages\esp32\tools\esp32s3-libs\3.3.7/include/app_update/include/esp_ota_ops.h \
+ C:\Users\justi\AppData\Local\Arduino15\packages\esp32\tools\esp32s3-libs\3.3.7/include/esp_app_format/include/esp_app_desc.h \
+ C:\Users\justi\AppData\Local\Arduino15\packages\esp32\tools\esp32s3-libs\3.3.7/include/esp_bootloader_format/include/esp_bootloader_desc.h \
+ C:\Users\justi\AppData\Local\Arduino15\packages\esp32\tools\esp32s3-libs\3.3.7/include/bootloader_support/include/esp_flash_partitions.h \
+ C:\Users\justi\AppData\Local\Arduino15\packages\esp32\tools\esp32s3-libs\3.3.7/include/esp_common/include/esp_types.h \
  C:\Users\justi\AppData\Local\Arduino15\packages\esp32\hardware\esp32\3.3.7\libraries\Wire\src/Wire.h \
  C:\Users\justi\AppData\Local\Arduino15\packages\esp32\hardware\esp32\3.3.7\cores\esp32/esp32-hal.h \
  C:\Users\justi\AppData\Local\Arduino15\packages\esp32\hardware\esp32\3.3.7\cores\esp32/esp32-hal-log.h \
@@ -490,6 +500,7 @@ C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\sketch\s3-lora-inte
  C:\Users\justi\Documents\Arduino\libraries\nanopb-master/pb.h \
  C:\Users\justi\Documents\Arduino\libraries\nanopb-master/pb_encode.h \
  C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\sketch\constants.h \
+ C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\sketch\config/device_config.local.h \
  C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\sketch\src/meshtastic/admin.pb.h \
  C:\Users\justi\Documents\Arduino\libraries\nanopb-master/pb.h \
  C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\sketch\src/meshtastic/channel.pb.h \

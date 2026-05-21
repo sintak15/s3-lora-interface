@@ -1,6 +1,6 @@
 C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\libraries\lvgl\extra\libs\sjpg\tjpgd.c.o: \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\extra\libs\sjpg\tjpgd.c \
- constants.h \
+ constants.h config/device_config.local.h \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\extra\libs\sjpg\tjpgd.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/lv_conf_internal.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/lv_conf_kconfig.h \

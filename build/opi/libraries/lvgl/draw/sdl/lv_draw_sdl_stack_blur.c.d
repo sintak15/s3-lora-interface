@@ -1,6 +1,6 @@
 C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\libraries\lvgl\draw\sdl\lv_draw_sdl_stack_blur.c.o: \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\draw\sdl\lv_draw_sdl_stack_blur.c \
- constants.h \
+ constants.h config/device_config.local.h \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\draw\sdl\lv_draw_sdl_stack_blur.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/lv_conf_internal.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/lv_conf_kconfig.h \

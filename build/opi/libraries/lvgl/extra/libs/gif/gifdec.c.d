@@ -1,6 +1,6 @@
 C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\libraries\lvgl\extra\libs\gif\gifdec.c.o: \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\extra\libs\gif\gifdec.c \
- constants.h \
+ constants.h config/device_config.local.h \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\extra\libs\gif\gifdec.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/misc/lv_fs.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/lv_conf_internal.h \

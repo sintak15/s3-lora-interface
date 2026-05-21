@@ -1,6 +1,6 @@
 C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\libraries\lvgl\draw\sw\lv_draw_sw_gradient.c.o: \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\draw\sw\lv_draw_sw_gradient.c \
- constants.h \
+ constants.h config/device_config.local.h \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\draw\sw\lv_draw_sw_gradient.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/misc/lv_color.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/lv_conf_internal.h \

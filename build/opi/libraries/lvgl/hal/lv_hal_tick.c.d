@@ -1,6 +1,6 @@
 C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\libraries\lvgl\hal\lv_hal_tick.c.o: \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\hal\lv_hal_tick.c \
- constants.h \
+ constants.h config/device_config.local.h \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\hal\lv_hal_tick.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/lv_conf_internal.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/lv_conf_kconfig.h \

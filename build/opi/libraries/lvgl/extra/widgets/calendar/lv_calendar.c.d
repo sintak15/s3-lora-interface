@@ -1,6 +1,6 @@
 C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\libraries\lvgl\extra\widgets\calendar\lv_calendar.c.o: \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\extra\widgets\calendar\lv_calendar.c \
- constants.h \
+ constants.h config/device_config.local.h \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\extra\widgets\calendar\lv_calendar.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/widgets/lv_btnmatrix.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/lv_conf_internal.h \

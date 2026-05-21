@@ -1,6 +1,6 @@
 C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\libraries\lvgl\extra\libs\ffmpeg\lv_ffmpeg.c.o: \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\extra\libs\ffmpeg\lv_ffmpeg.c \
- constants.h \
+ constants.h config/device_config.local.h \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\extra\libs\ffmpeg\lv_ffmpeg.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/lvgl.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/lvgl.h \

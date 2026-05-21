@@ -1,6 +1,6 @@
 C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\core\chip-debug-report.cpp.o: \
  C:\Users\justi\AppData\Local\Arduino15\packages\esp32\hardware\esp32\3.3.7\cores\esp32\chip-debug-report.cpp \
- constants.h \
+ constants.h config/device_config.local.h \
  C:\Users\justi\AppData\Local\Arduino15\packages\esp32\tools\esp32s3-libs\3.3.7/include/heap/include/esp_heap_caps.h \
  C:\Users\justi\AppData\Local\Arduino15\packages\esp32\tools\esp32s3-libs\3.3.7/include/heap/include/multi_heap.h \
  C:\Users\justi\AppData\Local\Arduino15\packages\esp32\tools\esp32s3-libs\3.3.7/include/esp_common/include/esp_err.h \

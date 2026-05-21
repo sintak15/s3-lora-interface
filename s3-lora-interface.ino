@@ -2284,12 +2284,13 @@ static void directSelectedNode() {
 
 static void showSelectedNodeOnMap() {
   if (!selectedNodeNum) return;
+  NodeRecord* selected = findNode(selectedNodeNum);
+  if (!selected || !selected->hasPosition) return;
   mapNearbyMode = true;
   mapFocusSelectedNode = true;
-  showPage(pageGps);
   mapRenderPending = true;
   lastMapUiRefreshMs = 0;
-  refreshMapUi();
+  showPage(pageGps);
 }
 
 static void showNodeDetail(uint32_t nodeNum) {
@@ -3381,7 +3382,7 @@ static void refreshMapUi() {
   const NodeRecord* selected = findNode(selectedNodeNum);
   const bool hasLocalFix = gpsStats.valid;
   const bool focusSelected = mapFocusSelectedNode && selected && selected->hasPosition;
-  const bool hasMapCenter = hasLocalFix || focusSelected;
+  const bool hasMapCenter = focusSelected || hasLocalFix;
   double centerLat = focusSelected ? selected->latitude : gpsStats.latitude;
   double centerLon = focusSelected ? selected->longitude : gpsStats.longitude;
   for (size_t i = 0; i < MAP_DOT_COUNT; i++) {
@@ -3395,10 +3396,11 @@ static void refreshMapUi() {
     char waitingText[160];
     if (mapCanvasCached) {
       snprintf(waitingText, sizeof(waitingText),
-               "Waiting for CYD GPS fix...\n"
+               "%s\n"
                "Showing cached %.5f, %.5f z%d\n"
                "Cache: %s\n"
                "RX GPIO%d: %lu bytes",
+               mapFocusSelectedNode ? "Selected node has no GPS fix..." : "Waiting for CYD GPS fix...",
                cachedMapLat,
                cachedMapLon,
                cachedMapZoom,
@@ -3407,9 +3409,10 @@ static void refreshMapUi() {
                (unsigned long)gpsBytesFromLocal);
     } else {
       snprintf(waitingText, sizeof(waitingText),
-               "Waiting for CYD GPS fix...\n"
+               "%s\n"
                "Cache: %s\n"
                "RX GPIO%d: %lu bytes\nSD maps: %s",
+               mapFocusSelectedNode ? "Selected node has no GPS fix..." : "Waiting for CYD GPS fix...",
                mapCacheStatus,
                GPS_RX_PIN,
                (unsigned long)gpsBytesFromLocal,

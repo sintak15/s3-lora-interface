@@ -1,6 +1,6 @@
 C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\libraries\lvgl\misc\lv_ll.c.o: \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\misc\lv_ll.c \
- constants.h \
+ constants.h config/device_config.local.h \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\misc\lv_ll.h \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\misc\lv_mem.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/lv_conf_internal.h \

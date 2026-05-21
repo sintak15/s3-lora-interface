@@ -1,6 +1,6 @@
 C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\libraries\lvgl\draw\lv_img_cache.c.o: \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\draw\lv_img_cache.c \
- constants.h \
+ constants.h config/device_config.local.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/misc/lv_assert.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/lv_conf_internal.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/lv_conf_kconfig.h \

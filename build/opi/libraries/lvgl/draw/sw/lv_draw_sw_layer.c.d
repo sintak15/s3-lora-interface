@@ -1,6 +1,6 @@
 C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\libraries\lvgl\draw\sw\lv_draw_sw_layer.c.o: \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\draw\sw\lv_draw_sw_layer.c \
- constants.h \
+ constants.h config/device_config.local.h \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\draw\sw\lv_draw_sw.h \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\draw\sw\lv_draw_sw_blend.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/misc/lv_color.h \

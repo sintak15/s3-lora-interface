@@ -1,6 +1,6 @@
 C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\libraries\WiFi\WiFiMulti.cpp.o: \
  C:\Users\justi\AppData\Local\Arduino15\packages\esp32\hardware\esp32\3.3.7\libraries\WiFi\src\WiFiMulti.cpp \
- constants.h \
+ constants.h config/device_config.local.h \
  C:\Users\justi\AppData\Local\Arduino15\packages\esp32\hardware\esp32\3.3.7\libraries\WiFi\src\WiFiMulti.h \
  C:\Users\justi\AppData\Local\Arduino15\packages\esp32\tools\esp32s3-libs\3.3.7/include/soc/esp32s3/include/soc/soc_caps.h \
  C:\Users\justi\AppData\Local\Arduino15\packages\esp32\tools\esp32s3-libs\3.3.7/qio_opi/include/sdkconfig.h \

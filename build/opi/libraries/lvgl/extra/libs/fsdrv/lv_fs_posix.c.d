@@ -1,6 +1,7 @@
 C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\libraries\lvgl\extra\libs\fsdrv\lv_fs_posix.c.o: \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\extra\libs\fsdrv\lv_fs_posix.c \
- constants.h C:/Users/justi/Documents/Arduino/libraries/lvgl/src/lvgl.h \
+ constants.h config/device_config.local.h \
+ C:/Users/justi/Documents/Arduino/libraries/lvgl/src/lvgl.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/lvgl.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/misc/lv_log.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/lv_conf_internal.h \

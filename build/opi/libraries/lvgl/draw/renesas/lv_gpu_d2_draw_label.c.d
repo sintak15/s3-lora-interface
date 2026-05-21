@@ -1,6 +1,6 @@
 C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\libraries\lvgl\draw\renesas\lv_gpu_d2_draw_label.c.o: \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\draw\renesas\lv_gpu_d2_draw_label.c \
- constants.h \
+ constants.h config/device_config.local.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/draw/lv_draw_label.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/misc/lv_bidi.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/lv_conf_internal.h \

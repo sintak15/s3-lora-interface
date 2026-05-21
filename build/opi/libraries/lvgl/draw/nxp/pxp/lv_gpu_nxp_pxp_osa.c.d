@@ -1,6 +1,6 @@
 C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\libraries\lvgl\draw\nxp\pxp\lv_gpu_nxp_pxp_osa.c.o: \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\draw\nxp\pxp\lv_gpu_nxp_pxp_osa.c \
- constants.h \
+ constants.h config/device_config.local.h \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\draw\nxp\pxp\lv_gpu_nxp_pxp_osa.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/lv_conf_internal.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/lv_conf_kconfig.h \

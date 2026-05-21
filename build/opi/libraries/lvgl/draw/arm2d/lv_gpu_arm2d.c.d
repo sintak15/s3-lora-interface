@@ -1,6 +1,6 @@
 C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\libraries\lvgl\draw\arm2d\lv_gpu_arm2d.c.o: \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\draw\arm2d\lv_gpu_arm2d.c \
- constants.h \
+ constants.h config/device_config.local.h \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\draw\arm2d\lv_gpu_arm2d.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/misc/lv_color.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/lv_conf_internal.h \

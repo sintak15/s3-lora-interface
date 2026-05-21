@@ -1,6 +1,6 @@
 C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\libraries\lvgl\core\lv_disp.c.o: \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\core\lv_disp.c \
- constants.h \
+ constants.h config/device_config.local.h \
  C:\Users\justi\Documents\Arduino\libraries\lvgl\src\core\lv_disp.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/hal/lv_hal.h \
  C:/Users/justi/Documents/Arduino/libraries/lvgl/src/hal/lv_hal_disp.h \
