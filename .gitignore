@@ -1,1 +1,3 @@
 config/device_config.local.h
+build/
+dist/

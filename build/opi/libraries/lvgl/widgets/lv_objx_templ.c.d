@@ -1,3 +1,0 @@
-C:\Users\justi\Documents\Arduino\s3-lora-interface\build\opi\libraries\lvgl\widgets\lv_objx_templ.c.o: \
- C:\Users\justi\Documents\Arduino\libraries\lvgl\src\widgets\lv_objx_templ.c \
- constants.h config/device_config.local.h
