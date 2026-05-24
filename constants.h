@@ -6,7 +6,7 @@
 #include "config/device_config.example.h"
 #endif
 
-#define FIRMWARE_VERSION "v0.1.25"
+#define FIRMWARE_VERSION "v0.1.32"
 
 #ifndef DEVICE_NAME
 #define DEVICE_NAME "s3-lora-interface"
@@ -37,6 +37,35 @@
 #define TOUCH_INT 17
 #define TOUCH_SDA 16
 #define TOUCH_SCL 15
+
+// LCDWiki ESP32-S3 CYD speaker port. The audio enable line is active-low.
+#ifndef CYD_AUDIO_ENABLE_PIN
+#define CYD_AUDIO_ENABLE_PIN 1
+#endif
+
+#ifndef CYD_AUDIO_ENABLE_LEVEL
+#define CYD_AUDIO_ENABLE_LEVEL LOW
+#endif
+
+#ifndef CYD_AUDIO_MCLK_PIN
+#define CYD_AUDIO_MCLK_PIN 4
+#endif
+
+#ifndef CYD_AUDIO_BCLK_PIN
+#define CYD_AUDIO_BCLK_PIN 5
+#endif
+
+#ifndef CYD_AUDIO_DOUT_PIN
+#define CYD_AUDIO_DOUT_PIN 6
+#endif
+
+#ifndef CYD_AUDIO_LRCLK_PIN
+#define CYD_AUDIO_LRCLK_PIN 7
+#endif
+
+#ifndef CYD_AUDIO_CODEC_ADDR
+#define CYD_AUDIO_CODEC_ADDR 0x18
+#endif
 
 // Optional MAX17048 fuel gauge on the shared CYD I2C bus.
 // Wire MAX17048 SDA -> GPIO16 and SCL -> GPIO15.
@@ -77,7 +106,6 @@
 #ifndef FORCE_INTERFACE_SETTINGS
 #define FORCE_INTERFACE_SETTINGS 0
 #endif
-
 
 
 

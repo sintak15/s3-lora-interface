@@ -5,6 +5,7 @@
 #include <Update.h>
 #include <Preferences.h>
 #include <esp_wifi.h>
+#include <esp_system.h>
 #include <esp_heap_caps.h>
 #include <esp_ota_ops.h>
 #include <mbedtls/base64.h>
@@ -12,6 +13,7 @@
 #include <SD_MMC.h>
 #include <FS.h>
 #include <TFT_eSPI.h>
+#include <ESP_I2S.h>
 #include <lvgl.h>
 #include <TinyGPSPlus.h>
 #include <pb_decode.h>
@@ -133,6 +135,19 @@ enum MapCenterMode : uint8_t {
   MAP_CENTER_CURRENT_DEVICE,
   MAP_CENTER_SELECTED_NODE,
   MAP_CENTER_LAST_LOCATION
+};
+
+enum ToneKind : uint8_t {
+  TONE_NONE,
+  TONE_MESSAGE,
+  TONE_DIRECT,
+  TONE_TEST
+};
+
+struct ToneSegment {
+  uint16_t frequency;
+  uint16_t durationMs;
+  uint16_t endFrequency = 0;
 };
 
 struct GpsStats {
@@ -268,14 +283,17 @@ static constexpr uint32_t BROADCAST_ADDR = 0xFFFFFFFFUL;
 #ifndef ONE_TIME_CHANNEL_PROVISION
 #define ONE_TIME_CHANNEL_PROVISION 0
 #endif
-static const char* CHANNEL_PROVISION_PREF_KEY = "chanProv1";
-static const char* CHANNEL_PROVISION_PUBLIC_NAME = "Public";
+static const char* CHANNEL_PROVISION_PREF_KEY = "chanProv2";
+static const char* CHANNEL_PROVISION_PUBLIC_NAME = "MediumFast";
 static const char* CHANNEL_PROVISION_FAMILY_NAME = "Family";
 static const char* CHANNEL_PROVISION_FAMILY_PSK = "0x66e38d5a81f3136d16d6d5cc1f872298";
 static constexpr uint32_t CHANNEL_PROVISION_BOOT_DELAY_MS = 8000;
 static constexpr uint32_t CHANNEL_PROVISION_RETRY_MS = 3000;
 static constexpr uint32_t CHANNEL_PROVISION_STEP_MS = 700;
 static constexpr uint8_t CHANNEL_PROVISION_FINAL_STEP = 10;
+static constexpr uint32_t RADIO_API_HEARTBEAT_MS = 60000;
+static constexpr uint32_t RADIO_API_IDLE_RESYNC_MS = 360000;
+static constexpr uint32_t RADIO_API_RESYNC_COOLDOWN_MS = 300000;
 static const char* SETUP_DEVICE_NAME = "s3-lora-interface";
 static const char* SETUP_AUTH_USER = "admin";
 static const char* SETUP_AUTH_PASS = "setup1234";
@@ -373,6 +391,13 @@ static char serialPeek[96] = "";
 static uint32_t lastTelemetryMs = 0;
 static uint32_t lastConfigRequestMs = 0;
 static uint8_t configRequestCount = 0;
+static uint32_t nextConfigRequestId = 1;
+static uint32_t nextMeshPacketId = 1;
+static uint32_t heartbeatNonce = 0;
+static uint32_t lastHeartbeatMs = 0;
+static uint32_t heartbeatCount = 0;
+static uint32_t lastApiResyncMs = 0;
+static uint32_t apiResyncCount = 0;
 static uint32_t gpsBytesFromLocal = 0;
 static uint32_t lastLocalGpsByteMs = 0;
 static uint32_t lastLocalGpsFixLogMs = 0;
@@ -401,6 +426,21 @@ static uint32_t wifiToggleCount = 0;
 static uint8_t backlightPercent = 10;
 static bool backlightPwmReady = false;
 static bool readableTextMode = false;
+static constexpr uint32_t TONE_SAMPLE_RATE = 16000;
+static constexpr uint8_t TONE_FRAMES_PER_SERVICE = 64;
+static I2SClass toneI2s;
+static bool toneI2sReady = false;
+static bool toneCodecReady = false;
+static bool toneSpeakerEnabled = false;
+static bool toneActive = false;
+static ToneKind activeToneKind = TONE_NONE;
+static ToneKind pendingToneKind = TONE_NONE;
+static uint8_t activeToneSegment = 0;
+static uint32_t activeToneFramesRemaining = 0;
+static uint32_t activeToneSegmentTotalFrames = 0;
+static float tonePhase = 0.0f;
+static uint8_t toneVolumePercent = 35;
+static uint32_t lastToneMs = 0;
 static uint32_t lastLocalSentMs = 0;
 static uint8_t lastLocalSentChannel = PUBLIC_CHANNEL_INDEX;
 static uint32_t lastLocalSentTo = BROADCAST_ADDR;
@@ -440,6 +480,7 @@ static lv_obj_t* pageWifiStats = nullptr;
 static lv_obj_t* pageWifiLocal = nullptr;
 static lv_obj_t* pageWifiScan = nullptr;
 static lv_obj_t* pageBacklight = nullptr;
+static lv_obj_t* pageSound = nullptr;
 static lv_obj_t* pageBattery = nullptr;
 static lv_obj_t* currentPage = nullptr;
 static lv_obj_t* previousPage = nullptr;
@@ -483,6 +524,8 @@ static lv_obj_t* taWifiPass = nullptr;
 static lv_obj_t* listWifiScan = nullptr;
 static lv_obj_t* sliderBacklight = nullptr;
 static lv_obj_t* lblBacklight = nullptr;
+static lv_obj_t* sliderToneVolume = nullptr;
+static lv_obj_t* lblToneVolume = nullptr;
 static lv_obj_t* swReadableText = nullptr;
 static lv_obj_t* lblTextMode = nullptr;
 static lv_obj_t* lblBatteryStats = nullptr;
@@ -585,6 +628,7 @@ static const char* publicChannelLabel();
 static const char* privateChannelLabel();
 static void formatChannelPrompt(const char* channel, char* out, size_t outSize);
 static void refreshChannelUiLabels();
+static bool isPublicChannelName(const char* name);
 static const char* nodeName(uint32_t num);
 static NodeRecord* findOrCreateNode(uint32_t num);
 static void allocateRuntimeBuffers();
@@ -609,6 +653,9 @@ static void printSdTileFastSummary();
 static void refreshChatViews(bool force = false);
 static void setMapNearbyMode(bool enabled);
 static void setReadableTextMode(bool enabled, bool save);
+static void initToneAudio();
+static void serviceToneAudio();
+static void queueTone(ToneKind kind, bool replace = false);
 static void rebuildScreenUi(lv_obj_t* targetPage = nullptr);
 static void styleDarkObject(lv_obj_t* obj, uint32_t bg, uint32_t text = COLOR_TEXT);
 static void styleDarkBorder(lv_obj_t* obj, uint32_t color = COLOR_BORDER);
@@ -1938,6 +1985,264 @@ static void backlightSliderEvent(lv_event_t* e) {
   applyBacklight();
 }
 
+static const ToneSegment TONE_PATTERN_MESSAGE[] = {
+  {0, 90}, {340, 240, 185}, {0, 80}
+};
+static const ToneSegment TONE_PATTERN_DIRECT[] = {
+  {0, 90}, {390, 180, 245}, {0, 55}, {330, 260, 180}, {0, 90}
+};
+static const ToneSegment TONE_PATTERN_TEST[] = {
+  {0, 100}, {390, 280, 220}, {0, 90}, {320, 320, 165}, {0, 120}
+};
+
+static const ToneSegment* tonePatternFor(ToneKind kind, size_t& count) {
+  switch (kind) {
+    case TONE_DIRECT:
+      count = sizeof(TONE_PATTERN_DIRECT) / sizeof(TONE_PATTERN_DIRECT[0]);
+      return TONE_PATTERN_DIRECT;
+    case TONE_TEST:
+      count = sizeof(TONE_PATTERN_TEST) / sizeof(TONE_PATTERN_TEST[0]);
+      return TONE_PATTERN_TEST;
+    case TONE_MESSAGE:
+      count = sizeof(TONE_PATTERN_MESSAGE) / sizeof(TONE_PATTERN_MESSAGE[0]);
+      return TONE_PATTERN_MESSAGE;
+    default:
+      count = 0;
+      return nullptr;
+  }
+}
+
+static uint8_t toneCodecVolumeRegister() {
+  uint8_t pct = constrain((int)toneVolumePercent, 0, 100);
+  if (pct == 0) return 0x00;
+  // ES8311 DAC volume is a dB-style register. Keep it audible and scale tones in PCM.
+  return (uint8_t)map(pct, 1, 100, 0xA8, 0xBF);
+}
+
+static bool toneCodecWrite(uint8_t reg, uint8_t value) {
+  Wire.beginTransmission((uint8_t)CYD_AUDIO_CODEC_ADDR);
+  Wire.write(reg);
+  Wire.write(value);
+  return Wire.endTransmission() == 0;
+}
+
+static uint8_t toneCodecRead(uint8_t reg, uint8_t fallback = 0) {
+  Wire.beginTransmission((uint8_t)CYD_AUDIO_CODEC_ADDR);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) return fallback;
+  if (Wire.requestFrom((uint8_t)CYD_AUDIO_CODEC_ADDR, (uint8_t)1) != 1) return fallback;
+  return Wire.read();
+}
+
+static bool initToneCodec() {
+  Wire.beginTransmission((uint8_t)CYD_AUDIO_CODEC_ADDR);
+  if (Wire.endTransmission() != 0) return false;
+
+  bool ok = true;
+  ok &= toneCodecWrite(0x00, 0x1F);
+  delay(12);
+  ok &= toneCodecWrite(0x00, 0x00);
+  ok &= toneCodecWrite(0x01, 0x3F);
+  ok &= toneCodecWrite(0x02, 0x08);
+  ok &= toneCodecWrite(0x03, 0x10);
+  ok &= toneCodecWrite(0x04, 0x20);
+  ok &= toneCodecWrite(0x05, 0x00);
+  ok &= toneCodecWrite(0x06, 0x03);
+  ok &= toneCodecWrite(0x07, 0x00);
+  ok &= toneCodecWrite(0x08, 0xFF);
+  ok &= toneCodecWrite(0x09, 0x0C);
+  ok &= toneCodecWrite(0x0A, 0x0C);
+  ok &= toneCodecWrite(0x0D, 0x01);
+  ok &= toneCodecWrite(0x0E, 0x02);
+  ok &= toneCodecWrite(0x12, 0x00);
+  ok &= toneCodecWrite(0x13, 0x10);
+  ok &= toneCodecWrite(0x14, 0x1A);
+  ok &= toneCodecWrite(0x16, 0x00);
+  ok &= toneCodecWrite(0x17, 0xC8);
+  ok &= toneCodecWrite(0x1C, 0x6A);
+  ok &= toneCodecWrite(0x32, toneCodecVolumeRegister());
+  ok &= toneCodecWrite(0x37, 0x08);
+
+  uint8_t muteReg = toneCodecRead(0x31, 0x00);
+  if (toneVolumePercent == 0) muteReg |= 0x60;
+  else muteReg &= (uint8_t)~0x60;
+  ok &= toneCodecWrite(0x31, muteReg);
+  ok &= toneCodecWrite(0x00, 0x80);
+  return ok;
+}
+
+static void toneSetSpeakerEnabled(bool enabled) {
+  if (CYD_AUDIO_ENABLE_PIN < 0) return;
+  toneSpeakerEnabled = enabled;
+  const int disabledLevel = (CYD_AUDIO_ENABLE_LEVEL == LOW) ? HIGH : LOW;
+  digitalWrite(CYD_AUDIO_ENABLE_PIN, enabled ? CYD_AUDIO_ENABLE_LEVEL : disabledLevel);
+}
+
+static void applyToneVolume() {
+  toneVolumePercent = constrain((int)toneVolumePercent, 0, 100);
+  if (toneCodecReady) {
+    toneCodecWrite(0x32, toneCodecVolumeRegister());
+    uint8_t muteReg = toneCodecRead(0x31, 0x00);
+    if (toneVolumePercent == 0) muteReg |= 0x60;
+    else muteReg &= (uint8_t)~0x60;
+    toneCodecWrite(0x31, muteReg);
+  }
+  if (toneVolumePercent == 0) {
+    toneActive = false;
+    pendingToneKind = TONE_NONE;
+    toneSetSpeakerEnabled(false);
+  }
+}
+
+static const char* toneAudioStateLabel() {
+  if (!toneI2sReady) return "not ready";
+  return toneCodecReady ? "I2S + codec" : "I2S";
+}
+
+static void updateToneVolumeLabel() {
+  if (!lblToneVolume) return;
+  char text[96];
+  snprintf(text, sizeof(text),
+           "Tone volume: %u%%\nSpeaker: %s",
+           toneVolumePercent,
+           toneAudioStateLabel());
+  lv_label_set_text(lblToneVolume, text);
+}
+
+static void toneVolumeSliderEvent(lv_event_t* e) {
+  lv_obj_t* slider = (lv_obj_t*)lv_event_get_target(e);
+  toneVolumePercent = constrain((int)lv_slider_get_value(slider), 0, 100);
+  prefs.putUChar("toneVol", toneVolumePercent);
+  applyToneVolume();
+  updateToneVolumeLabel();
+}
+
+static bool startToneSegment(uint8_t segmentIndex) {
+  size_t count = 0;
+  const ToneSegment* pattern = tonePatternFor(activeToneKind, count);
+  if (!pattern || segmentIndex >= count) return false;
+  activeToneSegment = segmentIndex;
+  activeToneFramesRemaining = ((uint32_t)pattern[segmentIndex].durationMs * TONE_SAMPLE_RATE) / 1000U;
+  if (activeToneFramesRemaining == 0) activeToneFramesRemaining = 1;
+  activeToneSegmentTotalFrames = activeToneFramesRemaining;
+  tonePhase = 0.0f;
+  return true;
+}
+
+static void startTone(ToneKind kind) {
+  if (!toneI2sReady || toneVolumePercent == 0 || kind == TONE_NONE) return;
+  activeToneKind = kind;
+  toneActive = startToneSegment(0);
+  if (!toneActive) {
+    activeToneKind = TONE_NONE;
+    return;
+  }
+  lastToneMs = millis();
+  toneSetSpeakerEnabled(true);
+}
+
+static void finishTone() {
+  toneActive = false;
+  activeToneKind = TONE_NONE;
+  activeToneFramesRemaining = 0;
+  activeToneSegmentTotalFrames = 0;
+  toneSetSpeakerEnabled(false);
+  if (pendingToneKind != TONE_NONE) {
+    ToneKind next = pendingToneKind;
+    pendingToneKind = TONE_NONE;
+    startTone(next);
+  }
+}
+
+static void queueTone(ToneKind kind, bool replace) {
+  if (!toneI2sReady || toneVolumePercent == 0 || kind == TONE_NONE) return;
+  if (replace) {
+    pendingToneKind = TONE_NONE;
+    startTone(kind);
+    return;
+  }
+  if (toneActive) {
+    if (kind == TONE_DIRECT || pendingToneKind == TONE_NONE) pendingToneKind = kind;
+    return;
+  }
+  startTone(kind);
+}
+
+static void serviceToneAudio() {
+  if (!toneI2sReady || !toneActive) return;
+  if (toneVolumePercent == 0) {
+    finishTone();
+    return;
+  }
+
+  size_t count = 0;
+  const ToneSegment* pattern = tonePatternFor(activeToneKind, count);
+  if (!pattern || activeToneSegment >= count) {
+    finishTone();
+    return;
+  }
+
+  uint32_t framesToWrite = activeToneFramesRemaining;
+  if (framesToWrite > TONE_FRAMES_PER_SERVICE) framesToWrite = TONE_FRAMES_PER_SERVICE;
+
+  int16_t frames[TONE_FRAMES_PER_SERVICE * 2];
+  const ToneSegment& segment = pattern[activeToneSegment];
+  const int32_t amplitude = map(constrain((int)toneVolumePercent, 0, 100), 0, 100, 0, 16000);
+  const float startFrequency = (float)segment.frequency;
+  const float endFrequency = (float)(segment.endFrequency ? segment.endFrequency : segment.frequency);
+  for (uint32_t i = 0; i < framesToWrite; i++) {
+    int16_t sample = 0;
+    if (segment.frequency) {
+      uint32_t frameIndex = activeToneSegmentTotalFrames > activeToneFramesRemaining
+                              ? activeToneSegmentTotalFrames - activeToneFramesRemaining + i
+                              : i;
+      float progress = activeToneSegmentTotalFrames > 1
+                         ? (float)frameIndex / (float)(activeToneSegmentTotalFrames - 1)
+                         : 1.0f;
+      if (progress > 1.0f) progress = 1.0f;
+      float frequency = startFrequency + (endFrequency - startFrequency) * progress;
+      float envelope = progress < 0.10f ? progress / 0.10f : 1.0f - ((progress - 0.10f) * 0.55f);
+      if (envelope < 0.25f) envelope = 0.25f;
+      sample = (int16_t)(sinf(tonePhase) * amplitude * envelope);
+      float phaseStep = (6.28318530718f * frequency) / (float)TONE_SAMPLE_RATE;
+      tonePhase += phaseStep;
+      if (tonePhase >= 6.28318530718f) tonePhase -= 6.28318530718f;
+    }
+    frames[i * 2] = sample;
+    frames[i * 2 + 1] = sample;
+  }
+
+  toneI2s.write((const uint8_t*)frames, (size_t)framesToWrite * 2U * sizeof(int16_t));
+  activeToneFramesRemaining -= framesToWrite;
+  if (activeToneFramesRemaining > 0) return;
+  if (!startToneSegment(activeToneSegment + 1)) finishTone();
+}
+
+static void initToneAudio() {
+  if (CYD_AUDIO_ENABLE_PIN >= 0) {
+    pinMode(CYD_AUDIO_ENABLE_PIN, OUTPUT);
+    toneSetSpeakerEnabled(false);
+  }
+
+  toneI2s.setPins(CYD_AUDIO_BCLK_PIN, CYD_AUDIO_LRCLK_PIN, CYD_AUDIO_DOUT_PIN, -1, CYD_AUDIO_MCLK_PIN);
+  toneI2sReady = toneI2s.begin(I2S_MODE_STD,
+                               TONE_SAMPLE_RATE,
+                               I2S_DATA_BIT_WIDTH_16BIT,
+                               I2S_SLOT_MODE_STEREO);
+  toneCodecReady = initToneCodec();
+  applyToneVolume();
+
+  char line[128];
+  snprintf(line, sizeof(line),
+           "[audio] CYD speaker %s, codec %s, volume %u%%\n",
+           toneI2sReady ? "ready" : "not ready",
+           toneCodecReady ? "ready" : "not detected",
+           toneVolumePercent);
+  appendLine(eventLog, LOG_SIZE, line);
+  Serial.print(line);
+  updateToneVolumeLabel();
+}
+
 static void lvFlush(lv_disp_drv_t* disp, const lv_area_t* area, lv_color_t* colors) {
   uint32_t w = area->x2 - area->x1 + 1;
   uint32_t h = area->y2 - area->y1 + 1;
@@ -2102,7 +2407,7 @@ static void showPage(lv_obj_t* target, bool remember) {
     pageLauncher, pageOperate, pageDiagnose, pageNodes, pageNodeDetail, pageMeshHealth, pagePacketInspector,
     pageTxHistory, pagePublicChat, pagePrivateChat, pageDirectChat, pageGps,
     pageSystem, pageSystemInterface, pageSystemSerial, pageSystemRadio, pageSystemGps,
-    pageWifi, pageWifiStats, pageWifiLocal, pageWifiScan, pageBacklight, pageBattery
+    pageWifi, pageWifiStats, pageWifiLocal, pageWifiScan, pageBacklight, pageSound, pageBattery
   };
   for (lv_obj_t* page : pages) {
     if (!page) continue;
@@ -2216,6 +2521,7 @@ static void clearUiObjectPointers() {
   pageWifiLocal = nullptr;
   pageWifiScan = nullptr;
   pageBacklight = nullptr;
+  pageSound = nullptr;
   pageBattery = nullptr;
   currentPage = nullptr;
   previousPage = nullptr;
@@ -2262,6 +2568,8 @@ static void clearUiObjectPointers() {
   listWifiScan = nullptr;
   sliderBacklight = nullptr;
   lblBacklight = nullptr;
+  sliderToneVolume = nullptr;
+  lblToneVolume = nullptr;
   swReadableText = nullptr;
   lblTextMode = nullptr;
   lblBatteryStats = nullptr;
@@ -3020,6 +3328,7 @@ static void buildScreenUi() {
   pageWifiLocal = makePage(screen);
   pageWifiScan = makePage(screen);
   pageBacklight = makePage(screen);
+  pageSound = makePage(screen);
   pageBattery = makePage(screen);
 
   currentPage = pageLauncher;
@@ -3271,7 +3580,8 @@ static void buildScreenUi() {
   makeSystemTile(pageSystem, "GPS", 1, 1, [](lv_event_t*) { showPage(pageSystemGps); });
   makeSystemTile(pageSystem, "WiFi", 0, 2, [](lv_event_t*) { showPage(pageWifi); });
   makeSystemTile(pageSystem, "Display", 1, 2, [](lv_event_t*) { showPage(pageBacklight); });
-  makeSystemTile(pageSystem, "Battery", 0, 3, [](lv_event_t*) { showPage(pageBattery); });
+  makeSystemTile(pageSystem, "Sound", 0, 3, [](lv_event_t*) { showPage(pageSound); });
+  makeSystemTile(pageSystem, "Battery", 1, 3, [](lv_event_t*) { showPage(pageBattery); });
 
   makePageTitle(pageSystemInterface, "Interface");
   makePageScrollable(pageSystemInterface);
@@ -3355,6 +3665,7 @@ static void buildScreenUi() {
   styleBoundedLabel(lblWifiStats, lv_pct(100), COLOR_TEXT, LV_LABEL_LONG_WRAP);
 
   makePageTitle(pageBacklight, "Display");
+  makePageScrollable(pageBacklight);
   lv_obj_t* backlightPanel = makePanel(pageBacklight);
   lv_obj_set_size(backlightPanel, SCREEN_W - 12, 206);
   lv_obj_align(backlightPanel, LV_ALIGN_TOP_MID, 0, 30);
@@ -3389,6 +3700,37 @@ static void buildScreenUi() {
   lv_label_set_text(backlightHint, "Dimmer saves battery.");
   styleBoundedLabel(backlightHint, lv_pct(100), COLOR_MUTED, LV_LABEL_LONG_WRAP);
   lv_obj_align(backlightHint, LV_ALIGN_TOP_LEFT, 2, 164);
+
+  makePageTitle(pageSound, "Sound");
+  lv_obj_t* soundPanel = makePanel(pageSound);
+  lv_obj_set_size(soundPanel, SCREEN_W - 12, 176);
+  lv_obj_align(soundPanel, LV_ALIGN_TOP_MID, 0, 30);
+  lblToneVolume = lv_label_create(soundPanel);
+  lv_label_set_text(lblToneVolume, "Tone volume: 35%\nSpeaker: not ready");
+  styleBoundedLabel(lblToneVolume, lv_pct(100), COLOR_TEXT, LV_LABEL_LONG_WRAP);
+  lv_obj_align(lblToneVolume, LV_ALIGN_TOP_LEFT, 2, 4);
+  sliderToneVolume = lv_slider_create(soundPanel);
+  lv_obj_set_size(sliderToneVolume, SCREEN_W - 42, 24);
+  lv_obj_align(sliderToneVolume, LV_ALIGN_TOP_MID, 0, 62);
+  lv_slider_set_range(sliderToneVolume, 0, 100);
+  lv_slider_set_value(sliderToneVolume, toneVolumePercent, LV_ANIM_OFF);
+  lv_obj_set_style_bg_color(sliderToneVolume, lv_color_hex(0x16342C), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(sliderToneVolume, lv_color_hex(COLOR_ACTION), LV_PART_INDICATOR);
+  lv_obj_set_style_bg_color(sliderToneVolume, lv_color_hex(COLOR_TEXT), LV_PART_KNOB);
+  lv_obj_add_event_cb(sliderToneVolume, toneVolumeSliderEvent, LV_EVENT_VALUE_CHANGED, nullptr);
+  lv_obj_t* btnTestTone = lv_btn_create(soundPanel);
+  lv_obj_set_size(btnTestTone, SCREEN_W - 42, 36);
+  lv_obj_align(btnTestTone, LV_ALIGN_TOP_MID, 0, 108);
+  styleDarkObject(btnTestTone, COLOR_ACTION, 0x001B12);
+  styleDarkBorder(btnTestTone, 0x65F5B7);
+  lv_obj_set_style_radius(btnTestTone, 6, 0);
+  lv_obj_set_style_shadow_width(btnTestTone, 0, 0);
+  lv_obj_add_event_cb(btnTestTone, [](lv_event_t*) { queueTone(TONE_TEST, true); }, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* lblTestTone = lv_label_create(btnTestTone);
+  lv_label_set_text(lblTestTone, "Test Tone");
+  styleBoundedLabel(lblTestTone, SCREEN_W - 58, 0x001B12);
+  lv_obj_set_style_text_align(lblTestTone, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_center(lblTestTone);
 
   makePageTitle(pageBattery, "Battery");
   makePageScrollable(pageBattery);
@@ -4139,7 +4481,7 @@ static void refreshScreenUi() {
   }
 
   if (currentPage == pageSystemSerial && lblSystemSerial) {
-    char serialText[340];
+    char serialText[420];
     char rxAge[32];
     if (lastByteMs) snprintf(rxAge, sizeof(rxAge), "%lus ago", (unsigned long)((millis() - lastByteMs) / 1000));
     else strlcpy(rxAge, "never", sizeof(rxAge));
@@ -4153,6 +4495,9 @@ static void refreshScreenUi() {
              "Frames: %lu\n"
              "Decode errors: %lu\n"
              "Bad lengths: %lu\n\n"
+             "API keepalive\n"
+             "Heartbeats: %lu\n"
+             "Refreshes: %lu\n\n"
              "ASCII seen\n"
              "%.48s",
              (unsigned long)bytesFromRadio,
@@ -4163,6 +4508,8 @@ static void refreshScreenUi() {
              (unsigned long)streamFrames,
              (unsigned long)decodeErrors,
              (unsigned long)invalidFrameLengths,
+             (unsigned long)heartbeatCount,
+             (unsigned long)apiResyncCount,
              serialPeek);
     lv_label_set_text(lblSystemSerial, serialText);
   }
@@ -4430,6 +4777,9 @@ static void refreshScreenUi() {
   if (sliderBacklight && (uint8_t)lv_slider_get_value(sliderBacklight) != backlightPercent) {
     lv_slider_set_value(sliderBacklight, backlightPercent, LV_ANIM_OFF);
   }
+  if (sliderToneVolume && (uint8_t)lv_slider_get_value(sliderToneVolume) != toneVolumePercent) {
+    lv_slider_set_value(sliderToneVolume, toneVolumePercent, LV_ANIM_OFF);
+  }
 
   if (currentPage == pageBacklight && lblBacklight) {
     char backlightText[96];
@@ -4438,6 +4788,10 @@ static void refreshScreenUi() {
              backlightPercent,
              backlightPwmReady ? "LEDC" : "analog fallback");
     lv_label_set_text(lblBacklight, backlightText);
+  }
+
+  if (currentPage == pageSound && lblToneVolume) {
+    updateToneVolumeLabel();
   }
 
   if (currentPage == pageBattery && lblBatteryStats) {
@@ -4663,6 +5017,7 @@ static void sendDirectFromInput(lv_obj_t* toInput, lv_obj_t* msgInput) {
 }
 
 static void serviceScreen() {
+  serviceToneAudio();
   processDeferredWifiAction();
   pollWifiScan();
   sampleLocalBattery();
@@ -4676,7 +5031,7 @@ static void printSerialDiagnostics() {
 
   uint32_t age = lastByteMs ? (millis() - lastByteMs) / 1000 : 0xFFFFFFFF;
   Serial.printf(
-    "[LINK] rx=%lu tx=%lu last=%s frames=%lu decoded=%lu err=%lu magic=%lu/%lu badlen=%lu ascii=\"%.60s\"\n",
+    "[LINK] rx=%lu tx=%lu last=%s frames=%lu decoded=%lu err=%lu magic=%lu/%lu badlen=%lu hb=%lu resync=%lu ascii=\"%.60s\"\n",
     (unsigned long)bytesFromRadio,
     (unsigned long)bytesToRadio,
     lastByteMs ? String(age).c_str() : "never",
@@ -4686,6 +5041,8 @@ static void printSerialDiagnostics() {
     (unsigned long)magic1Count,
     (unsigned long)magic2Count,
     (unsigned long)invalidFrameLengths,
+    (unsigned long)heartbeatCount,
+    (unsigned long)apiResyncCount,
     serialPeek
   );
   Serial.printf(
@@ -4789,10 +5146,13 @@ static const char* nodeName(uint32_t num) {
 
 static const char* channelName(uint8_t index) {
   for (size_t i = 0; i < MAX_CHANNELS; i++) {
-    if (channels[i].enabled && channels[i].index == (int8_t)index && channels[i].name[0]) return channels[i].name;
+    if (channels[i].enabled && channels[i].index == (int8_t)index && channels[i].name[0]) {
+      if (index == PUBLIC_CHANNEL_INDEX && isPublicChannelName(channels[i].name)) return "Public";
+      return channels[i].name;
+    }
   }
   static char fallback[16];
-  if (index == PUBLIC_CHANNEL_INDEX) return "primary";
+  if (index == PUBLIC_CHANNEL_INDEX) return "Public";
   snprintf(fallback, sizeof(fallback), "channel %u", (unsigned)index);
   return fallback;
 }
@@ -4860,6 +5220,8 @@ static bool isPublicChannelName(const char* name) {
   if (!name || !name[0]) return false;
   return strcasecmp(name, "public") == 0 ||
          strcasecmp(name, "primary") == 0 ||
+         strcasecmp(name, "mediumfast") == 0 ||
+         strcasecmp(name, "medium fast") == 0 ||
          strcasecmp(name, "longfast") == 0 ||
          strcasecmp(name, "long fast") == 0 ||
          strcasecmp(name, "default") == 0;
@@ -5302,10 +5664,33 @@ static void writeStreamFrame(const uint8_t* payload, size_t len) {
   bytesToRadio += len + 4;
 }
 
+static uint32_t allocateMeshPacketId() {
+  uint32_t id = nextMeshPacketId++;
+  if (id == 0) id = nextMeshPacketId++;
+  if (nextMeshPacketId == 0) nextMeshPacketId = 1;
+  return id;
+}
+
+static uint8_t activeHopLimit() {
+  if (heltecConfig.hasLora && heltecConfig.lora.hop_limit > 0) {
+    return min<uint8_t>(heltecConfig.lora.hop_limit, 7);
+  }
+  return 3;
+}
+
+static void applyClientPacketDefaults(meshtastic_MeshPacket& packet) {
+  if (packet.id == 0) packet.id = allocateMeshPacketId();
+  if (packet.hop_limit == 0) packet.hop_limit = activeHopLimit();
+  if (packet.priority == meshtastic_MeshPacket_Priority_UNSET) {
+    packet.priority = meshtastic_MeshPacket_Priority_RELIABLE;
+  }
+}
+
 static bool sendConfigRequest() {
   meshtastic_ToRadio toRadio = meshtastic_ToRadio_init_zero;
   toRadio.which_payload_variant = meshtastic_ToRadio_want_config_id_tag;
-  toRadio.want_config_id = 1;
+  toRadio.want_config_id = nextConfigRequestId++;
+  if (nextConfigRequestId == 0) nextConfigRequestId = 1;
 
   uint8_t out[64];
   pb_ostream_t stream = pb_ostream_from_buffer(out, sizeof(out));
@@ -5315,6 +5700,37 @@ static bool sendConfigRequest() {
   if (configRequestCount < 255) configRequestCount++;
   appendLine(eventLog, LOG_SIZE, "[local] requested Heltec config\n");
   return true;
+}
+
+static bool sendRadioHeartbeat() {
+  meshtastic_ToRadio toRadio = meshtastic_ToRadio_init_zero;
+  toRadio.which_payload_variant = meshtastic_ToRadio_heartbeat_tag;
+  toRadio.heartbeat.nonce = ++heartbeatNonce;
+  if (heartbeatNonce == 0) toRadio.heartbeat.nonce = ++heartbeatNonce;
+
+  uint8_t out[64];
+  pb_ostream_t stream = pb_ostream_from_buffer(out, sizeof(out));
+  if (!pb_encode(&stream, meshtastic_ToRadio_fields, &toRadio)) return false;
+  writeStreamFrame(out, stream.bytes_written);
+  lastHeartbeatMs = millis();
+  heartbeatCount++;
+  return true;
+}
+
+static void serviceRadioApiKeepalive() {
+  uint32_t now = millis();
+  if (lastHeartbeatMs == 0 || now - lastHeartbeatMs >= RADIO_API_HEARTBEAT_MS) {
+    sendRadioHeartbeat();
+  }
+
+  if (lastByteMs == 0) return;
+  if (now - lastByteMs < RADIO_API_IDLE_RESYNC_MS) return;
+  if (lastApiResyncMs != 0 && now - lastApiResyncMs < RADIO_API_RESYNC_COOLDOWN_MS) return;
+
+  lastApiResyncMs = now;
+  apiResyncCount++;
+  appendLine(eventLog, LOG_SIZE, "[link] serial API idle; refreshing Heltec stream\n");
+  sendConfigRequest();
 }
 
 static void serviceConfigRequests() {
@@ -5335,8 +5751,9 @@ static bool sendTextMessage(const char* text, int8_t channelIndex) {
   meshtastic_MeshPacket& packet = toRadio.packet;
   packet.to = BROADCAST_ADDR;
   packet.channel = channelIndex < 0 ? PUBLIC_CHANNEL_INDEX : channelIndex;
-  packet.want_ack = false;
+  packet.want_ack = true;
   packet.which_payload_variant = meshtastic_MeshPacket_decoded_tag;
+  applyClientPacketDefaults(packet);
 
   meshtastic_Data& data = packet.decoded;
   data.portnum = meshtastic_PortNum_TEXT_MESSAGE_APP;
@@ -5372,6 +5789,7 @@ static bool sendDirectTextMessage(const char* text, uint32_t toNode) {
   packet.channel = PUBLIC_CHANNEL_INDEX;
   packet.want_ack = true;
   packet.which_payload_variant = meshtastic_MeshPacket_decoded_tag;
+  applyClientPacketDefaults(packet);
 
   meshtastic_Data& data = packet.decoded;
   data.portnum = meshtastic_PortNum_TEXT_MESSAGE_APP;
@@ -5912,6 +6330,7 @@ static void handleDecodedPacket(const meshtastic_MeshPacket& packet) {
       markTxEchoSeen(packet.channel, packet.to, data.payload.bytes, data.payload.size);
     } else {
       appendChatMessage(packet.channel, packet.to, fromThisNode ? "me" : nodeName(packet.from), chatBytes, chatLen);
+      if (!fromThisNode) queueTone(isDirectAddress(packet.to) ? TONE_DIRECT : TONE_MESSAGE);
     }
     snprintf(line, sizeof(line), "[%s ch%u %s%s] %.*s\n",
              fromThisNode ? "me" : nodeName(packet.from),
@@ -6188,11 +6607,19 @@ static String buildStatusJson() {
   json += "\"wifiMode\":\"" + String(wifiApMode ? "AP" : "Local") + "\",";
   json += "\"wifiStations\":" + String((wifiEnabled && wifiApMode) ? WiFi.softAPgetStationNum() : 0) + ",";
   json += "\"wifiToggles\":" + String(wifiToggleCount) + ",";
+  json += "\"toneVolume\":" + String(toneVolumePercent) + ",";
+  json += "\"toneAudioReady\":" + String(toneI2sReady ? "true" : "false") + ",";
+  json += "\"toneCodecReady\":" + String(toneCodecReady ? "true" : "false") + ",";
+  json += "\"toneActive\":" + String(toneActive ? "true" : "false") + ",";
+  json += "\"toneLastMs\":" + String(lastToneMs) + ",";
   json += "\"frames\":" + String(framesDecoded) + ",";
   json += "\"errors\":" + String(decodeErrors) + ",";
   json += "\"bytes\":" + String(bytesFromRadio) + ",";
   json += "\"txBytes\":" + String(bytesToRadio) + ",";
   json += "\"lastByte\":\"" + jsonEscape(rxAge) + "\",";
+  json += "\"heartbeats\":" + String(heartbeatCount) + ",";
+  json += "\"apiResyncs\":" + String(apiResyncCount) + ",";
+  json += "\"nextPacketId\":" + String(nextMeshPacketId) + ",";
   json += "\"magic1\":" + String(magic1Count) + ",";
   json += "\"magic2\":" + String(magic2Count) + ",";
   json += "\"streamFrames\":" + String(streamFrames) + ",";
@@ -6519,6 +6946,8 @@ void setup() {
   delay(3000);
   Serial.println("[boot] serial ready");
   allocateRuntimeBuffers();
+  nextMeshPacketId = esp_random();
+  if (nextMeshPacketId == 0) nextMeshPacketId = 1;
   SerialLoRa.setRxBufferSize(4096);
   SerialLoRa.begin(LORA_BAUD, SERIAL_8N1, LORA_RX_PIN, LORA_TX_PIN);
   SerialGPS.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
@@ -6526,6 +6955,7 @@ void setup() {
   prefs.begin("s3-lora", false);
   wifiApMode = prefs.getBool("wifiApMode", true);
   readableTextMode = prefs.getBool("readableText", false);
+  toneVolumePercent = constrain((int)prefs.getUChar("toneVol", 35), 0, 100);
 #if ONE_TIME_CHANNEL_PROVISION
   channelProvisionDone = prefs.getBool(CHANNEL_PROVISION_PREF_KEY, false);
   channelProvisionStep = 0;
@@ -6538,6 +6968,8 @@ void setup() {
   applyFontMode();
   Serial.println("[boot] init screen");
   initScreen();
+  Serial.println("[boot] init audio");
+  initToneAudio();
   Serial.println("[boot] init sd");
   initSdStorage();
 
@@ -6717,6 +7149,7 @@ void loop() {
   pollLocalGps();
   serviceUsbSerialCommands();
   pollLoRa();
+  serviceRadioApiKeepalive();
   serviceConfigRequests();
   serviceOneTimeChannelProvision();
   if (wifiEnabled) server.handleClient();
