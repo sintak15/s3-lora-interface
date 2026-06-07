@@ -2371,26 +2371,26 @@ static void backlightSliderEvent(lv_event_t* e) {
   applyBacklight();
 }
 
-static const char TONE_STYLE_OPTIONS[] = "Bwomp\nChime\nDouble\nPulse\nAlert\nLoud";
+static const char TONE_STYLE_OPTIONS[] = "Low Bell\nChime\nTwo Step\nBeacon\nPager\nBell";
 static const char TONE_BOOST_OPTIONS[] = "0 dB\n+3 dB\n+6 dB\n+9 dB\n+12 dB\nMax";
 
 static const ToneSegment TONE_PATTERN_BWOMP[] = {
-  {0, 100}, {1560, 120, 1120}, {860, 260, 620}, {0, 140}
+  {0, 120}, {980, 220, 780}, {0, 80}, {620, 420, 480}, {0, 180}
 };
 static const ToneSegment TONE_PATTERN_CHIME[] = {
-  {0, 100}, {1320, 220, 1560}, {0, 80}, {1760, 300, 1320}, {0, 150}
+  {0, 120}, {880, 300, 1047}, {0, 90}, {1175, 420, 880}, {0, 190}
 };
 static const ToneSegment TONE_PATTERN_DOUBLE[] = {
-  {0, 100}, {1240, 220, 980}, {0, 90}, {1480, 280, 1100}, {0, 150}
+  {0, 120}, {784, 280, 880}, {0, 120}, {988, 360, 880}, {0, 200}
 };
 static const ToneSegment TONE_PATTERN_PULSE[] = {
-  {0, 100}, {1760, 160}, {0, 70}, {1760, 160}, {0, 70}, {1980, 220}, {0, 150}
+  {0, 120}, {740, 220}, {0, 100}, {740, 220}, {0, 100}, {988, 300}, {0, 200}
 };
 static const ToneSegment TONE_PATTERN_ALERT[] = {
-  {0, 100}, {1960, 240}, {0, 80}, {1960, 240}, {0, 80}, {1450, 320, 980}, {0, 160}
+  {0, 120}, {1047, 320}, {0, 90}, {1047, 320}, {0, 90}, {784, 480, 659}, {0, 220}
 };
 static const ToneSegment TONE_PATTERN_LOUD[] = {
-  {0, 110}, {1320, 260, 1560}, {0, 80}, {1760, 280, 1320}, {0, 80}, {1480, 340, 1180}, {0, 170}
+  {0, 130}, {880, 360, 1047}, {0, 100}, {1175, 460, 988}, {0, 100}, {988, 520, 784}, {0, 240}
 };
 
 static uint8_t clampToneBoost(uint8_t level) {
@@ -2423,6 +2423,19 @@ static uint8_t toneBoostTargetRegister() {
   }
 }
 
+static uint8_t tonePcmDrivePercent() {
+  switch (clampToneBoost(toneBoostLevel)) {
+    case 1: return 92;
+    case 2: return 82;
+    case 3: return 68;
+    case 4: return 56;
+    case 5: return 38;
+    case 0:
+    default:
+      return 100;
+  }
+}
+
 static ToneStyle clampToneStyle(uint8_t style) {
   return style < TONE_STYLE_COUNT ? (ToneStyle)style : TONE_STYLE_BWOMP;
 }
@@ -2430,13 +2443,13 @@ static ToneStyle clampToneStyle(uint8_t style) {
 static const char* toneStyleName(ToneStyle style) {
   switch (style) {
     case TONE_STYLE_CHIME: return "Chime";
-    case TONE_STYLE_DOUBLE: return "Double";
-    case TONE_STYLE_PULSE: return "Pulse";
-    case TONE_STYLE_ALERT: return "Alert";
-    case TONE_STYLE_LOUD: return "Loud";
+    case TONE_STYLE_DOUBLE: return "Two Step";
+    case TONE_STYLE_PULSE: return "Beacon";
+    case TONE_STYLE_ALERT: return "Pager";
+    case TONE_STYLE_LOUD: return "Bell";
     case TONE_STYLE_BWOMP:
     default:
-      return "Bwomp";
+      return "Low Bell";
   }
 }
 
@@ -2701,7 +2714,8 @@ static void serviceToneAudio() {
 
   int16_t frames[TONE_FRAMES_PER_SERVICE * 2];
   const ToneSegment& segment = pattern[activeToneSegment];
-  const int32_t amplitude = map(constrain((int)toneVolumePercent, 0, 100), 0, 100, 0, 32700);
+  const int32_t amplitude = (int32_t)map(constrain((int)toneVolumePercent, 0, 100), 0, 100, 0, 32700)
+                              * (int32_t)tonePcmDrivePercent() / 100;
   const float startFrequency = (float)segment.frequency;
   const float endFrequency = (float)(segment.endFrequency ? segment.endFrequency : segment.frequency);
   for (uint32_t i = 0; i < framesToWrite; i++) {
@@ -2721,16 +2735,17 @@ static void serviceToneAudio() {
       uint32_t framesLeftInSegment = activeToneSegmentTotalFrames > frameIndexInSegment
                                        ? activeToneSegmentTotalFrames - frameIndexInSegment
                                        : 0;
-      uint32_t rampFrames = min<uint32_t>(TONE_SAMPLE_RATE / 25U, activeToneSegmentTotalFrames / 3U);
+      uint32_t rampFrames = min<uint32_t>(TONE_SAMPLE_RATE / 12U, activeToneSegmentTotalFrames / 3U);
       if (rampFrames == 0) rampFrames = 1;
       float envelope = 1.0f;
       if (frameIndexInSegment < rampFrames) envelope = (float)frameIndexInSegment / (float)rampFrames;
       if (framesLeftInSegment < rampFrames) envelope = min(envelope, (float)framesLeftInSegment / (float)rampFrames);
       if (envelope < 0.0f) envelope = 0.0f;
+      envelope = envelope * envelope * (3.0f - (2.0f * envelope));
 
       float sine = sinf(tonePhase);
-      float shaped = sine + (0.18f * sinf(tonePhase * 3.0f));
-      shaped *= 1.22f;
+      float shaped = sine + (0.08f * sinf(tonePhase * 2.0f)) + (0.05f * sinf(tonePhase * 3.0f));
+      shaped *= 0.96f;
       if (shaped > 1.0f) shaped = 1.0f;
       if (shaped < -1.0f) shaped = -1.0f;
       sample = (int16_t)(shaped * amplitude * envelope);
@@ -4261,7 +4276,7 @@ static void buildScreenUi() {
   lv_obj_set_size(soundPanel, SCREEN_W - 12, 356);
   lv_obj_align(soundPanel, LV_ALIGN_TOP_MID, 0, 30);
   lblToneVolume = lv_label_create(soundPanel);
-  lv_label_set_text(lblToneVolume, "Volume: 75%  Boost: +6 dB\nCodec: not ready\nMsg: Loud  DM: Loud");
+  lv_label_set_text(lblToneVolume, "Volume: 75%  Boost: +6 dB\nCodec: not ready\nMsg: Bell  DM: Bell");
   styleBoundedLabel(lblToneVolume, lv_pct(100), COLOR_TEXT, LV_LABEL_LONG_WRAP);
   lv_obj_align(lblToneVolume, LV_ALIGN_TOP_LEFT, 2, 4);
   sliderToneVolume = lv_slider_create(soundPanel);
@@ -7902,6 +7917,7 @@ static void appendInterfaceStatusJson(String& json, const String& wifiIp, const 
   json += "\"wifiToggles\":" + String(wifiToggleCount) + ",";
   json += "\"toneVolume\":" + String(toneVolumePercent) + ",";
   json += "\"toneBoost\":\"" + String(toneBoostName(toneBoostLevel)) + "\",";
+  json += "\"toneDrive\":" + String(tonePcmDrivePercent()) + ",";
   json += "\"toneMessage\":\"" + String(toneStyleName(toneMessageStyle)) + "\",";
   json += "\"toneDirect\":\"" + String(toneStyleName(toneDirectStyle)) + "\",";
   json += "\"toneCodecReg\":" + String(toneCodecVolumeRegister()) + ",";
