@@ -7717,41 +7717,7 @@ static void appendMapStatusJson(String& json) {
   json += "\"mapRenderWorkerBusySkips\":" + String(mapRenderWorkerBusySkips) + ",";
 }
 
-static bool requireWebAuth() {
-  if (server.authenticate(webUiUser, webUiPass)) {
-    if (usingDefaultWebCredentials() && !setupRouteAllowed()) {
-      server.send(403, "text/plain", "setup required");
-      return false;
-    }
-    return true;
-  }
-  server.requestAuthentication(BASIC_AUTH, "Heltec LoRa Interface");
-  return false;
-}
-
-static String buildStatusJson() {
-  sampleLocalBattery();
-  refreshSdUsage();
-  char rxAge[32];
-  if (lastByteMs) snprintf(rxAge, sizeof(rxAge), "%lus ago", (unsigned long)((millis() - lastByteMs) / 1000));
-  else strlcpy(rxAge, "never", sizeof(rxAge));
-  String wifiIp = wifiEnabled ? (wifiApMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString()) : String("off");
-  const esp_partition_t* runningPartition = esp_ota_get_running_partition();
-  String json;
-  json.reserve(STATUS_JSON_RESERVE);
-  json = "{";
-  appendInterfaceStatusJson(json, wifiIp, runningPartition);
-  appendLinkStatusJson(json, rxAge);
-  json += "\"myNode\":\"!" + String(stats.myNodeNum, HEX) + "\",";
-  json += "\"myNodeName\":\"" + jsonEscape(nodeName(stats.myNodeNum)) + "\",";
-  appendBatteryStatusJson(json);
-  appendSdStatusJson(json);
-  json += "\"rx\":" + String(stats.packetsRx) + ",";
-  json += "\"tx\":" + String(stats.packetsTx) + ",";
-  json += "\"online\":" + String(stats.onlineNodes) + ",";
-  json += "\"total\":" + String(stats.totalNodes) + ",";
-  appendChatStatusJson(json);
-  appendMapStatusJson(json);
+static void appendHeltecConfigStatusJson(String& json) {
   json += "\"heltecConfig\":{";
   json += "\"ageSec\":" + String(heltecConfig.lastConfigMs ? (millis() - heltecConfig.lastConfigMs) / 1000 : -1) + ",";
   json += "\"moduleAgeSec\":" + String(heltecConfig.lastModuleMs ? (millis() - heltecConfig.lastModuleMs) / 1000 : -1) + ",";
@@ -7928,6 +7894,44 @@ static String buildStatusJson() {
   json += "\"ble\":" + String(heltecConfig.paxcounter.ble_threshold) + "},";
   json += "\"statusMessage\":{\"valid\":" + String(heltecConfig.hasStatusMessage ? "true" : "false") + ",";
   json += "\"text\":\"" + jsonEscape(heltecConfig.statusMessage.node_status) + "\"}}},";
+}
+
+static bool requireWebAuth() {
+  if (server.authenticate(webUiUser, webUiPass)) {
+    if (usingDefaultWebCredentials() && !setupRouteAllowed()) {
+      server.send(403, "text/plain", "setup required");
+      return false;
+    }
+    return true;
+  }
+  server.requestAuthentication(BASIC_AUTH, "Heltec LoRa Interface");
+  return false;
+}
+
+static String buildStatusJson() {
+  sampleLocalBattery();
+  refreshSdUsage();
+  char rxAge[32];
+  if (lastByteMs) snprintf(rxAge, sizeof(rxAge), "%lus ago", (unsigned long)((millis() - lastByteMs) / 1000));
+  else strlcpy(rxAge, "never", sizeof(rxAge));
+  String wifiIp = wifiEnabled ? (wifiApMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString()) : String("off");
+  const esp_partition_t* runningPartition = esp_ota_get_running_partition();
+  String json;
+  json.reserve(STATUS_JSON_RESERVE);
+  json = "{";
+  appendInterfaceStatusJson(json, wifiIp, runningPartition);
+  appendLinkStatusJson(json, rxAge);
+  json += "\"myNode\":\"!" + String(stats.myNodeNum, HEX) + "\",";
+  json += "\"myNodeName\":\"" + jsonEscape(nodeName(stats.myNodeNum)) + "\",";
+  appendBatteryStatusJson(json);
+  appendSdStatusJson(json);
+  json += "\"rx\":" + String(stats.packetsRx) + ",";
+  json += "\"tx\":" + String(stats.packetsTx) + ",";
+  json += "\"online\":" + String(stats.onlineNodes) + ",";
+  json += "\"total\":" + String(stats.totalNodes) + ",";
+  appendChatStatusJson(json);
+  appendMapStatusJson(json);
+  appendHeltecConfigStatusJson(json);
   json += "\"log\":\"" + jsonEscape(eventLog) + "\",";
   json += "\"channels\":[";
   bool firstChannel = true;
