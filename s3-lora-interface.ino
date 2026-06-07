@@ -2435,9 +2435,8 @@ static const ToneSegment* tonePatternFor(ToneStyle style, size_t& count) {
 static uint8_t toneCodecVolumeRegister() {
   uint8_t pct = constrain((int)toneVolumePercent, 0, 100);
   if (pct == 0) return 0x00;
-  // ES8311 DAC volume is dB-style: 0xBF is 0 dB, 0xFF is +32 dB.
-  if (pct <= 50) return (uint8_t)map(pct, 1, 50, 0x80, 0xBF);
-  return (uint8_t)map(pct, 51, 100, 0xC0, 0xFF);
+  // Keep this board at or below 0 dB; higher ES8311 gain mutes the speaker path.
+  return (uint8_t)map(pct, 1, 100, 0x90, 0xBF);
 }
 
 static float toneCodecGainDb() {
