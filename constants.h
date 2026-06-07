@@ -6,7 +6,7 @@
 #include "config/device_config.example.h"
 #endif
 
-#define FIRMWARE_VERSION "v0.1.50"
+#define FIRMWARE_VERSION "v0.1.51"
 
 #ifndef DEVICE_NAME
 #define DEVICE_NAME "s3-lora-interface"

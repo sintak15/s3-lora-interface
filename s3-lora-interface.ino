@@ -7634,6 +7634,31 @@ static void appendChatStatusJson(String& json) {
   json += "\"privateChannel\":" + String(privateChannelIndex) + ",";
 }
 
+static void appendLinkStatusJson(String& json, const char* rxAge) {
+  json += "\"frames\":" + String(framesDecoded) + ",";
+  json += "\"errors\":" + String(decodeErrors) + ",";
+  json += "\"bytes\":" + String(bytesFromRadio) + ",";
+  json += "\"txBytes\":" + String(bytesToRadio) + ",";
+  json += "\"lastByte\":\"" + jsonEscape(rxAge) + "\",";
+  json += "\"heartbeats\":" + String(heartbeatCount) + ",";
+  json += "\"apiResyncs\":" + String(apiResyncCount) + ",";
+  json += "\"nextPacketId\":" + String(nextMeshPacketId) + ",";
+  json += "\"magic1\":" + String(magic1Count) + ",";
+  json += "\"magic2\":" + String(magic2Count) + ",";
+  json += "\"streamFrames\":" + String(streamFrames) + ",";
+  json += "\"badLengths\":" + String(invalidFrameLengths) + ",";
+  json += "\"textPackets\":" + String(textPackets) + ",";
+  json += "\"telemetryPackets\":" + String(telemetryPackets) + ",";
+  json += "\"positionPackets\":" + String(positionPackets) + ",";
+  json += "\"remotePositionPackets\":" + String(remotePositionPackets) + ",";
+  json += "\"nodeInfoPackets\":" + String(nodeInfoPackets) + ",";
+  json += "\"configFrames\":" + String(configFrames) + ",";
+  json += "\"otherFrames\":" + String(otherFrames) + ",";
+  json += "\"encryptedPackets\":" + String(encryptedPackets) + ",";
+  json += "\"lastPort\":" + String(lastPortNum) + ",";
+  json += "\"serialPeek\":\"" + jsonEscape(serialPeek) + "\",";
+}
+
 static void appendMapStatusJson(String& json) {
   json += "\"gpsValid\":" + String(gpsStats.valid ? "true" : "false") + ",";
   json += "\"gpsLat\":" + String(gpsStats.latitude, 6) + ",";
@@ -7712,28 +7737,7 @@ static String buildStatusJson() {
   json += "\"toneCodecReady\":" + String(toneCodecReady ? "true" : "false") + ",";
   json += "\"toneActive\":" + String(toneActive ? "true" : "false") + ",";
   json += "\"toneLastMs\":" + String(lastToneMs) + ",";
-  json += "\"frames\":" + String(framesDecoded) + ",";
-  json += "\"errors\":" + String(decodeErrors) + ",";
-  json += "\"bytes\":" + String(bytesFromRadio) + ",";
-  json += "\"txBytes\":" + String(bytesToRadio) + ",";
-  json += "\"lastByte\":\"" + jsonEscape(rxAge) + "\",";
-  json += "\"heartbeats\":" + String(heartbeatCount) + ",";
-  json += "\"apiResyncs\":" + String(apiResyncCount) + ",";
-  json += "\"nextPacketId\":" + String(nextMeshPacketId) + ",";
-  json += "\"magic1\":" + String(magic1Count) + ",";
-  json += "\"magic2\":" + String(magic2Count) + ",";
-  json += "\"streamFrames\":" + String(streamFrames) + ",";
-  json += "\"badLengths\":" + String(invalidFrameLengths) + ",";
-  json += "\"textPackets\":" + String(textPackets) + ",";
-  json += "\"telemetryPackets\":" + String(telemetryPackets) + ",";
-  json += "\"positionPackets\":" + String(positionPackets) + ",";
-  json += "\"remotePositionPackets\":" + String(remotePositionPackets) + ",";
-  json += "\"nodeInfoPackets\":" + String(nodeInfoPackets) + ",";
-  json += "\"configFrames\":" + String(configFrames) + ",";
-  json += "\"otherFrames\":" + String(otherFrames) + ",";
-  json += "\"encryptedPackets\":" + String(encryptedPackets) + ",";
-  json += "\"lastPort\":" + String(lastPortNum) + ",";
-  json += "\"serialPeek\":\"" + jsonEscape(serialPeek) + "\",";
+  appendLinkStatusJson(json, rxAge);
   json += "\"myNode\":\"!" + String(stats.myNodeNum, HEX) + "\",";
   json += "\"myNodeName\":\"" + jsonEscape(nodeName(stats.myNodeNum)) + "\",";
   appendBatteryStatusJson(json);
