@@ -303,6 +303,7 @@ struct MapCacheHeader {
 static constexpr size_t LOG_SIZE = 8192;
 static constexpr size_t CHAT_SIZE = 4096;
 static constexpr size_t PACKET_LOG_SIZE = 4096;
+static constexpr size_t STATUS_JSON_RESERVE = LOG_SIZE + (CHAT_SIZE * 3) + 12288;
 static constexpr size_t MAX_NODES = 64;
 static constexpr size_t TX_HISTORY_COUNT = 10;
 static constexpr double NODE_NEARBY_METERS = 5000.0;
@@ -7532,6 +7533,8 @@ static void pollLoRa() {
 
 static String jsonEscape(const char* text) {
   String out;
+  if (!text) return out;
+  out.reserve(strlen(text) + 8);
   while (*text) {
     char c = *text++;
     if (c == '\\' || c == '"') {
@@ -7568,7 +7571,9 @@ static String buildStatusJson() {
   else strlcpy(rxAge, "never", sizeof(rxAge));
   String wifiIp = wifiEnabled ? (wifiApMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString()) : String("off");
   const esp_partition_t* runningPartition = esp_ota_get_running_partition();
-  String json = "{";
+  String json;
+  json.reserve(STATUS_JSON_RESERVE);
+  json = "{";
   json += "\"title\":\"" + jsonEscape(interfaceDeviceName) + "\",";
   json += "\"deviceName\":\"" + jsonEscape(interfaceDeviceName) + "\",";
   json += "\"hostname\":\"" + jsonEscape(interfaceHostname) + "\",";
