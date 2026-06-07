@@ -184,6 +184,7 @@ enum ToneStyle : uint8_t {
   TONE_STYLE_DOUBLE,
   TONE_STYLE_PULSE,
   TONE_STYLE_ALERT,
+  TONE_STYLE_LOUD,
   TONE_STYLE_COUNT
 };
 
@@ -518,7 +519,7 @@ static uint8_t backlightPercent = 10;
 static bool backlightPwmReady = false;
 static bool readableTextMode = false;
 static constexpr uint32_t TONE_SAMPLE_RATE = 16000;
-static constexpr uint8_t TONE_FRAMES_PER_SERVICE = 64;
+static constexpr uint16_t TONE_FRAMES_PER_SERVICE = 256;
 static I2SClass toneI2s;
 static bool toneI2sReady = false;
 static bool toneCodecReady = false;
@@ -2368,22 +2369,25 @@ static void backlightSliderEvent(lv_event_t* e) {
   applyBacklight();
 }
 
-static const char TONE_STYLE_OPTIONS[] = "Bwomp\nChime\nDouble\nPulse\nAlert";
+static const char TONE_STYLE_OPTIONS[] = "Bwomp\nChime\nDouble\nPulse\nAlert\nLoud";
 
 static const ToneSegment TONE_PATTERN_BWOMP[] = {
-  {0, 90}, {1540, 55, 1080}, {920, 125, 640}, {540, 150, 360}, {0, 70}
+  {0, 90}, {2200, 60, 1620}, {1400, 125, 980}, {900, 145, 680}, {0, 80}
 };
 static const ToneSegment TONE_PATTERN_CHIME[] = {
-  {0, 80}, {1760, 85, 1320}, {0, 35}, {2349, 115, 1760}, {0, 70}
+  {0, 85}, {2200, 85, 1760}, {0, 35}, {3136, 120, 2349}, {0, 75}
 };
 static const ToneSegment TONE_PATTERN_DOUBLE[] = {
-  {0, 80}, {1320, 100, 980}, {0, 45}, {1480, 130, 1080}, {0, 70}
+  {0, 85}, {1980, 105, 1480}, {0, 45}, {2350, 140, 1760}, {0, 75}
 };
 static const ToneSegment TONE_PATTERN_PULSE[] = {
-  {0, 80}, {1568, 75}, {0, 35}, {1568, 75}, {0, 35}, {1760, 100}, {0, 70}
+  {0, 85}, {2400, 80}, {0, 32}, {2400, 80}, {0, 32}, {2800, 105}, {0, 75}
 };
 static const ToneSegment TONE_PATTERN_ALERT[] = {
-  {0, 80}, {1865, 115}, {0, 35}, {1865, 115}, {0, 35}, {1245, 170, 880}, {0, 80}
+  {0, 85}, {2800, 120}, {0, 35}, {2800, 120}, {0, 35}, {1865, 175, 1320}, {0, 85}
+};
+static const ToneSegment TONE_PATTERN_LOUD[] = {
+  {0, 90}, {3200, 120}, {0, 35}, {2800, 120}, {0, 35}, {2400, 155}, {0, 90}
 };
 
 static ToneStyle clampToneStyle(uint8_t style) {
@@ -2396,6 +2400,7 @@ static const char* toneStyleName(ToneStyle style) {
     case TONE_STYLE_DOUBLE: return "Double";
     case TONE_STYLE_PULSE: return "Pulse";
     case TONE_STYLE_ALERT: return "Alert";
+    case TONE_STYLE_LOUD: return "Loud";
     case TONE_STYLE_BWOMP:
     default:
       return "Bwomp";
@@ -2425,6 +2430,9 @@ static const ToneSegment* tonePatternFor(ToneStyle style, size_t& count) {
     case TONE_STYLE_ALERT:
       count = sizeof(TONE_PATTERN_ALERT) / sizeof(TONE_PATTERN_ALERT[0]);
       return TONE_PATTERN_ALERT;
+    case TONE_STYLE_LOUD:
+      count = sizeof(TONE_PATTERN_LOUD) / sizeof(TONE_PATTERN_LOUD[0]);
+      return TONE_PATTERN_LOUD;
     case TONE_STYLE_BWOMP:
     default:
       count = sizeof(TONE_PATTERN_BWOMP) / sizeof(TONE_PATTERN_BWOMP[0]);
@@ -2662,9 +2670,13 @@ static void serviceToneAudio() {
                          : 1.0f;
       if (progress > 1.0f) progress = 1.0f;
       float frequency = startFrequency + (endFrequency - startFrequency) * progress;
-      float envelope = progress < 0.10f ? progress / 0.10f : 1.0f - ((progress - 0.10f) * 0.55f);
-      if (envelope < 0.25f) envelope = 0.25f;
-      float shaped = sinf(tonePhase) * 1.55f;
+      float envelope = 1.0f;
+      if (progress < 0.03f) envelope = progress / 0.03f;
+      else if (progress > 0.88f) envelope = (1.0f - progress) / 0.12f;
+      if (envelope < 0.0f) envelope = 0.0f;
+
+      float sine = sinf(tonePhase);
+      float shaped = (sine >= 0.0f ? 0.72f : -0.72f) + (sine * 0.42f);
       if (shaped > 1.0f) shaped = 1.0f;
       if (shaped < -1.0f) shaped = -1.0f;
       sample = (int16_t)(shaped * amplitude * envelope);
@@ -8322,8 +8334,15 @@ void setup() {
   wifiApMode = prefs.getBool("wifiApMode", true);
   readableTextMode = prefs.getBool("readableText", false);
   toneVolumePercent = constrain((int)prefs.getUChar("toneVol", 75), 0, 100);
-  toneMessageStyle = clampToneStyle(prefs.getUChar("toneMsg", (uint8_t)TONE_STYLE_BWOMP));
-  toneDirectStyle = clampToneStyle(prefs.getUChar("toneDir", (uint8_t)TONE_STYLE_DOUBLE));
+  toneMessageStyle = clampToneStyle(prefs.getUChar("toneMsg", (uint8_t)TONE_STYLE_LOUD));
+  toneDirectStyle = clampToneStyle(prefs.getUChar("toneDir", (uint8_t)TONE_STYLE_LOUD));
+  if (!prefs.getBool("toneLoudV60", false)) {
+    if (toneMessageStyle == TONE_STYLE_BWOMP) toneMessageStyle = TONE_STYLE_LOUD;
+    if (toneDirectStyle == TONE_STYLE_DOUBLE) toneDirectStyle = TONE_STYLE_LOUD;
+    prefs.putUChar("toneMsg", (uint8_t)toneMessageStyle);
+    prefs.putUChar("toneDir", (uint8_t)toneDirectStyle);
+    prefs.putBool("toneLoudV60", true);
+  }
 #if ONE_TIME_CHANNEL_PROVISION
   channelProvisionDone = prefs.getBool(CHANNEL_PROVISION_PREF_KEY, false);
   channelProvisionStep = 0;
