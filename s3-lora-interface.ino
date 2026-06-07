@@ -7618,6 +7618,38 @@ static void appendSdStatusJson(String& json) {
   json += "\"sdAppendTruncated\":" + String(sdAppendTruncated) + ",";
 }
 
+static void appendMapStatusJson(String& json) {
+  json += "\"gpsValid\":" + String(gpsStats.valid ? "true" : "false") + ",";
+  json += "\"gpsLat\":" + String(gpsStats.latitude, 6) + ",";
+  json += "\"gpsLon\":" + String(gpsStats.longitude, 6) + ",";
+  json += "\"localGpsBytes\":" + String(gpsBytesFromLocal) + ",";
+  json += "\"localGpsSentences\":" + String(localGps.sentencesWithFix()) + ",";
+  json += "\"localGpsFailedChecksum\":" + String(localGps.failedChecksum()) + ",";
+  json += "\"positionedNodes\":" + String(countPositionedNodes()) + ",";
+  json += "\"mapCacheStatus\":\"" + jsonEscape(mapCacheStatus) + "\",";
+  json += "\"mapCacheLoaded\":" + String(mapCanvasCached ? "true" : "false") + ",";
+  json += "\"mapTileRoot\":\"" + jsonEscape(mapTileRoot) + "\",";
+  json += "\"mapTileRootFound\":" + String(mapTileRootFound ? "true" : "false") + ",";
+  json += "\"heapFreeKb\":" + String(ESP.getFreeHeap() / 1024) + ",";
+  json += "\"heapMinKb\":" + String(ESP.getMinFreeHeap() / 1024) + ",";
+  json += "\"internalFreeKb\":" + String(heapCapKb(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)) + ",";
+  json += "\"internalLargestKb\":" + String(heapCapLargestKb(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)) + ",";
+  json += "\"psramFreeKb\":" + String(heapCapKb(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)) + ",";
+  json += "\"psramLargestKb\":" + String(heapCapLargestKb(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)) + ",";
+  json += "\"mapRenderLastMs\":" + String(lastMapRenderDurationMs) + ",";
+  json += "\"mapRenderMaxMs\":" + String(maxMapRenderDurationMs) + ",";
+  json += "\"mapRenderFinishedMs\":" + String(lastMapRenderFinishedMs) + ",";
+  json += "\"mapRenderCount\":" + String(mapRenderCount) + ",";
+  json += "\"mapRenderDraws\":" + String(mapRenderDraws) + ",";
+  json += "\"mapRenderCacheHits\":" + String(mapRenderCacheHits) + ",";
+  json += "\"mapRenderWorkerRunning\":" + String(mapRenderWorkerRunning ? "true" : "false") + ",";
+  json += "\"mapRenderResultPending\":" + String(mapRenderResultPending ? "true" : "false") + ",";
+  json += "\"mapRenderWorkerStarts\":" + String(mapRenderWorkerStarts) + ",";
+  json += "\"mapRenderWorkerApplies\":" + String(mapRenderWorkerApplies) + ",";
+  json += "\"mapRenderWorkerFailures\":" + String(mapRenderWorkerFailures) + ",";
+  json += "\"mapRenderWorkerBusySkips\":" + String(mapRenderWorkerBusySkips) + ",";
+}
+
 static bool requireWebAuth() {
   if (server.authenticate(webUiUser, webUiPass)) {
     if (usingDefaultWebCredentials() && !setupRouteAllowed()) {
@@ -7707,35 +7739,7 @@ static String buildStatusJson() {
   json += "\"directChatBytes\":" + String(strlen(directChatLog)) + ",";
   json += "\"secondaryChannel\":" + String(privateChannelIndex) + ",";
   json += "\"privateChannel\":" + String(privateChannelIndex) + ",";
-  json += "\"gpsValid\":" + String(gpsStats.valid ? "true" : "false") + ",";
-  json += "\"gpsLat\":" + String(gpsStats.latitude, 6) + ",";
-  json += "\"gpsLon\":" + String(gpsStats.longitude, 6) + ",";
-  json += "\"localGpsBytes\":" + String(gpsBytesFromLocal) + ",";
-  json += "\"localGpsSentences\":" + String(localGps.sentencesWithFix()) + ",";
-  json += "\"localGpsFailedChecksum\":" + String(localGps.failedChecksum()) + ",";
-  json += "\"positionedNodes\":" + String(countPositionedNodes()) + ",";
-  json += "\"mapCacheStatus\":\"" + jsonEscape(mapCacheStatus) + "\",";
-  json += "\"mapCacheLoaded\":" + String(mapCanvasCached ? "true" : "false") + ",";
-  json += "\"mapTileRoot\":\"" + jsonEscape(mapTileRoot) + "\",";
-  json += "\"mapTileRootFound\":" + String(mapTileRootFound ? "true" : "false") + ",";
-  json += "\"heapFreeKb\":" + String(ESP.getFreeHeap() / 1024) + ",";
-  json += "\"heapMinKb\":" + String(ESP.getMinFreeHeap() / 1024) + ",";
-  json += "\"internalFreeKb\":" + String(heapCapKb(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)) + ",";
-  json += "\"internalLargestKb\":" + String(heapCapLargestKb(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)) + ",";
-  json += "\"psramFreeKb\":" + String(heapCapKb(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)) + ",";
-  json += "\"psramLargestKb\":" + String(heapCapLargestKb(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)) + ",";
-  json += "\"mapRenderLastMs\":" + String(lastMapRenderDurationMs) + ",";
-  json += "\"mapRenderMaxMs\":" + String(maxMapRenderDurationMs) + ",";
-  json += "\"mapRenderFinishedMs\":" + String(lastMapRenderFinishedMs) + ",";
-  json += "\"mapRenderCount\":" + String(mapRenderCount) + ",";
-  json += "\"mapRenderDraws\":" + String(mapRenderDraws) + ",";
-  json += "\"mapRenderCacheHits\":" + String(mapRenderCacheHits) + ",";
-  json += "\"mapRenderWorkerRunning\":" + String(mapRenderWorkerRunning ? "true" : "false") + ",";
-  json += "\"mapRenderResultPending\":" + String(mapRenderResultPending ? "true" : "false") + ",";
-  json += "\"mapRenderWorkerStarts\":" + String(mapRenderWorkerStarts) + ",";
-  json += "\"mapRenderWorkerApplies\":" + String(mapRenderWorkerApplies) + ",";
-  json += "\"mapRenderWorkerFailures\":" + String(mapRenderWorkerFailures) + ",";
-  json += "\"mapRenderWorkerBusySkips\":" + String(mapRenderWorkerBusySkips) + ",";
+  appendMapStatusJson(json);
   json += "\"heltecConfig\":{";
   json += "\"ageSec\":" + String(heltecConfig.lastConfigMs ? (millis() - heltecConfig.lastConfigMs) / 1000 : -1) + ",";
   json += "\"moduleAgeSec\":" + String(heltecConfig.lastModuleMs ? (millis() - heltecConfig.lastModuleMs) / 1000 : -1) + ",";
