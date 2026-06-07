@@ -2371,19 +2371,19 @@ static void backlightSliderEvent(lv_event_t* e) {
 static const char TONE_STYLE_OPTIONS[] = "Bwomp\nChime\nDouble\nPulse\nAlert";
 
 static const ToneSegment TONE_PATTERN_BWOMP[] = {
-  {0, 20}, {1040, 45, 760}, {620, 110, 320}, {280, 145, 170}, {0, 45}
+  {0, 90}, {1540, 55, 1080}, {920, 125, 640}, {540, 150, 360}, {0, 70}
 };
 static const ToneSegment TONE_PATTERN_CHIME[] = {
-  {0, 25}, {1175, 85, 880}, {0, 35}, {1568, 115, 1175}, {0, 45}
+  {0, 80}, {1760, 85, 1320}, {0, 35}, {2349, 115, 1760}, {0, 70}
 };
 static const ToneSegment TONE_PATTERN_DOUBLE[] = {
-  {0, 25}, {640, 95, 500}, {0, 45}, {720, 125, 520}, {0, 55}
+  {0, 80}, {1320, 100, 980}, {0, 45}, {1480, 130, 1080}, {0, 70}
 };
 static const ToneSegment TONE_PATTERN_PULSE[] = {
-  {0, 20}, {880, 70}, {0, 35}, {880, 70}, {0, 35}, {880, 95}, {0, 45}
+  {0, 80}, {1568, 75}, {0, 35}, {1568, 75}, {0, 35}, {1760, 100}, {0, 70}
 };
 static const ToneSegment TONE_PATTERN_ALERT[] = {
-  {0, 20}, {740, 115}, {0, 35}, {740, 115}, {0, 35}, {520, 170, 390}, {0, 60}
+  {0, 80}, {1865, 115}, {0, 35}, {1865, 115}, {0, 35}, {1245, 170, 880}, {0, 80}
 };
 
 static ToneStyle clampToneStyle(uint8_t style) {
