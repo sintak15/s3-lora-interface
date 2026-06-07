@@ -7551,6 +7551,73 @@ static String jsonEscape(const char* text) {
   return out;
 }
 
+static void appendBatteryStatusJson(String& json) {
+  json += "\"battery\":" + String(localBattery.percent) + ",";
+  json += "\"voltage\":" + String(localBattery.batteryMv / 1000.0f, 2) + ",";
+  json += "\"fuelGauge\":\"" + String(localBattery.gaugePresent ? "MAX17048" : "none") + "\",";
+  json += "\"fuelGaugePresent\":" + String(localBattery.gaugePresent ? "true" : "false") + ",";
+  json += "\"fuelGaugeSoc\":" + String(localBattery.gaugeSoc, 1) + ",";
+  json += "\"fuelGaugeCorrectedSoc\":" + String(localBattery.correctedGaugeSoc, 1) + ",";
+  json += "\"fuelGaugeCorrectedPercent\":" + String(localBattery.correctedGaugePercent) + ",";
+  json += "\"fuelGaugeSocReliable\":" + String(localBattery.gaugeSocReliable ? "true" : "false") + ",";
+  json += "\"fuelGaugeRawSoc\":\"0x" + String(localBattery.rawGaugeSoc, HEX) + "\",";
+  json += "\"fuelGaugeQuickStartSent\":" + String(localBattery.quickStartSent ? "true" : "false") + ",";
+  json += "\"voltageBatteryEstimate\":" + String(localBattery.voltagePercent) + ",";
+  json += "\"fuelGaugeVersion\":\"0x" + String(localBattery.gaugeVersion, HEX) + "\",";
+  json += "\"senseVoltage\":" + String(localBattery.filteredPackMv / 1000.0f, 2) + ",";
+  json += "\"rawSenseVoltage\":" + String(localBattery.rawPackMv / 1000.0f, 2) + ",";
+  json += "\"batteryVoltageUnstable\":" + String(localBattery.voltageUnstable ? "true" : "false") + ",";
+  json += "\"batteryVoltageRejectedSamples\":" + String(localBattery.voltageRejectedSamples) + ",";
+  json += "\"batteryVoltageStableSamples\":" + String(localBattery.voltageStableSamples) + ",";
+  json += "\"batterySampleCount\":" + String(localBattery.sampleCount) + ",";
+  json += "\"batteryLow\":" + String(localBattery.batteryLow ? "true" : "false") + ",";
+  json += "\"batteryCritical\":" + String(localBattery.batteryCritical ? "true" : "false") + ",";
+  json += "\"batteryHealth\":\"" + String(batteryAlertLabel()) + "\",";
+  json += "\"batteryVoltageLowSustained\":" + String(localBattery.voltageLowSustained ? "true" : "false") + ",";
+  json += "\"batteryVoltageCriticalSustained\":" + String(localBattery.voltageCriticalSustained ? "true" : "false") + ",";
+  json += "\"batterySource\":\"" + jsonEscape(localBattery.percentSource) + "\",";
+  json += "\"powerState\":\"" + jsonEscape(localBattery.powerState) + "\",";
+  json += "\"batteryTrend\":" + String(localBattery.deltaMvPerMinTenths / 10.0f, 1) + ",";
+  json += "\"batteryTrendMvPerMin\":" + String(localBattery.deltaMvPerMin) + ",";
+  json += "\"batteryChargeRatePercentHr\":" + String(localBattery.chargeRatePercentHr, 1) + ",";
+  json += "\"batteryChargeRateValid\":" + String(localBattery.chargeRateValid ? "true" : "false") + ",";
+  json += "\"batteryCharging\":" + String(localBattery.charging ? "true" : "false") + ",";
+  uint32_t trendWindowSec = 0;
+  if (localBattery.trendCount >= 2) {
+    uint8_t trendWindow = sizeof(localBattery.trendMv) / sizeof(localBattery.trendMv[0]);
+    uint8_t newestIndex = (localBattery.trendHead + trendWindow - 1) % trendWindow;
+    uint8_t oldestIndex = (localBattery.trendHead + trendWindow - localBattery.trendCount) % trendWindow;
+    if (localBattery.trendMs[newestIndex] > localBattery.trendMs[oldestIndex]) {
+      trendWindowSec = (localBattery.trendMs[newestIndex] - localBattery.trendMs[oldestIndex]) / 1000;
+    }
+  }
+  json += "\"batteryTrendWindowSec\":" + String(trendWindowSec) + ",";
+  json += "\"batteryCalibrationOffsetPercent\":" + String(localBattery.calibrationOffsetTenths / 10.0f, 1) + ",";
+  json += "\"batteryCalibrationOffsetMv\":" + String(localBattery.calibrationOffsetMv) + ",";
+  json += "\"batteryLearnedVoltage\":" + String(localBattery.learnedBatteryMv / 1000.0f, 2) + ",";
+  json += "\"batteryStableSamples\":" + String(localBattery.stableSampleCount) + ",";
+}
+
+static void appendSdStatusJson(String& json) {
+  json += "\"sdAvailable\":" + String(sdStorage.available ? "true" : "false") + ",";
+  json += "\"sdStatus\":\"" + jsonEscape(sdStorage.status) + "\",";
+  json += "\"sdType\":\"" + jsonEscape(sdStorage.cardType) + "\",";
+  json += "\"sdUsedKb\":" + String(bytesToWholeKb(sdStorage.usedBytes)) + ",";
+  json += "\"sdTotalKb\":" + String(bytesToWholeKb(sdStorage.totalBytes)) + ",";
+  json += "\"sdUsedMb\":" + String(bytesToWholeMb(sdStorage.usedBytes)) + ",";
+  json += "\"sdSizeMb\":" + String(bytesToWholeMb(sdStorage.totalBytes)) + ",";
+  json += "\"sdWrites\":" + String(sdStorage.writes) + ",";
+  json += "\"sdErrors\":" + String(sdStorage.writeErrors) + ",";
+  json += "\"sdLockTimeouts\":" + String(sdLockTimeouts) + ",";
+  json += "\"sdAppendQueueDepth\":" + String((unsigned)SD_APPEND_QUEUE_DEPTH) + ",";
+  json += "\"sdAppendQueueWaiting\":" + String((unsigned)sdAppendQueueWaiting()) + ",";
+  json += "\"sdAppendQueued\":" + String(sdAppendQueued) + ",";
+  json += "\"sdAppendWritten\":" + String(sdAppendWritten) + ",";
+  json += "\"sdAppendFallbacks\":" + String(sdAppendFallbacks) + ",";
+  json += "\"sdAppendDropped\":" + String(sdAppendDropped) + ",";
+  json += "\"sdAppendTruncated\":" + String(sdAppendTruncated) + ",";
+}
+
 static bool requireWebAuth() {
   if (server.authenticate(webUiUser, webUiPass)) {
     if (usingDefaultWebCredentials() && !setupRouteAllowed()) {
@@ -7621,67 +7688,8 @@ static String buildStatusJson() {
   json += "\"serialPeek\":\"" + jsonEscape(serialPeek) + "\",";
   json += "\"myNode\":\"!" + String(stats.myNodeNum, HEX) + "\",";
   json += "\"myNodeName\":\"" + jsonEscape(nodeName(stats.myNodeNum)) + "\",";
-  json += "\"battery\":" + String(localBattery.percent) + ",";
-  json += "\"voltage\":" + String(localBattery.batteryMv / 1000.0f, 2) + ",";
-  json += "\"fuelGauge\":\"" + String(localBattery.gaugePresent ? "MAX17048" : "none") + "\",";
-  json += "\"fuelGaugePresent\":" + String(localBattery.gaugePresent ? "true" : "false") + ",";
-  json += "\"fuelGaugeSoc\":" + String(localBattery.gaugeSoc, 1) + ",";
-  json += "\"fuelGaugeCorrectedSoc\":" + String(localBattery.correctedGaugeSoc, 1) + ",";
-  json += "\"fuelGaugeCorrectedPercent\":" + String(localBattery.correctedGaugePercent) + ",";
-  json += "\"fuelGaugeSocReliable\":" + String(localBattery.gaugeSocReliable ? "true" : "false") + ",";
-  json += "\"fuelGaugeRawSoc\":\"0x" + String(localBattery.rawGaugeSoc, HEX) + "\",";
-  json += "\"fuelGaugeQuickStartSent\":" + String(localBattery.quickStartSent ? "true" : "false") + ",";
-  json += "\"voltageBatteryEstimate\":" + String(localBattery.voltagePercent) + ",";
-  json += "\"fuelGaugeVersion\":\"0x" + String(localBattery.gaugeVersion, HEX) + "\",";
-  json += "\"senseVoltage\":" + String(localBattery.filteredPackMv / 1000.0f, 2) + ",";
-  json += "\"rawSenseVoltage\":" + String(localBattery.rawPackMv / 1000.0f, 2) + ",";
-  json += "\"batteryVoltageUnstable\":" + String(localBattery.voltageUnstable ? "true" : "false") + ",";
-  json += "\"batteryVoltageRejectedSamples\":" + String(localBattery.voltageRejectedSamples) + ",";
-  json += "\"batteryVoltageStableSamples\":" + String(localBattery.voltageStableSamples) + ",";
-  json += "\"batterySampleCount\":" + String(localBattery.sampleCount) + ",";
-  json += "\"batteryLow\":" + String(localBattery.batteryLow ? "true" : "false") + ",";
-  json += "\"batteryCritical\":" + String(localBattery.batteryCritical ? "true" : "false") + ",";
-  json += "\"batteryHealth\":\"" + String(batteryAlertLabel()) + "\",";
-  json += "\"batteryVoltageLowSustained\":" + String(localBattery.voltageLowSustained ? "true" : "false") + ",";
-  json += "\"batteryVoltageCriticalSustained\":" + String(localBattery.voltageCriticalSustained ? "true" : "false") + ",";
-  json += "\"batterySource\":\"" + jsonEscape(localBattery.percentSource) + "\",";
-  json += "\"powerState\":\"" + jsonEscape(localBattery.powerState) + "\",";
-  json += "\"batteryTrend\":" + String(localBattery.deltaMvPerMinTenths / 10.0f, 1) + ",";
-  json += "\"batteryTrendMvPerMin\":" + String(localBattery.deltaMvPerMin) + ",";
-  json += "\"batteryChargeRatePercentHr\":" + String(localBattery.chargeRatePercentHr, 1) + ",";
-  json += "\"batteryChargeRateValid\":" + String(localBattery.chargeRateValid ? "true" : "false") + ",";
-  json += "\"batteryCharging\":" + String(localBattery.charging ? "true" : "false") + ",";
-  uint32_t trendWindowSec = 0;
-  if (localBattery.trendCount >= 2) {
-    uint8_t trendWindow = sizeof(localBattery.trendMv) / sizeof(localBattery.trendMv[0]);
-    uint8_t newestIndex = (localBattery.trendHead + trendWindow - 1) % trendWindow;
-    uint8_t oldestIndex = (localBattery.trendHead + trendWindow - localBattery.trendCount) % trendWindow;
-    if (localBattery.trendMs[newestIndex] > localBattery.trendMs[oldestIndex]) {
-      trendWindowSec = (localBattery.trendMs[newestIndex] - localBattery.trendMs[oldestIndex]) / 1000;
-    }
-  }
-  json += "\"batteryTrendWindowSec\":" + String(trendWindowSec) + ",";
-  json += "\"batteryCalibrationOffsetPercent\":" + String(localBattery.calibrationOffsetTenths / 10.0f, 1) + ",";
-  json += "\"batteryCalibrationOffsetMv\":" + String(localBattery.calibrationOffsetMv) + ",";
-  json += "\"batteryLearnedVoltage\":" + String(localBattery.learnedBatteryMv / 1000.0f, 2) + ",";
-  json += "\"batteryStableSamples\":" + String(localBattery.stableSampleCount) + ",";
-  json += "\"sdAvailable\":" + String(sdStorage.available ? "true" : "false") + ",";
-  json += "\"sdStatus\":\"" + jsonEscape(sdStorage.status) + "\",";
-  json += "\"sdType\":\"" + jsonEscape(sdStorage.cardType) + "\",";
-  json += "\"sdUsedKb\":" + String(bytesToWholeKb(sdStorage.usedBytes)) + ",";
-  json += "\"sdTotalKb\":" + String(bytesToWholeKb(sdStorage.totalBytes)) + ",";
-  json += "\"sdUsedMb\":" + String(bytesToWholeMb(sdStorage.usedBytes)) + ",";
-  json += "\"sdSizeMb\":" + String(bytesToWholeMb(sdStorage.totalBytes)) + ",";
-  json += "\"sdWrites\":" + String(sdStorage.writes) + ",";
-  json += "\"sdErrors\":" + String(sdStorage.writeErrors) + ",";
-  json += "\"sdLockTimeouts\":" + String(sdLockTimeouts) + ",";
-  json += "\"sdAppendQueueDepth\":" + String((unsigned)SD_APPEND_QUEUE_DEPTH) + ",";
-  json += "\"sdAppendQueueWaiting\":" + String((unsigned)sdAppendQueueWaiting()) + ",";
-  json += "\"sdAppendQueued\":" + String(sdAppendQueued) + ",";
-  json += "\"sdAppendWritten\":" + String(sdAppendWritten) + ",";
-  json += "\"sdAppendFallbacks\":" + String(sdAppendFallbacks) + ",";
-  json += "\"sdAppendDropped\":" + String(sdAppendDropped) + ",";
-  json += "\"sdAppendTruncated\":" + String(sdAppendTruncated) + ",";
+  appendBatteryStatusJson(json);
+  appendSdStatusJson(json);
   json += "\"rx\":" + String(stats.packetsRx) + ",";
   json += "\"tx\":" + String(stats.packetsTx) + ",";
   json += "\"online\":" + String(stats.onlineNodes) + ",";
