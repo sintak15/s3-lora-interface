@@ -7896,6 +7896,43 @@ static void appendHeltecConfigStatusJson(String& json) {
   json += "\"text\":\"" + jsonEscape(heltecConfig.statusMessage.node_status) + "\"}}},";
 }
 
+static void appendChannelsStatusJson(String& json) {
+  json += "\"channels\":[";
+  bool firstChannel = true;
+  for (size_t i = 0; i < MAX_CHANNELS; i++) {
+    if (channels[i].index < 0) continue;
+    if (!firstChannel) json += ",";
+    firstChannel = false;
+    json += "{\"index\":" + String(channels[i].index) + ",";
+    json += "\"enabled\":" + String(channels[i].enabled ? "true" : "false") + ",";
+    json += "\"role\":\"" + jsonEscape(channels[i].role) + "\",";
+    json += "\"name\":\"" + jsonEscape(channels[i].name) + "\",";
+    json += "\"uplink\":" + String(channels[i].uplink ? "true" : "false") + ",";
+    json += "\"downlink\":" + String(channels[i].downlink ? "true" : "false") + ",";
+    json += "\"pskSize\":" + String(channels[i].pskSize) + ",";
+    json += "\"hasPositionPrecision\":" + String(channels[i].hasPositionPrecision ? "true" : "false") + ",";
+    json += "\"positionPrecision\":" + String(channels[i].positionPrecision) + "}";
+  }
+  json += "],";
+}
+
+static void appendNodesStatusJson(String& json) {
+  json += "\"nodes\":[";
+  for (size_t i = 0; i < nodeCount; i++) {
+    if (i) json += ",";
+    json += "{\"num\":\"!" + String(nodes[i].num, HEX) + "\",";
+    json += "\"name\":\"" + jsonEscape(nodes[i].name) + "\",";
+    json += "\"snr\":" + String(nodes[i].snr, 1) + ",";
+    json += "\"age\":" + String((millis() - nodes[i].lastHeardMs) / 1000) + ",";
+    json += "\"hasPosition\":" + String(nodes[i].hasPosition ? "true" : "false") + ",";
+    json += "\"lat\":" + String(nodes[i].latitude, 6) + ",";
+    json += "\"lon\":" + String(nodes[i].longitude, 6) + ",";
+    json += "\"alt\":" + String(nodes[i].altitude) + ",";
+    json += "\"positionAge\":" + String(nodes[i].lastPositionMs ? (millis() - nodes[i].lastPositionMs) / 1000 : 0) + "}";
+  }
+  json += "]";
+}
+
 static bool requireWebAuth() {
   if (server.authenticate(webUiUser, webUiPass)) {
     if (usingDefaultWebCredentials() && !setupRouteAllowed()) {
@@ -7933,37 +7970,9 @@ static String buildStatusJson() {
   appendMapStatusJson(json);
   appendHeltecConfigStatusJson(json);
   json += "\"log\":\"" + jsonEscape(eventLog) + "\",";
-  json += "\"channels\":[";
-  bool firstChannel = true;
-  for (size_t i = 0; i < MAX_CHANNELS; i++) {
-    if (channels[i].index < 0) continue;
-    if (!firstChannel) json += ",";
-    firstChannel = false;
-    json += "{\"index\":" + String(channels[i].index) + ",";
-    json += "\"enabled\":" + String(channels[i].enabled ? "true" : "false") + ",";
-    json += "\"role\":\"" + jsonEscape(channels[i].role) + "\",";
-    json += "\"name\":\"" + jsonEscape(channels[i].name) + "\",";
-    json += "\"uplink\":" + String(channels[i].uplink ? "true" : "false") + ",";
-    json += "\"downlink\":" + String(channels[i].downlink ? "true" : "false") + ",";
-    json += "\"pskSize\":" + String(channels[i].pskSize) + ",";
-    json += "\"hasPositionPrecision\":" + String(channels[i].hasPositionPrecision ? "true" : "false") + ",";
-    json += "\"positionPrecision\":" + String(channels[i].positionPrecision) + "}";
-  }
-  json += "],";
-  json += "\"nodes\":[";
-  for (size_t i = 0; i < nodeCount; i++) {
-    if (i) json += ",";
-    json += "{\"num\":\"!" + String(nodes[i].num, HEX) + "\",";
-    json += "\"name\":\"" + jsonEscape(nodes[i].name) + "\",";
-    json += "\"snr\":" + String(nodes[i].snr, 1) + ",";
-    json += "\"age\":" + String((millis() - nodes[i].lastHeardMs) / 1000) + ",";
-    json += "\"hasPosition\":" + String(nodes[i].hasPosition ? "true" : "false") + ",";
-    json += "\"lat\":" + String(nodes[i].latitude, 6) + ",";
-    json += "\"lon\":" + String(nodes[i].longitude, 6) + ",";
-    json += "\"alt\":" + String(nodes[i].altitude) + ",";
-    json += "\"positionAge\":" + String(nodes[i].lastPositionMs ? (millis() - nodes[i].lastPositionMs) / 1000 : 0) + "}";
-  }
-  json += "]}";
+  appendChannelsStatusJson(json);
+  appendNodesStatusJson(json);
+  json += "}";
   return json;
 }
 
