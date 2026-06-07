@@ -2375,22 +2375,22 @@ static const char TONE_STYLE_OPTIONS[] = "Bwomp\nChime\nDouble\nPulse\nAlert\nLo
 static const char TONE_BOOST_OPTIONS[] = "0 dB\n+3 dB\n+6 dB\n+9 dB\n+12 dB\nMax";
 
 static const ToneSegment TONE_PATTERN_BWOMP[] = {
-  {0, 90}, {2200, 60, 1620}, {1400, 125, 980}, {900, 145, 680}, {0, 80}
+  {0, 100}, {1560, 120, 1120}, {860, 260, 620}, {0, 140}
 };
 static const ToneSegment TONE_PATTERN_CHIME[] = {
-  {0, 85}, {2200, 85, 1760}, {0, 35}, {3136, 120, 2349}, {0, 75}
+  {0, 100}, {1320, 220, 1560}, {0, 80}, {1760, 300, 1320}, {0, 150}
 };
 static const ToneSegment TONE_PATTERN_DOUBLE[] = {
-  {0, 85}, {1980, 105, 1480}, {0, 45}, {2350, 140, 1760}, {0, 75}
+  {0, 100}, {1240, 220, 980}, {0, 90}, {1480, 280, 1100}, {0, 150}
 };
 static const ToneSegment TONE_PATTERN_PULSE[] = {
-  {0, 85}, {2400, 80}, {0, 32}, {2400, 80}, {0, 32}, {2800, 105}, {0, 75}
+  {0, 100}, {1760, 160}, {0, 70}, {1760, 160}, {0, 70}, {1980, 220}, {0, 150}
 };
 static const ToneSegment TONE_PATTERN_ALERT[] = {
-  {0, 85}, {2800, 120}, {0, 35}, {2800, 120}, {0, 35}, {1865, 175, 1320}, {0, 85}
+  {0, 100}, {1960, 240}, {0, 80}, {1960, 240}, {0, 80}, {1450, 320, 980}, {0, 160}
 };
 static const ToneSegment TONE_PATTERN_LOUD[] = {
-  {0, 90}, {3200, 120}, {0, 35}, {2800, 120}, {0, 35}, {2400, 155}, {0, 90}
+  {0, 110}, {1320, 260, 1560}, {0, 80}, {1760, 280, 1320}, {0, 80}, {1480, 340, 1180}, {0, 170}
 };
 
 static uint8_t clampToneBoost(uint8_t level) {
@@ -2715,13 +2715,22 @@ static void serviceToneAudio() {
                          : 1.0f;
       if (progress > 1.0f) progress = 1.0f;
       float frequency = startFrequency + (endFrequency - startFrequency) * progress;
+      uint32_t frameIndexInSegment = activeToneSegmentTotalFrames > activeToneFramesRemaining
+                                       ? activeToneSegmentTotalFrames - activeToneFramesRemaining + i
+                                       : i;
+      uint32_t framesLeftInSegment = activeToneSegmentTotalFrames > frameIndexInSegment
+                                       ? activeToneSegmentTotalFrames - frameIndexInSegment
+                                       : 0;
+      uint32_t rampFrames = min<uint32_t>(TONE_SAMPLE_RATE / 25U, activeToneSegmentTotalFrames / 3U);
+      if (rampFrames == 0) rampFrames = 1;
       float envelope = 1.0f;
-      if (progress < 0.03f) envelope = progress / 0.03f;
-      else if (progress > 0.88f) envelope = (1.0f - progress) / 0.12f;
+      if (frameIndexInSegment < rampFrames) envelope = (float)frameIndexInSegment / (float)rampFrames;
+      if (framesLeftInSegment < rampFrames) envelope = min(envelope, (float)framesLeftInSegment / (float)rampFrames);
       if (envelope < 0.0f) envelope = 0.0f;
 
       float sine = sinf(tonePhase);
-      float shaped = (sine >= 0.0f ? 0.72f : -0.72f) + (sine * 0.42f);
+      float shaped = sine + (0.18f * sinf(tonePhase * 3.0f));
+      shaped *= 1.22f;
       if (shaped > 1.0f) shaped = 1.0f;
       if (shaped < -1.0f) shaped = -1.0f;
       sample = (int16_t)(shaped * amplitude * envelope);
