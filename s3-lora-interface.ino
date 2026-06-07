@@ -14,6 +14,8 @@
 #include <FS.h>
 #include <TFT_eSPI.h>
 #include <ESP_I2S.h>
+#include <freertos/queue.h>
+#include <freertos/semphr.h>
 #include <lvgl.h>
 #include <TinyGPSPlus.h>
 #include <pb_decode.h>
@@ -93,14 +95,46 @@ struct HeltecConfigCache {
   bool hasDevice = false;
   bool hasPosition = false;
   bool hasPower = false;
+  bool hasNetwork = false;
+  bool hasDisplay = false;
+  bool hasBluetooth = false;
+  bool hasSecurity = false;
   bool hasSerial = false;
+  bool hasMqtt = false;
+  bool hasExternalNotification = false;
+  bool hasStoreForward = false;
+  bool hasRangeTest = false;
+  bool hasTelemetry = false;
+  bool hasCannedMessage = false;
+  bool hasAudio = false;
+  bool hasNeighborInfo = false;
+  bool hasAmbientLighting = false;
+  bool hasDetectionSensor = false;
+  bool hasPaxcounter = false;
+  bool hasStatusMessage = false;
   uint32_t lastConfigMs = 0;
   uint32_t lastModuleMs = 0;
   meshtastic_Config_LoRaConfig lora = meshtastic_Config_LoRaConfig_init_zero;
   meshtastic_Config_DeviceConfig device = meshtastic_Config_DeviceConfig_init_zero;
   meshtastic_Config_PositionConfig position = meshtastic_Config_PositionConfig_init_zero;
   meshtastic_Config_PowerConfig power = meshtastic_Config_PowerConfig_init_zero;
+  meshtastic_Config_NetworkConfig network = meshtastic_Config_NetworkConfig_init_zero;
+  meshtastic_Config_DisplayConfig display = meshtastic_Config_DisplayConfig_init_zero;
+  meshtastic_Config_BluetoothConfig bluetooth = meshtastic_Config_BluetoothConfig_init_zero;
+  meshtastic_Config_SecurityConfig security = meshtastic_Config_SecurityConfig_init_zero;
   meshtastic_ModuleConfig_SerialConfig serial = meshtastic_ModuleConfig_SerialConfig_init_zero;
+  meshtastic_ModuleConfig_MQTTConfig mqtt = meshtastic_ModuleConfig_MQTTConfig_init_zero;
+  meshtastic_ModuleConfig_ExternalNotificationConfig externalNotification = meshtastic_ModuleConfig_ExternalNotificationConfig_init_zero;
+  meshtastic_ModuleConfig_StoreForwardConfig storeForward = meshtastic_ModuleConfig_StoreForwardConfig_init_zero;
+  meshtastic_ModuleConfig_RangeTestConfig rangeTest = meshtastic_ModuleConfig_RangeTestConfig_init_zero;
+  meshtastic_ModuleConfig_TelemetryConfig telemetry = meshtastic_ModuleConfig_TelemetryConfig_init_zero;
+  meshtastic_ModuleConfig_CannedMessageConfig cannedMessage = meshtastic_ModuleConfig_CannedMessageConfig_init_zero;
+  meshtastic_ModuleConfig_AudioConfig audio = meshtastic_ModuleConfig_AudioConfig_init_zero;
+  meshtastic_ModuleConfig_NeighborInfoConfig neighborInfo = meshtastic_ModuleConfig_NeighborInfoConfig_init_zero;
+  meshtastic_ModuleConfig_AmbientLightingConfig ambientLighting = meshtastic_ModuleConfig_AmbientLightingConfig_init_zero;
+  meshtastic_ModuleConfig_DetectionSensorConfig detectionSensor = meshtastic_ModuleConfig_DetectionSensorConfig_init_zero;
+  meshtastic_ModuleConfig_PaxcounterConfig paxcounter = meshtastic_ModuleConfig_PaxcounterConfig_init_zero;
+  meshtastic_ModuleConfig_StatusMessageConfig statusMessage = meshtastic_ModuleConfig_StatusMessageConfig_init_zero;
 };
 
 struct DeviceStats {
@@ -212,7 +246,7 @@ struct LocalBatteryStats {
   int correctedGaugePercent = 100;
   uint8_t trendSampleCount = 0;
   uint8_t stableSampleCount = 0;
-  char powerState[24] = "ext power";
+  char powerState[36] = "ext power";
   char percentSource[32] = "MAX17048";
   uint16_t gaugeVersion = 0;
   uint16_t rawGaugeSoc = 0;
@@ -227,6 +261,10 @@ struct LocalBatteryStats {
   uint8_t trendCount = 0;
   uint32_t trendMv[12] = {};
   uint32_t trendMs[12] = {};
+  uint32_t sampleCount = 0;
+  uint32_t voltageRejectedSamples = 0;
+  uint8_t voltageStableSamples = 0;
+  bool voltageUnstable = false;
 };
 
 struct SdStorageStats {
@@ -278,6 +316,36 @@ static constexpr int MAP_TILE_MIN_ZOOM = 10;
 static constexpr int MAP_TILE_MAX_ZOOM = 14;
 static constexpr uint32_t MAP_CACHE_MAGIC = 0x4D415031UL;
 static constexpr uint16_t MAP_CACHE_VERSION = 1;
+
+struct MapRenderJob {
+  uint32_t id = 0;
+  double lat = 0.0;
+  double lon = 0.0;
+  int zoom = MAP_TILE_MAX_ZOOM;
+  uint16_t plotH = MAP_PLOT_H_NORMAL;
+  long centerTileX = 0;
+  long centerTileY = 0;
+  int centerPixelX = 0;
+  int centerPixelY = 0;
+  char tileRoot[64] = "";
+};
+
+struct MapRenderResult {
+  uint32_t id = 0;
+  double lat = 0.0;
+  double lon = 0.0;
+  int zoom = MAP_TILE_MAX_ZOOM;
+  uint16_t plotH = MAP_PLOT_H_NORMAL;
+  long centerTileX = 0;
+  long centerTileY = 0;
+  int centerPixelX = 0;
+  int centerPixelY = 0;
+  bool centerTileFound = false;
+  bool drewTiles = false;
+  uint32_t durationMs = 0;
+  char status[48] = "";
+};
+
 static constexpr int8_t PUBLIC_CHANNEL_INDEX = 0;
 static constexpr uint32_t BROADCAST_ADDR = 0xFFFFFFFFUL;
 #ifndef ONE_TIME_CHANNEL_PROVISION
@@ -308,6 +376,13 @@ static const char* DEFAULT_MAP_TILE_ROOT = "/s3-lora/tiles";
 static const char* SD_MAP_CACHE_PATH = "/s3-lora/map_cache.bin";
 static const char* SD_LAST_LOCATION_PATH = "/s3-lora/last_location.txt";
 static const char* SD_STATUS_SNAPSHOT_PATH = "/s3-lora/status_snapshot.json";
+static constexpr size_t SD_APPEND_QUEUE_DEPTH = 12;
+static constexpr size_t SD_APPEND_PATH_MAX = 64;
+static constexpr size_t SD_APPEND_LINE_MAX = 512;
+struct SdAppendItem {
+  char path[SD_APPEND_PATH_MAX];
+  char line[SD_APPEND_LINE_MAX];
+};
 static char interfaceDeviceName[33] = DEVICE_NAME;
 static char interfaceHostname[33] = DEVICE_HOSTNAME;
 static char interfaceApSsid[33] = INTERFACE_AP_SSID;
@@ -457,7 +532,12 @@ static lv_disp_t* display = nullptr;
 static lv_color_t lvBuf1[SCREEN_W * 24];
 static lv_color_t lvBuf2[SCREEN_W * 24];
 static lv_color_t* mapCanvasBuf = nullptr;
-static uint16_t mapReadBuf[MAP_PLOT_W];
+static lv_color_t* mapWorkerBuf = nullptr;
+static SemaphoreHandle_t sdMutex = nullptr;
+static QueueHandle_t sdAppendQueue = nullptr;
+static TaskHandle_t sdAppendTaskHandle = nullptr;
+static QueueHandle_t mapRenderResultQueue = nullptr;
+static TaskHandle_t mapRenderTaskHandle = nullptr;
 static lv_obj_t* pageLauncher = nullptr;
 static lv_obj_t* pageOperate = nullptr;
 static lv_obj_t* pageDiagnose = nullptr;
@@ -572,6 +652,21 @@ static bool mapTileRootFound = false;
 static bool lastMapLocationValid = false;
 static bool mapNodeDetailViewActive = false;
 static uint32_t lastMapCacheSaveMs = 0;
+static uint32_t lastMapRenderDurationMs = 0;
+static uint32_t maxMapRenderDurationMs = 0;
+static uint32_t lastMapRenderFinishedMs = 0;
+static uint32_t mapRenderCount = 0;
+static uint32_t mapRenderDraws = 0;
+static uint32_t mapRenderCacheHits = 0;
+static uint32_t mapRenderWorkerStarts = 0;
+static uint32_t mapRenderWorkerFailures = 0;
+static uint32_t mapRenderWorkerApplies = 0;
+static uint32_t mapRenderWorkerBusySkips = 0;
+static volatile bool mapRenderWorkerRunning = false;
+static volatile bool mapRenderResultPending = false;
+static bool mapRenderRetryPending = false;
+static MapRenderJob mapRenderActiveJob;
+static uint32_t nextMapRenderJobId = 1;
 static uint32_t selectedNodeNum = 0;
 static uint32_t lastNodeListRefreshMs = 0;
 static uint32_t nodeListClearedMs = 0;
@@ -595,6 +690,12 @@ static uint32_t touchSamples = 0;
 static uint32_t lastTouchMs = 0;
 static uint16_t lastTouchX = 0;
 static uint16_t lastTouchY = 0;
+static uint32_t sdLockTimeouts = 0;
+static uint32_t sdAppendQueued = 0;
+static uint32_t sdAppendWritten = 0;
+static uint32_t sdAppendFallbacks = 0;
+static uint32_t sdAppendDropped = 0;
+static uint32_t sdAppendTruncated = 0;
 static constexpr uint32_t UI_DIRTY_DASHBOARD = 1UL << 0;
 static constexpr uint32_t UI_DIRTY_CHAT = 1UL << 1;
 static constexpr uint32_t UI_DIRTY_NODES = 1UL << 2;
@@ -691,9 +792,89 @@ static void allocateRuntimeBuffers() {
   if (!mapCanvasBuf) {
     mapCanvasBuf = (lv_color_t*)allocatePsramBuffer(MAP_CANVAS_BYTES, "mapCanvas");
   }
+  if (!mapWorkerBuf) {
+    mapWorkerBuf = (lv_color_t*)allocatePsramBuffer(MAP_CANVAS_BYTES, "mapWorker");
+  }
+}
+
+static void initSdMutex() {
+  if (!sdMutex) {
+    sdMutex = xSemaphoreCreateRecursiveMutex();
+    Serial.printf("[sd] mutex %s\n", sdMutex ? "ready" : "failed");
+  }
+}
+
+static bool lockSd(uint32_t timeoutMs = 2000) {
+  if (!sdMutex) return true;
+  if (xSemaphoreTakeRecursive(sdMutex, pdMS_TO_TICKS(timeoutMs)) == pdTRUE) return true;
+  sdLockTimeouts++;
+  strlcpy(sdStorage.status, "busy", sizeof(sdStorage.status));
+  return false;
+}
+
+static void unlockSd() {
+  if (sdMutex) xSemaphoreGiveRecursive(sdMutex);
+}
+
+struct SdLock {
+  bool locked;
+  explicit SdLock(uint32_t timeoutMs = 2000) : locked(lockSd(timeoutMs)) {}
+  ~SdLock() {
+    if (locked) unlockSd();
+  }
+  explicit operator bool() const {
+    return locked;
+  }
+};
+
+static bool writeSdLineNow(const char* path, const char* line);
+
+static UBaseType_t sdAppendQueueWaiting() {
+  return sdAppendQueue ? uxQueueMessagesWaiting(sdAppendQueue) : 0;
+}
+
+static void sdAppendTask(void*) {
+  SdAppendItem item;
+  for (;;) {
+    if (xQueueReceive(sdAppendQueue, &item, portMAX_DELAY) == pdTRUE) {
+      if (writeSdLineNow(item.path, item.line)) {
+        sdAppendWritten++;
+      } else {
+        sdAppendDropped++;
+      }
+    }
+  }
+}
+
+static void initSdAppendWorker() {
+  if (!sdAppendQueue) {
+    sdAppendQueue = xQueueCreate(SD_APPEND_QUEUE_DEPTH, sizeof(SdAppendItem));
+    Serial.printf("[sd] append queue %s depth=%u item=%u\n",
+                  sdAppendQueue ? "ready" : "failed",
+                  (unsigned)SD_APPEND_QUEUE_DEPTH,
+                  (unsigned)sizeof(SdAppendItem));
+  }
+  if (sdAppendQueue && !sdAppendTaskHandle) {
+    BaseType_t ok = xTaskCreatePinnedToCore(sdAppendTask, "sdAppend", 6144, nullptr, 1, &sdAppendTaskHandle, 0);
+    Serial.printf("[sd] append worker %s\n", ok == pdPASS ? "started" : "failed");
+    if (ok != pdPASS) {
+      sdAppendTaskHandle = nullptr;
+      vQueueDelete(sdAppendQueue);
+      sdAppendQueue = nullptr;
+    }
+  }
+}
+
+static void initMapRenderWorker() {
+  if (!mapRenderResultQueue) {
+    mapRenderResultQueue = xQueueCreate(1, sizeof(MapRenderResult));
+    Serial.printf("[map] result queue %s\n", mapRenderResultQueue ? "ready" : "failed");
+  }
 }
 
 static size_t loadSdTextTail(const char* path, char* buffer, size_t bufferSize) {
+  SdLock lock;
+  if (!lock) return 0;
   if (!sdStorage.available || !path || !buffer || bufferSize == 0 || !SD_MMC.exists(path)) return 0;
   File file = SD_MMC.open(path, FILE_READ);
   if (!file) return 0;
@@ -771,8 +952,13 @@ static void loadChatLogsFromSd() {
   refreshChatViews();
 }
 
-static bool appendSdLine(const char* path, const char* line) {
+static bool writeSdLineNow(const char* path, const char* line) {
   if (!sdStorage.available || !path || !line) return false;
+  SdLock lock;
+  if (!lock) {
+    sdStorage.writeErrors++;
+    return false;
+  }
   File file = SD_MMC.open(path, FILE_APPEND);
   if (!file) {
     sdStorage.writeErrors++;
@@ -792,7 +978,39 @@ static bool appendSdLine(const char* path, const char* line) {
   return ok;
 }
 
+static bool appendSdLine(const char* path, const char* line) {
+  if (!sdStorage.available || !path || !line) return false;
+
+  if (sdAppendQueue && sdAppendTaskHandle) {
+    SdAppendItem item = {};
+    strlcpy(item.path, path, sizeof(item.path));
+    size_t lineLen = strlcpy(item.line, line, sizeof(item.line));
+    if (lineLen >= sizeof(item.line)) {
+      sdAppendTruncated++;
+      item.line[sizeof(item.line) - 2] = '\n';
+      item.line[sizeof(item.line) - 1] = '\0';
+    }
+    if (xQueueSend(sdAppendQueue, &item, 0) == pdTRUE) {
+      sdAppendQueued++;
+      strlcpy(sdStorage.status, "queued", sizeof(sdStorage.status));
+      return true;
+    }
+  }
+
+  sdAppendFallbacks++;
+  bool ok = writeSdLineNow(path, line);
+  if (!ok) sdAppendDropped++;
+  return ok;
+}
+
 static void initSdStorage() {
+  SdLock lock(5000);
+  if (!lock) {
+    sdStorage.available = false;
+    strlcpy(sdStorage.status, "mount busy", sizeof(sdStorage.status));
+    Serial.println("[sd] mount skipped: busy");
+    return;
+  }
   mapTileRootFound = false;
   strlcpy(mapTileRoot, DEFAULT_MAP_TILE_ROOT, sizeof(mapTileRoot));
   Serial.printf("[sd] setPins clk=%d cmd=%d d0=%d d1=%d d2=%d d3=%d oneBit=%s freq=%d\n",
@@ -882,6 +1100,8 @@ static void buildTilePath(const char* root, int zoom, long x, long y, char* path
 }
 
 static uint8_t scoreMapTileRoot(const char* root) {
+  SdLock lock;
+  if (!lock) return 0;
   if (!sdStorage.available || !root || !root[0]) return 0;
   uint8_t score = 0;
   for (int zoom = MAP_TILE_MIN_ZOOM; zoom <= MAP_TILE_MAX_ZOOM; zoom++) {
@@ -910,6 +1130,13 @@ static uint8_t scoreMapTileRoot(const char* root) {
 }
 
 static void detectMapTileRoot(bool logResult) {
+  SdLock lock;
+  if (!lock) {
+    mapTileRootFound = false;
+    strlcpy(mapTileRoot, DEFAULT_MAP_TILE_ROOT, sizeof(mapTileRoot));
+    if (logResult) Serial.println("[tiles] root scan skipped: SD busy");
+    return;
+  }
   static const char* candidates[] = {
     "/s3-lora/tiles",
     "/tiles",
@@ -940,6 +1167,11 @@ static void detectMapTileRoot(bool logResult) {
 }
 
 static void printMapTileRootCandidates() {
+  SdLock lock(10000);
+  if (!lock) {
+    Serial.println("[tileroots] SD busy");
+    return;
+  }
   static const char* candidates[] = {
     "/s3-lora/tiles",
     "/tiles",
@@ -981,6 +1213,11 @@ static long parseTileNumber(const char* text) {
 }
 
 static void printSdTileSummary() {
+  SdLock lock(30000);
+  if (!lock) {
+    Serial.println("[tiles] SD busy");
+    return;
+  }
   Serial.println("[tiles] begin");
   if (!sdStorage.available) {
     Serial.printf("[tiles] SD unavailable: %s\n", sdStorage.status);
@@ -1102,6 +1339,11 @@ static void inspectTileYRange(File& xDir, uint32_t* count, long* minY, long* max
 }
 
 static void printSdTileFastSummary() {
+  SdLock lock(10000);
+  if (!lock) {
+    Serial.println("[tilesfast] SD busy");
+    return;
+  }
   Serial.println("[tilesfast] begin");
   if (!sdStorage.available) {
     Serial.printf("[tilesfast] SD unavailable: %s\n", sdStorage.status);
@@ -1207,6 +1449,8 @@ static void saveLastLocationToSd(double lat, double lon, int32_t alt) {
   defaultMapAlt = alt;
   lastMapLocationValid = true;
   if (!sdStorage.available) return;
+  SdLock lock;
+  if (!lock) return;
   if (SD_MMC.exists(SD_LAST_LOCATION_PATH)) SD_MMC.remove(SD_LAST_LOCATION_PATH);
   File file = SD_MMC.open(SD_LAST_LOCATION_PATH, FILE_WRITE);
   if (!file) return;
@@ -1215,6 +1459,8 @@ static void saveLastLocationToSd(double lat, double lon, int32_t alt) {
 }
 
 static bool loadLastLocationFromSd() {
+  SdLock lock;
+  if (!lock) return false;
   if (!sdStorage.available || !SD_MMC.exists(SD_LAST_LOCATION_PATH)) return false;
   File file = SD_MMC.open(SD_LAST_LOCATION_PATH, FILE_READ);
   if (!file) return false;
@@ -1308,6 +1554,27 @@ static unsigned long bytesToWholeMb(uint64_t bytes) {
   return (unsigned long)((bytes + (1024ULL * 1024ULL - 1ULL)) / (1024ULL * 1024ULL));
 }
 
+static unsigned long heapCapKb(uint32_t caps) {
+  return bytesToWholeKb(heap_caps_get_free_size(caps));
+}
+
+static unsigned long heapCapLargestKb(uint32_t caps) {
+  return bytesToWholeKb(heap_caps_get_largest_free_block(caps));
+}
+
+static void recordMapRenderTimingDuration(uint32_t durationMs, bool drewTiles, bool cacheHit) {
+  lastMapRenderDurationMs = durationMs;
+  if (lastMapRenderDurationMs > maxMapRenderDurationMs) maxMapRenderDurationMs = lastMapRenderDurationMs;
+  lastMapRenderFinishedMs = millis();
+  mapRenderCount++;
+  if (drewTiles) mapRenderDraws++;
+  if (cacheHit) mapRenderCacheHits++;
+}
+
+static void recordMapRenderTiming(uint32_t startedMs, bool drewTiles, bool cacheHit) {
+  recordMapRenderTimingDuration(millis() - startedMs, drewTiles, cacheHit);
+}
+
 static bool max17048ReadReg16(uint8_t reg, uint16_t& value) {
   Wire.beginTransmission(MAX17048_ADDR);
   Wire.write(reg);
@@ -1334,6 +1601,8 @@ static bool readMax17048ChargeRate(float& percentPerHour) {
   return true;
 }
 
+static constexpr uint8_t BATTERY_VOLTAGE_QUALIFIED_SAMPLES = 8;
+
 static int estimateLiPoPercentFromMv(uint32_t mv) {
   if (mv >= 4200) return 100;
   if (mv >= 4100) return map(mv, 4100, 4200, 90, 100);
@@ -1344,6 +1613,67 @@ static int estimateLiPoPercentFromMv(uint32_t mv) {
   if (mv >= 3600) return map(mv, 3600, 3700, 12, 28);
   if (mv >= 3300) return map(mv, 3300, 3600, 0, 12);
   return 0;
+}
+
+static uint32_t filterBatteryVoltage(uint32_t rawMv, bool chargeRateValid, float chargeRate) {
+  localBattery.rawMv = rawMv;
+  localBattery.rawPackMv = rawMv;
+  localBattery.sampleCount++;
+
+  if (localBattery.filteredPackMv == 0 || localBattery.sampleCount <= 1) {
+    localBattery.filteredPackMv = rawMv;
+    localBattery.batteryMv = rawMv;
+    localBattery.learnedBatteryMv = rawMv;
+    localBattery.voltageStableSamples = 1;
+    localBattery.voltageUnstable = false;
+    return rawMv;
+  }
+
+  int32_t diffMv = (int32_t)rawMv - (int32_t)localBattery.filteredPackMv;
+  uint32_t absDiffMv = (uint32_t)abs(diffMv);
+  bool activeChargeChange = chargeRateValid && fabsf(chargeRate) > 8.0f;
+  bool outlier = absDiffMv > (activeChargeChange ? 140UL : 80UL);
+  uint32_t maxStepMv = activeChargeChange ? 25UL : 10UL;
+
+  if (outlier) {
+    localBattery.voltageRejectedSamples++;
+    localBattery.voltageStableSamples = 0;
+    localBattery.voltageUnstable = true;
+    maxStepMv = localBattery.sampleCount < BATTERY_VOLTAGE_QUALIFIED_SAMPLES ? 25 : 3;
+  } else {
+    if (localBattery.voltageStableSamples < 255) localBattery.voltageStableSamples++;
+    if (localBattery.voltageStableSamples >= BATTERY_VOLTAGE_QUALIFIED_SAMPLES) localBattery.voltageUnstable = false;
+  }
+
+  if (absDiffMv <= maxStepMv) {
+    localBattery.filteredPackMv = rawMv;
+  } else if (diffMv > 0) {
+    localBattery.filteredPackMv += maxStepMv;
+  } else if (localBattery.filteredPackMv > maxStepMv) {
+    localBattery.filteredPackMv -= maxStepMv;
+  } else {
+    localBattery.filteredPackMv = rawMv;
+  }
+
+  localBattery.batteryMv = localBattery.filteredPackMv;
+  localBattery.learnedBatteryMv = localBattery.filteredPackMv;
+  return localBattery.filteredPackMv;
+}
+
+static bool batteryVoltageQualified() {
+  return !localBattery.voltageUnstable &&
+         localBattery.sampleCount >= BATTERY_VOLTAGE_QUALIFIED_SAMPLES &&
+         localBattery.voltageStableSamples >= BATTERY_VOLTAGE_QUALIFIED_SAMPLES;
+}
+
+static int smoothDisplayedBatteryPercent(int targetPercent, bool charging) {
+  targetPercent = constrain(targetPercent, 0, 100);
+  if (!localBattery.lastGaugeMs) return targetPercent;
+  int diff = targetPercent - localBattery.percent;
+  if (abs(diff) <= 1) return targetPercent;
+  int maxStep = charging ? 2 : 1;
+  if (diff > 0) return localBattery.percent + min(diff, maxStep);
+  return localBattery.percent - min(-diff, maxStep);
 }
 
 static void updateBatteryTrend(uint32_t packMv, uint32_t nowMs) {
@@ -1409,23 +1739,15 @@ static int chooseDisplayedBatteryPercent(float soc, int voltagePercent, bool soc
   localBattery.calibrationOffsetMv = 0;
 
   if (!socReliable) {
-    strlcpy(localBattery.percentSource, "code voltage estimate", sizeof(localBattery.percentSource));
+    strlcpy(localBattery.percentSource,
+            batteryVoltageQualified() ? "Voltage estimate" : "Voltage estimate (settling)",
+            sizeof(localBattery.percentSource));
     return voltagePercent;
-  }
-
-  int disagreement = abs(localBattery.correctedGaugePercent - voltagePercent);
-  if (!charging && disagreement >= 35) {
-    strlcpy(localBattery.percentSource, "code sanity estimate", sizeof(localBattery.percentSource));
-    return voltagePercent;
-  }
-
-  if (!charging && disagreement >= 20) {
-    strlcpy(localBattery.percentSource, "MAX17048 sanity blend", sizeof(localBattery.percentSource));
-    return constrain((localBattery.correctedGaugePercent * 3 + voltagePercent) / 4, 0, 100);
   }
 
   strlcpy(localBattery.percentSource,
-          localBattery.calibrationOffsetTenths ? "MAX17048 + learned trim" : "MAX17048",
+          localBattery.voltageUnstable ? "MAX17048 SOC (voltage noisy)" :
+          (localBattery.calibrationOffsetTenths ? "MAX17048 SOC + trim" : "MAX17048 SOC"),
           sizeof(localBattery.percentSource));
   return localBattery.correctedGaugePercent;
 }
@@ -1480,13 +1802,14 @@ static bool sampleMax17048() {
   uint16_t rawVersion = 0;
   if (max17048ReadReg16(0x08, rawVersion)) localBattery.gaugeVersion = rawVersion;
 
-  uint32_t packMv = (uint32_t)(((rawVcell >> 4) * 125UL + 50UL) / 100UL);
+  uint32_t rawPackMv = (uint32_t)(((rawVcell >> 4) * 125UL + 50UL) / 100UL);
   float soc = (float)(rawSoc >> 8) + ((float)(rawSoc & 0xFF) / 256.0f);
   if (soc < 0.0f) soc = 0.0f;
   if (soc > 100.0f) soc = 100.0f;
-  int voltagePercent = estimateLiPoPercentFromMv(packMv);
   float chargeRate = 0.0f;
   bool chargeRateValid = readMax17048ChargeRate(chargeRate);
+  uint32_t packMv = filterBatteryVoltage(rawPackMv, chargeRateValid, chargeRate);
+  int voltagePercent = estimateLiPoPercentFromMv(packMv);
   bool socReliable = !(soc < 1.0f && packMv > 3350);
   if (!socReliable && !localBattery.quickStartSent) {
     if (max17048WriteReg16(0x06, 0x4000)) {
@@ -1498,14 +1821,9 @@ static bool sampleMax17048() {
   uint32_t now = millis();
   bool charging = decideBatteryCharging(chargeRateValid, chargeRate, packMv, now);
   updateBatteryLearning(soc, voltagePercent, socReliable, charging, chargeRateValid, chargeRate, now);
-  int displayedPercent = chooseDisplayedBatteryPercent(soc, voltagePercent, socReliable, charging);
+  int displayedPercent = smoothDisplayedBatteryPercent(chooseDisplayedBatteryPercent(soc, voltagePercent, socReliable, charging), charging);
   localBattery.gaugePresent = true;
   localBattery.lastGaugeMs = now;
-  localBattery.rawMv = packMv;
-  localBattery.rawPackMv = packMv;
-  localBattery.filteredPackMv = packMv;
-  localBattery.batteryMv = packMv;
-  localBattery.learnedBatteryMv = packMv;
   localBattery.rawGaugeSoc = rawSoc;
   localBattery.gaugeSoc = soc;
   localBattery.gaugeSocReliable = socReliable;
@@ -3903,6 +4221,8 @@ static double latToGlobalPixelY(double lat, int zoom) {
 }
 
 static bool mapTileExists(int zoom, long x, long y, char* path, size_t pathSize) {
+  SdLock lock;
+  if (!lock) return false;
   buildTilePath(mapTileRoot, zoom, x, y, path, pathSize);
   return sdStorage.available && SD_MMC.exists(path);
 }
@@ -3926,6 +4246,11 @@ static lv_color_t rgb565ToLvColor(uint16_t rgb565) {
 }
 
 static void loadMapCacheFromSd() {
+  SdLock lock;
+  if (!lock) {
+    strlcpy(mapCacheStatus, "SD busy", sizeof(mapCacheStatus));
+    return;
+  }
   if (!sdStorage.available || !mapCanvas) {
     strlcpy(mapCacheStatus, "not ready", sizeof(mapCacheStatus));
     return;
@@ -3998,6 +4323,11 @@ static void loadMapCacheFromSd() {
 }
 
 static void saveMapCacheToSd() {
+  SdLock lock;
+  if (!lock) {
+    strlcpy(mapCacheStatus, "save busy", sizeof(mapCacheStatus));
+    return;
+  }
   if (!sdStorage.available || !mapCanvasCached) {
     strlcpy(mapCacheStatus, "save skipped", sizeof(mapCacheStatus));
     return;
@@ -4037,60 +4367,100 @@ static void saveMapCacheToSd() {
                 (unsigned)imageWritten);
 }
 
-static bool renderOfflineTileMap(double lat, double lon, int zoom, char* centerPath, size_t centerPathSize) {
-  if (!mapCanvas || !sdStorage.available || !mapTileRootFound) return false;
-  int plotH = activeMapPlotHeight();
+static bool mapRenderJobMatches(const MapRenderJob& job,
+                                double lat,
+                                double lon,
+                                int zoom,
+                                uint16_t plotH,
+                                long centerTileX,
+                                long centerTileY,
+                                int centerPixelX,
+                                int centerPixelY) {
+  return job.zoom == zoom &&
+         job.plotH == plotH &&
+         job.centerTileX == centerTileX &&
+         job.centerTileY == centerTileY &&
+         abs(job.centerPixelX - centerPixelX) < 2 &&
+         abs(job.centerPixelY - centerPixelY) < 2 &&
+         fabs(job.lat - lat) < 0.000001 &&
+         fabs(job.lon - lon) < 0.000001;
+}
 
+static bool mapCacheMatchesCenter(double lat,
+                                  double lon,
+                                  int zoom,
+                                  uint16_t plotH,
+                                  long* centerTileX = nullptr,
+                                  long* centerTileY = nullptr,
+                                  int* centerPixelX = nullptr,
+                                  int* centerPixelY = nullptr) {
   double centerX = lonToGlobalPixelX(lon, zoom);
   double centerY = latToGlobalPixelY(lat, zoom);
-  long centerTileX = (long)floor(centerX / MAP_TILE_SIZE);
-  long centerTileY = (long)floor(centerY / MAP_TILE_SIZE);
-  bool centerTileFound = mapTileExists(zoom, centerTileX, centerTileY, centerPath, centerPathSize);
-  if (!centerTileFound) {
-    cachedMapZoom = zoom;
-    cachedMapTileX = centerTileX;
-    cachedMapTileY = centerTileY;
-    cachedMapLat = lat;
-    cachedMapLon = lon;
-    cachedMapTileFound = false;
-    if (!mapCanvasCached) lv_canvas_fill_bg(mapCanvas, lv_color_hex(0x07100D), LV_OPA_COVER);
-    strlcpy(mapCacheStatus, "center tile missing", sizeof(mapCacheStatus));
+  long tileX = (long)floor(centerX / MAP_TILE_SIZE);
+  long tileY = (long)floor(centerY / MAP_TILE_SIZE);
+  int pixelX = (int)round(centerX);
+  int pixelY = (int)round(centerY);
+  if (centerTileX) *centerTileX = tileX;
+  if (centerTileY) *centerTileY = tileY;
+  if (centerPixelX) *centerPixelX = pixelX;
+  if (centerPixelY) *centerPixelY = pixelY;
+  return mapCanvasCached &&
+         cachedMapZoom == zoom &&
+         cachedMapTileX == tileX &&
+         cachedMapTileY == tileY &&
+         abs(cachedMapPixelX - pixelX) < 32 &&
+         abs(cachedMapPixelY - pixelY) < 32 &&
+         cachedMapHeight == plotH;
+}
+
+static bool mapRenderHasPendingResult() {
+  return mapRenderResultPending ||
+         (mapRenderResultQueue && uxQueueMessagesWaiting(mapRenderResultQueue) > 0);
+}
+
+static bool assembleMapTilesToBuffer(const MapRenderJob& job, MapRenderResult& result) {
+  if (!mapWorkerBuf) {
+    strlcpy(result.status, "render buffer missing", sizeof(result.status));
     return false;
   }
 
-  int centerPixelX = (int)round(centerX);
-  int centerPixelY = (int)round(centerY);
-  if (mapCanvasCached &&
-      cachedMapZoom == zoom &&
-      cachedMapTileX == centerTileX &&
-      cachedMapTileY == centerTileY &&
-      abs(cachedMapPixelX - centerPixelX) < 32 &&
-      abs(cachedMapPixelY - centerPixelY) < 32 &&
-      cachedMapHeight == plotH &&
-      cachedMapTileFound == centerTileFound) {
-    return centerTileFound;
+  SdLock lock(10000);
+  if (!lock) {
+    strlcpy(result.status, "SD busy", sizeof(result.status));
+    return false;
+  }
+  if (!sdStorage.available || !mapTileRootFound) {
+    strlcpy(result.status, "tiles unavailable", sizeof(result.status));
+    return false;
   }
 
-  int startX = centerPixelX - (MAP_PLOT_W / 2);
-  int startY = centerPixelY - (plotH / 2);
+  char centerPath[96];
+  buildTilePath(job.tileRoot, job.zoom, job.centerTileX, job.centerTileY, centerPath, sizeof(centerPath));
+  result.centerTileFound = SD_MMC.exists(centerPath);
+  if (!result.centerTileFound) {
+    strlcpy(result.status, "center tile missing", sizeof(result.status));
+    return false;
+  }
+
+  const lv_color_t bg = lv_color_make(0x07, 0x10, 0x0D);
+  for (size_t i = 0; i < MAP_CANVAS_PIXELS; i++) {
+    mapWorkerBuf[i] = bg;
+  }
+
+  int startX = job.centerPixelX - (MAP_PLOT_W / 2);
+  int startY = job.centerPixelY - (job.plotH / 2);
   int endX = startX + MAP_PLOT_W - 1;
-  int endY = startY + plotH - 1;
-
-  for (int y = 0; y < plotH; y++) {
-    for (int x = 0; x < MAP_PLOT_W; x++) {
-      mapCanvasBuf[y * MAP_PLOT_W + x] = lv_color_hex(0x07100D);
-    }
-  }
-
+  int endY = startY + job.plotH - 1;
   long tileX0 = max(0L, (long)floor((double)startX / MAP_TILE_SIZE));
   long tileY0 = max(0L, (long)floor((double)startY / MAP_TILE_SIZE));
   long tileX1 = max(0L, (long)floor((double)endX / MAP_TILE_SIZE));
   long tileY1 = max(0L, (long)floor((double)endY / MAP_TILE_SIZE));
+  uint16_t readBuf[MAP_PLOT_W];
 
   for (long tileY = tileY0; tileY <= tileY1; tileY++) {
     for (long tileX = tileX0; tileX <= tileX1; tileX++) {
       char path[96];
-      buildTilePath(mapTileRoot, zoom, tileX, tileY, path, sizeof(path));
+      buildTilePath(job.tileRoot, job.zoom, tileX, tileY, path, sizeof(path));
       File tile = SD_MMC.open(path, FILE_READ);
       if (!tile) continue;
 
@@ -4108,10 +4478,10 @@ static bool renderOfflineTileMap(double lat, double lon, int zoom, char* centerP
         int inTileY = globalY - tileGlobalY0;
         size_t bytesToRead = segment * sizeof(uint16_t);
         tile.seek((inTileY * MAP_TILE_SIZE + inTileX) * sizeof(uint16_t));
-        size_t bytesRead = tile.read((uint8_t*)mapReadBuf, bytesToRead);
+        size_t bytesRead = tile.read((uint8_t*)readBuf, bytesToRead);
         int pixelsRead = bytesRead / sizeof(uint16_t);
         for (int i = 0; i < pixelsRead; i++) {
-          mapCanvasBuf[outY * MAP_PLOT_W + outX + i] = rgb565ToLvColor(mapReadBuf[i]);
+          mapWorkerBuf[outY * MAP_PLOT_W + outX + i] = rgb565ToLvColor(readBuf[i]);
         }
         if ((globalY & 0x0F) == 0) delay(0);
       }
@@ -4120,22 +4490,169 @@ static bool renderOfflineTileMap(double lat, double lon, int zoom, char* centerP
     }
   }
 
-  cachedMapZoom = zoom;
-  cachedMapTileX = centerTileX;
-  cachedMapTileY = centerTileY;
-  cachedMapPixelX = centerPixelX;
-  cachedMapPixelY = centerPixelY;
-  cachedMapHeight = activeMapPlotHeight();
-  cachedMapLat = lat;
-  cachedMapLon = lon;
-  cachedMapTileFound = centerTileFound;
-  mapCanvasCached = true;
-  strlcpy(mapCacheStatus, "drawn", sizeof(mapCacheStatus));
-  if (!mapNodeDetailViewActive && (!lastMapCacheSaveMs || millis() - lastMapCacheSaveMs > 15000)) {
-    saveMapCacheToSd();
-    lastMapCacheSaveMs = millis();
+  result.drewTiles = true;
+  strlcpy(result.status, "drawn", sizeof(result.status));
+  return true;
+}
+
+static void mapRenderTask(void*) {
+  MapRenderJob job = mapRenderActiveJob;
+  MapRenderResult result = {};
+  result.id = job.id;
+  result.lat = job.lat;
+  result.lon = job.lon;
+  result.zoom = job.zoom;
+  result.plotH = job.plotH;
+  result.centerTileX = job.centerTileX;
+  result.centerTileY = job.centerTileY;
+  result.centerPixelX = job.centerPixelX;
+  result.centerPixelY = job.centerPixelY;
+  uint32_t startedMs = millis();
+  assembleMapTilesToBuffer(job, result);
+  result.durationMs = millis() - startedMs;
+  if (mapRenderResultQueue) {
+    xQueueOverwrite(mapRenderResultQueue, &result);
+    mapRenderResultPending = true;
+  } else {
+    mapRenderWorkerFailures++;
   }
-  lv_obj_invalidate(mapCanvas);
+  mapRenderWorkerRunning = false;
+  mapRenderTaskHandle = nullptr;
+  vTaskDelete(nullptr);
+}
+
+static bool requestMapTileRender(double lat,
+                                 double lon,
+                                 int zoom,
+                                 uint16_t plotH,
+                                 long centerTileX,
+                                 long centerTileY,
+                                 int centerPixelX,
+                                 int centerPixelY) {
+  if (!mapWorkerBuf || !mapRenderResultQueue) {
+    mapRenderWorkerFailures++;
+    strlcpy(mapCacheStatus, "worker unavailable", sizeof(mapCacheStatus));
+    return false;
+  }
+  if (mapRenderWorkerRunning || mapRenderHasPendingResult()) {
+    if (!mapRenderJobMatches(mapRenderActiveJob, lat, lon, zoom, plotH, centerTileX, centerTileY, centerPixelX, centerPixelY)) {
+      mapRenderRetryPending = true;
+    }
+    mapRenderWorkerBusySkips++;
+    strlcpy(mapCacheStatus, mapRenderResultPending ? "map ready" : "drawing...", sizeof(mapCacheStatus));
+    return true;
+  }
+
+  MapRenderJob job = {};
+  job.id = nextMapRenderJobId++;
+  if (nextMapRenderJobId == 0) nextMapRenderJobId = 1;
+  job.lat = lat;
+  job.lon = lon;
+  job.zoom = zoom;
+  job.plotH = plotH;
+  job.centerTileX = centerTileX;
+  job.centerTileY = centerTileY;
+  job.centerPixelX = centerPixelX;
+  job.centerPixelY = centerPixelY;
+  strlcpy(job.tileRoot, mapTileRoot, sizeof(job.tileRoot));
+  mapRenderActiveJob = job;
+  mapRenderWorkerRunning = true;
+  mapRenderWorkerStarts++;
+  strlcpy(mapCacheStatus, "drawing...", sizeof(mapCacheStatus));
+  BaseType_t ok = xTaskCreatePinnedToCore(mapRenderTask, "mapRender", 8192, nullptr, 1, &mapRenderTaskHandle, 0);
+  if (ok != pdPASS) {
+    mapRenderWorkerRunning = false;
+    mapRenderTaskHandle = nullptr;
+    mapRenderWorkerFailures++;
+    strlcpy(mapCacheStatus, "render task failed", sizeof(mapCacheStatus));
+    return false;
+  }
+  return true;
+}
+
+static void serviceMapRenderWorker() {
+  if (!mapRenderResultQueue || !mapRenderHasPendingResult()) return;
+  MapRenderResult result = {};
+  if (xQueueReceive(mapRenderResultQueue, &result, 0) != pdTRUE) return;
+  mapRenderResultPending = false;
+  mapRenderWorkerApplies++;
+
+  if (result.centerTileFound && result.drewTiles && mapCanvas && mapCanvasBuf && mapWorkerBuf) {
+    memcpy(mapCanvasBuf, mapWorkerBuf, MAP_CANVAS_BYTES);
+    cachedMapZoom = result.zoom;
+    cachedMapTileX = result.centerTileX;
+    cachedMapTileY = result.centerTileY;
+    cachedMapPixelX = result.centerPixelX;
+    cachedMapPixelY = result.centerPixelY;
+    cachedMapHeight = result.plotH;
+    cachedMapLat = result.lat;
+    cachedMapLon = result.lon;
+    cachedMapTileFound = true;
+    mapCanvasCached = true;
+    strlcpy(mapCacheStatus, result.status[0] ? result.status : "drawn", sizeof(mapCacheStatus));
+    lv_obj_invalidate(mapCanvas);
+    recordMapRenderTimingDuration(result.durationMs, true, false);
+    if (!mapNodeDetailViewActive && (!lastMapCacheSaveMs || millis() - lastMapCacheSaveMs > 15000)) {
+      saveMapCacheToSd();
+      lastMapCacheSaveMs = millis();
+    }
+  } else {
+    cachedMapZoom = result.zoom;
+    cachedMapTileX = result.centerTileX;
+    cachedMapTileY = result.centerTileY;
+    cachedMapLat = result.lat;
+    cachedMapLon = result.lon;
+    cachedMapTileFound = false;
+    if (!mapCanvasCached && mapCanvas) {
+      lv_canvas_fill_bg(mapCanvas, lv_color_hex(0x07100D), LV_OPA_COVER);
+      lv_obj_invalidate(mapCanvas);
+    }
+    strlcpy(mapCacheStatus, result.status[0] ? result.status : "render failed", sizeof(mapCacheStatus));
+    recordMapRenderTimingDuration(result.durationMs, false, false);
+  }
+
+  if (mapRenderRetryPending) {
+    mapRenderRetryPending = false;
+    mapRenderPending = true;
+    lastMapUiRefreshMs = 0;
+  }
+  forcePageRefresh = true;
+}
+
+static bool renderOfflineTileMap(double lat, double lon, int zoom, char* centerPath, size_t centerPathSize) {
+  uint32_t renderStartedMs = millis();
+  if (!mapCanvas || !sdStorage.available || !mapTileRootFound) {
+    recordMapRenderTiming(renderStartedMs, false, false);
+    return false;
+  }
+  int plotH = activeMapPlotHeight();
+
+  double centerX = lonToGlobalPixelX(lon, zoom);
+  double centerY = latToGlobalPixelY(lat, zoom);
+  long centerTileX = (long)floor(centerX / MAP_TILE_SIZE);
+  long centerTileY = (long)floor(centerY / MAP_TILE_SIZE);
+  int centerPixelX = (int)round(centerX);
+  int centerPixelY = (int)round(centerY);
+  if (mapCacheMatchesCenter(lat, lon, zoom, (uint16_t)plotH, &centerTileX, &centerTileY, &centerPixelX, &centerPixelY)) {
+    recordMapRenderTiming(renderStartedMs, false, true);
+    return cachedMapTileFound;
+  }
+
+  bool centerTileFound = mapTileExists(zoom, centerTileX, centerTileY, centerPath, centerPathSize);
+  if (!centerTileFound) {
+    cachedMapZoom = zoom;
+    cachedMapTileX = centerTileX;
+    cachedMapTileY = centerTileY;
+    cachedMapLat = lat;
+    cachedMapLon = lon;
+    cachedMapTileFound = false;
+    if (!mapCanvasCached) lv_canvas_fill_bg(mapCanvas, lv_color_hex(0x07100D), LV_OPA_COVER);
+    strlcpy(mapCacheStatus, "center tile missing", sizeof(mapCacheStatus));
+    recordMapRenderTiming(renderStartedMs, false, false);
+    return false;
+  }
+
+  requestMapTileRender(lat, lon, zoom, (uint16_t)plotH, centerTileX, centerTileY, centerPixelX, centerPixelY);
   return centerTileFound;
 }
 
@@ -4297,8 +4814,17 @@ static void refreshMapUi() {
   }
 
   char tilePath[96];
-  int mapZoom = findBestMapZoom(centerLat, centerLon, tilePath, sizeof(tilePath));
-  if (mapZoomedOut) mapZoom = max(MAP_TILE_MIN_ZOOM, mapZoom - 2);
+  int mapZoom = cachedMapZoom;
+  const uint16_t plotH = (uint16_t)activeMapPlotHeight();
+  bool usingCachedZoom = mapZoom >= MAP_TILE_MIN_ZOOM &&
+                         mapZoom <= MAP_TILE_MAX_ZOOM &&
+                         mapCacheMatchesCenter(centerLat, centerLon, mapZoom, plotH);
+  if (!usingCachedZoom) {
+    mapZoom = findBestMapZoom(centerLat, centerLon, tilePath, sizeof(tilePath));
+    if (mapZoomedOut) mapZoom = max(MAP_TILE_MIN_ZOOM, mapZoom - 2);
+  } else {
+    buildTilePath(mapTileRoot, mapZoom, cachedMapTileX, cachedMapTileY, tilePath, sizeof(tilePath));
+  }
   bool centerTileFound = renderOfflineTileMap(centerLat, centerLon, mapZoom, tilePath, sizeof(tilePath));
   size_t plotted = 0;
   const NodeRecord* nearest = nullptr;
@@ -4450,32 +4976,56 @@ static void refreshScreenUi() {
 
   if (currentPage == pageSystemInterface && lblSystemInterface) {
     String wifiIp = wifiEnabled ? (wifiApMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString()) : String("off");
-    char interfaceText[360];
+    char interfaceText[680];
     snprintf(interfaceText, sizeof(interfaceText),
              "S3 interface\n"
              "Uptime: %lu s\n"
              "WiFi: %s\n\n"
              "Memory\n"
              "Heap free/min: %lu/%lu KB\n"
-             "PSRAM free: %lu KB\n\n"
+             "Internal free/largest: %lu/%lu KB\n"
+             "PSRAM free/largest: %lu/%lu KB\n\n"
+             "Map render\n"
+             "Last/max: %lu/%lu ms\n"
+             "Count/draw/cache: %lu/%lu/%lu\n"
+             "Worker start/apply/fail: %lu/%lu/%lu\n\n"
              "SD card\n"
              "Status: %s\n"
              "Type: %s\n"
              "Used/total: %lu/%lu MB\n"
-             "Writes/errors: %lu/%lu\n\n"
+             "Writes/errors/busy: %lu/%lu/%lu\n\n"
+             "Append wait/ok/drop: %u/%lu/%lu\n"
+             "Append depth/fallback: %u/%lu\n\n"
              "UI\n"
              "Frames decoded: %lu",
              (unsigned long)(millis() / 1000),
               wifiIp.c_str(),
              (unsigned long)(ESP.getFreeHeap() / 1024),
              (unsigned long)(ESP.getMinFreeHeap() / 1024),
-             (unsigned long)(ESP.getFreePsram() / 1024),
+             heapCapKb(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             heapCapLargestKb(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             heapCapKb(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT),
+             heapCapLargestKb(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT),
+             (unsigned long)lastMapRenderDurationMs,
+             (unsigned long)maxMapRenderDurationMs,
+             (unsigned long)mapRenderCount,
+             (unsigned long)mapRenderDraws,
+             (unsigned long)mapRenderCacheHits,
+             (unsigned long)mapRenderWorkerStarts,
+             (unsigned long)mapRenderWorkerApplies,
+             (unsigned long)mapRenderWorkerFailures,
              sdStorage.status,
              sdStorage.cardType,
              bytesToWholeMb(sdStorage.usedBytes),
              bytesToWholeMb(sdStorage.totalBytes),
              (unsigned long)sdStorage.writes,
              (unsigned long)sdStorage.writeErrors,
+             (unsigned long)sdLockTimeouts,
+             (unsigned)sdAppendQueueWaiting(),
+             (unsigned long)sdAppendWritten,
+             (unsigned long)sdAppendDropped,
+             (unsigned)SD_APPEND_QUEUE_DEPTH,
+             (unsigned long)sdAppendFallbacks,
              (unsigned long)framesDecoded);
     lv_label_set_text(lblSystemInterface, interfaceText);
   }
@@ -4795,7 +5345,7 @@ static void refreshScreenUi() {
   }
 
   if (currentPage == pageBattery && lblBatteryStats) {
-    char batteryText[720];
+    char batteryText[860];
     uint32_t gaugeAge = localBattery.lastGaugeMs ? (millis() - localBattery.lastGaugeMs) / 1000 : 0;
     if (localBattery.gaugePresent) {
       snprintf(batteryText, sizeof(batteryText),
@@ -4805,8 +5355,10 @@ static void refreshScreenUi() {
                "Displayed source: %s\n"
                "Gauge SOC: %.1f%%  raw 0x%04X\n"
                "MAX corrected: %d%%  trim %.1f%%\n"
-               "Pack: %.3f V\n"
+               "Pack filtered: %.3f V\n"
+               "Pack raw: %.3f V\n"
                "Code voltage estimate: %d%%\n"
+               "Voltage filter: %s  rejected %lu\n"
                "Charge rate: %.1f%%/hr\n"
                "Last change: %ld mV\n"
                "Voltage trend: %.1f mV/min\n"
@@ -4828,7 +5380,10 @@ static void refreshScreenUi() {
                localBattery.correctedGaugePercent,
                localBattery.calibrationOffsetTenths / 10.0f,
                localBattery.batteryMv / 1000.0f,
+               localBattery.rawPackMv / 1000.0f,
                localBattery.voltagePercent,
+               localBattery.voltageUnstable ? "settling" : "stable",
+               (unsigned long)localBattery.voltageRejectedSamples,
                localBattery.chargeRateValid ? localBattery.chargeRatePercentHr : 0.0f,
                (long)localBattery.instantDeltaMv,
                localBattery.deltaMvPerMinTenths / 10.0f,
@@ -5018,6 +5573,7 @@ static void sendDirectFromInput(lv_obj_t* toInput, lv_obj_t* msgInput) {
 
 static void serviceScreen() {
   serviceToneAudio();
+  serviceMapRenderWorker();
   processDeferredWifiAction();
   pollWifiScan();
   sampleLocalBattery();
@@ -5062,7 +5618,7 @@ static void printSerialDiagnostics() {
     lastSdDiagMs = millis();
     refreshSdUsage();
     Serial.printf(
-      "[SD] available=%s status=\"%s\" type=%s card=%llu total=%llu used=%llu writes=%lu errors=%lu\n",
+      "[SD] available=%s status=\"%s\" type=%s card=%llu total=%llu used=%llu writes=%lu errors=%lu busy=%lu append=%lu/%lu wait=%u drop=%lu fallback=%lu trunc=%lu\n",
       sdStorage.available ? "true" : "false",
       sdStorage.status,
       sdStorage.cardType,
@@ -5070,7 +5626,14 @@ static void printSerialDiagnostics() {
       (unsigned long long)sdStorage.totalBytes,
       (unsigned long long)sdStorage.usedBytes,
       (unsigned long)sdStorage.writes,
-      (unsigned long)sdStorage.writeErrors
+      (unsigned long)sdStorage.writeErrors,
+      (unsigned long)sdLockTimeouts,
+      (unsigned long)sdAppendWritten,
+      (unsigned long)sdAppendQueued,
+      (unsigned)sdAppendQueueWaiting(),
+      (unsigned long)sdAppendDropped,
+      (unsigned long)sdAppendFallbacks,
+      (unsigned long)sdAppendTruncated
     );
     Serial.printf(
       "[TOUCH] samples=%lu last=%s x=%u y=%u age=%lu\n",
@@ -5079,6 +5642,27 @@ static void printSerialDiagnostics() {
       (unsigned)lastTouchX,
       (unsigned)lastTouchY,
       lastTouchMs ? (unsigned long)((millis() - lastTouchMs) / 1000) : 0
+    );
+    Serial.printf(
+      "[MEM] internal=%lu/%luKB psram=%lu/%luKB heapMin=%luKB\n",
+      heapCapKb(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+      heapCapLargestKb(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+      heapCapKb(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT),
+      heapCapLargestKb(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT),
+      (unsigned long)(ESP.getMinFreeHeap() / 1024)
+    );
+    Serial.printf(
+      "[MAP] render last/max=%lu/%lums count=%lu draws=%lu cache=%lu worker=%lu/%lu/%lu busy=%lu status=\"%s\"\n",
+      (unsigned long)lastMapRenderDurationMs,
+      (unsigned long)maxMapRenderDurationMs,
+      (unsigned long)mapRenderCount,
+      (unsigned long)mapRenderDraws,
+      (unsigned long)mapRenderCacheHits,
+      (unsigned long)mapRenderWorkerStarts,
+      (unsigned long)mapRenderWorkerApplies,
+      (unsigned long)mapRenderWorkerFailures,
+      (unsigned long)mapRenderWorkerBusySkips,
+      mapCacheStatus
     );
   }
 }
@@ -5099,7 +5683,7 @@ static void serviceUsbSerialCommands() {
         detectMapTileRoot(true);
         printMapTileRootCandidates();
       } else if (strcmp(command, "sd") == 0) {
-        Serial.printf("[sd] available=%s status=%s type=%s total=%llu used=%llu tileRoot=%s tileRootFound=%s chat=%u/%u/%u\n",
+        Serial.printf("[sd] available=%s status=%s type=%s total=%llu used=%llu tileRoot=%s tileRootFound=%s chat=%u/%u/%u append=%lu/%lu wait=%u drop=%lu\n",
                       sdStorage.available ? "true" : "false",
                       sdStorage.status,
                       sdStorage.cardType,
@@ -5109,7 +5693,11 @@ static void serviceUsbSerialCommands() {
                       mapTileRootFound ? "true" : "false",
                       (unsigned)strlen(publicChatLog),
                       (unsigned)strlen(familyChatLog),
-                      (unsigned)strlen(directChatLog));
+                      (unsigned)strlen(directChatLog),
+                      (unsigned long)sdAppendWritten,
+                      (unsigned long)sdAppendQueued,
+                      (unsigned)sdAppendQueueWaiting(),
+                      (unsigned long)sdAppendDropped);
       } else if (commandLen > 0) {
         Serial.printf("[serial] unknown command: %s\n", command);
         Serial.println("[serial] commands: sd, tiles, tilesfast, tileroots");
@@ -5424,6 +6012,26 @@ static void cacheHeltecConfig(const meshtastic_Config& config) {
       heltecConfig.hasPower = true;
       appendPacketEvent("[config] power config cached\n");
       break;
+    case meshtastic_Config_network_tag:
+      heltecConfig.network = config.payload_variant.network;
+      heltecConfig.hasNetwork = true;
+      appendPacketEvent("[config] network config cached\n");
+      break;
+    case meshtastic_Config_display_tag:
+      heltecConfig.display = config.payload_variant.display;
+      heltecConfig.hasDisplay = true;
+      appendPacketEvent("[config] display config cached\n");
+      break;
+    case meshtastic_Config_bluetooth_tag:
+      heltecConfig.bluetooth = config.payload_variant.bluetooth;
+      heltecConfig.hasBluetooth = true;
+      appendPacketEvent("[config] bluetooth config cached\n");
+      break;
+    case meshtastic_Config_security_tag:
+      heltecConfig.security = config.payload_variant.security;
+      heltecConfig.hasSecurity = true;
+      appendPacketEvent("[config] security config cached\n");
+      break;
     default:
       appendPacketEvent("[config] unsupported config cached counter only\n");
       break;
@@ -5432,12 +6040,75 @@ static void cacheHeltecConfig(const meshtastic_Config& config) {
 
 static void cacheHeltecModuleConfig(const meshtastic_ModuleConfig& moduleConfig) {
   heltecConfig.lastModuleMs = millis();
-  if (moduleConfig.which_payload_variant == meshtastic_ModuleConfig_serial_tag) {
-    heltecConfig.serial = moduleConfig.payload_variant.serial;
-    heltecConfig.hasSerial = true;
-    appendPacketEvent("[config] serial module cached\n");
-  } else {
-    appendPacketEvent("[config] unsupported module cached counter only\n");
+  switch (moduleConfig.which_payload_variant) {
+    case meshtastic_ModuleConfig_mqtt_tag:
+      heltecConfig.mqtt = moduleConfig.payload_variant.mqtt;
+      heltecConfig.hasMqtt = true;
+      appendPacketEvent("[config] MQTT module cached\n");
+      break;
+    case meshtastic_ModuleConfig_serial_tag:
+      heltecConfig.serial = moduleConfig.payload_variant.serial;
+      heltecConfig.hasSerial = true;
+      appendPacketEvent("[config] serial module cached\n");
+      break;
+    case meshtastic_ModuleConfig_external_notification_tag:
+      heltecConfig.externalNotification = moduleConfig.payload_variant.external_notification;
+      heltecConfig.hasExternalNotification = true;
+      appendPacketEvent("[config] external notification module cached\n");
+      break;
+    case meshtastic_ModuleConfig_store_forward_tag:
+      heltecConfig.storeForward = moduleConfig.payload_variant.store_forward;
+      heltecConfig.hasStoreForward = true;
+      appendPacketEvent("[config] store and forward module cached\n");
+      break;
+    case meshtastic_ModuleConfig_range_test_tag:
+      heltecConfig.rangeTest = moduleConfig.payload_variant.range_test;
+      heltecConfig.hasRangeTest = true;
+      appendPacketEvent("[config] range test module cached\n");
+      break;
+    case meshtastic_ModuleConfig_telemetry_tag:
+      heltecConfig.telemetry = moduleConfig.payload_variant.telemetry;
+      heltecConfig.hasTelemetry = true;
+      appendPacketEvent("[config] telemetry module cached\n");
+      break;
+    case meshtastic_ModuleConfig_canned_message_tag:
+      heltecConfig.cannedMessage = moduleConfig.payload_variant.canned_message;
+      heltecConfig.hasCannedMessage = true;
+      appendPacketEvent("[config] canned message module cached\n");
+      break;
+    case meshtastic_ModuleConfig_audio_tag:
+      heltecConfig.audio = moduleConfig.payload_variant.audio;
+      heltecConfig.hasAudio = true;
+      appendPacketEvent("[config] audio module cached\n");
+      break;
+    case meshtastic_ModuleConfig_neighbor_info_tag:
+      heltecConfig.neighborInfo = moduleConfig.payload_variant.neighbor_info;
+      heltecConfig.hasNeighborInfo = true;
+      appendPacketEvent("[config] neighbor info module cached\n");
+      break;
+    case meshtastic_ModuleConfig_ambient_lighting_tag:
+      heltecConfig.ambientLighting = moduleConfig.payload_variant.ambient_lighting;
+      heltecConfig.hasAmbientLighting = true;
+      appendPacketEvent("[config] ambient lighting module cached\n");
+      break;
+    case meshtastic_ModuleConfig_detection_sensor_tag:
+      heltecConfig.detectionSensor = moduleConfig.payload_variant.detection_sensor;
+      heltecConfig.hasDetectionSensor = true;
+      appendPacketEvent("[config] detection sensor module cached\n");
+      break;
+    case meshtastic_ModuleConfig_paxcounter_tag:
+      heltecConfig.paxcounter = moduleConfig.payload_variant.paxcounter;
+      heltecConfig.hasPaxcounter = true;
+      appendPacketEvent("[config] paxcounter module cached\n");
+      break;
+    case meshtastic_ModuleConfig_statusmessage_tag:
+      heltecConfig.statusMessage = moduleConfig.payload_variant.statusmessage;
+      heltecConfig.hasStatusMessage = true;
+      appendPacketEvent("[config] status message module cached\n");
+      break;
+    default:
+      appendPacketEvent("[config] unsupported module cached counter only\n");
+      break;
   }
 }
 
@@ -5949,6 +6620,31 @@ static meshtastic_Config_PositionConfig_GpsMode parseGpsMode(const String& value
   return meshtastic_Config_PositionConfig_GpsMode_DISABLED;
 }
 
+static bool formBool(const char* name) {
+  return server.arg(name) == "1";
+}
+
+static uint32_t formU32(const char* name, uint32_t fallback = 0) {
+  if (!server.hasArg(name)) return fallback;
+  return (uint32_t)strtoul(server.arg(name).c_str(), nullptr, 10);
+}
+
+static int32_t formI32(const char* name, int32_t fallback = 0) {
+  if (!server.hasArg(name)) return fallback;
+  return (int32_t)strtol(server.arg(name).c_str(), nullptr, 10);
+}
+
+static uint8_t formU8(const char* name, uint8_t fallback = 0) {
+  return (uint8_t)min<uint32_t>(formU32(name, fallback), 255);
+}
+
+static void formStr(const char* name, char* dest, size_t destSize, bool keepBlank = false) {
+  if (!server.hasArg(name)) return;
+  String value = server.arg(name);
+  if (!keepBlank && !value.length()) return;
+  strlcpy(dest, value.c_str(), destSize);
+}
+
 static bool sendHeltecLoraConfig(const String& region, const String& preset, uint8_t hopLimit, int8_t txPower) {
   meshtastic_AdminMessage admin = meshtastic_AdminMessage_init_zero;
   admin.which_payload_variant = meshtastic_AdminMessage_set_config_tag;
@@ -5964,17 +6660,22 @@ static bool sendHeltecLoraConfig(const String& region, const String& preset, uin
   return ok;
 }
 
-static bool sendHeltecSerialConfig(bool enabled, uint32_t rxd, uint32_t txd, const String& baud, const String& mode, bool echo, bool overrideConsole) {
+static bool sendHeltecSerialConfig(bool enabled, uint32_t rxd, uint32_t txd, const String& baud, const String& mode, uint32_t timeoutMs, bool echo, bool overrideConsole) {
   meshtastic_AdminMessage admin = meshtastic_AdminMessage_init_zero;
   admin.which_payload_variant = meshtastic_AdminMessage_set_module_config_tag;
   admin.set_module_config.which_payload_variant = meshtastic_ModuleConfig_serial_tag;
-  admin.set_module_config.payload_variant.serial.enabled = enabled;
-  admin.set_module_config.payload_variant.serial.echo = echo;
-  admin.set_module_config.payload_variant.serial.rxd = rxd;
-  admin.set_module_config.payload_variant.serial.txd = txd;
-  admin.set_module_config.payload_variant.serial.baud = parseSerialBaud(baud);
-  admin.set_module_config.payload_variant.serial.mode = parseSerialMode(mode);
-  admin.set_module_config.payload_variant.serial.override_console_serial_port = overrideConsole;
+  meshtastic_ModuleConfig_SerialConfig& serial = admin.set_module_config.payload_variant.serial;
+  if (heltecConfig.hasSerial) {
+    serial = heltecConfig.serial;
+  }
+  serial.enabled = enabled;
+  serial.echo = echo;
+  serial.rxd = rxd;
+  serial.txd = txd;
+  serial.baud = parseSerialBaud(baud);
+  serial.timeout = timeoutMs;
+  serial.mode = parseSerialMode(mode);
+  serial.override_console_serial_port = overrideConsole;
   bool ok = sendLocalAdmin(admin);
   appendLine(eventLog, LOG_SIZE, ok ? "[local] Heltec serial config sent\n" : "[local] Heltec serial config failed\n");
   return ok;
@@ -5997,14 +6698,23 @@ static bool sendHeltecDeviceConfig(const String& role, const String& rebroadcast
   meshtastic_AdminMessage admin = meshtastic_AdminMessage_init_zero;
   admin.which_payload_variant = meshtastic_AdminMessage_set_config_tag;
   admin.set_config.which_payload_variant = meshtastic_Config_device_tag;
-  admin.set_config.payload_variant.device.role = parseDeviceRole(role);
-  admin.set_config.payload_variant.device.rebroadcast_mode = parseRebroadcastMode(rebroadcast);
-  admin.set_config.payload_variant.device.node_info_broadcast_secs = nodeInfoSecs;
-  admin.set_config.payload_variant.device.led_heartbeat_disabled = ledOff;
-  admin.set_config.payload_variant.device.buzzer_mode = parseBuzzerMode(buzzer);
-  if (tz.length()) strlcpy(admin.set_config.payload_variant.device.tzdef, tz.c_str(), sizeof(admin.set_config.payload_variant.device.tzdef));
+  meshtastic_Config_DeviceConfig& device = admin.set_config.payload_variant.device;
+  if (heltecConfig.hasDevice) {
+    device = heltecConfig.device;
+  }
+  if (role.length()) device.role = parseDeviceRole(role);
+  if (rebroadcast.length()) device.rebroadcast_mode = parseRebroadcastMode(rebroadcast);
+  device.node_info_broadcast_secs = nodeInfoSecs;
+  device.led_heartbeat_disabled = ledOff;
+  if (buzzer.length()) device.buzzer_mode = parseBuzzerMode(buzzer);
+  if (tz.length()) strlcpy(device.tzdef, tz.c_str(), sizeof(device.tzdef));
   bool ok = sendLocalAdmin(admin);
-  appendLine(eventLog, LOG_SIZE, ok ? "[local] Heltec device config sent\n" : "[local] Heltec device config failed\n");
+  char line[128];
+  snprintf(line, sizeof(line), "[local] Heltec device config %s role=%s rebroadcast=%s\n",
+           ok ? "sent" : "failed",
+           deviceRoleName(device.role),
+           rebroadcastName(device.rebroadcast_mode));
+  appendLine(eventLog, LOG_SIZE, line);
   return ok;
 }
 
@@ -6038,6 +6748,216 @@ static bool sendHeltecPowerConfig(bool powerSaving, uint32_t shutdownSecs, uint3
   admin.set_config.payload_variant.power.min_wake_secs = minWakeSecs;
   bool ok = sendLocalAdmin(admin);
   appendLine(eventLog, LOG_SIZE, ok ? "[local] Heltec power config sent\n" : "[local] Heltec power config failed\n");
+  return ok;
+}
+
+static bool sendHeltecNetworkConfig() {
+  meshtastic_AdminMessage admin = meshtastic_AdminMessage_init_zero;
+  admin.which_payload_variant = meshtastic_AdminMessage_set_config_tag;
+  admin.set_config.which_payload_variant = meshtastic_Config_network_tag;
+  meshtastic_Config_NetworkConfig& cfg = admin.set_config.payload_variant.network;
+  if (heltecConfig.hasNetwork) cfg = heltecConfig.network;
+  cfg.wifi_enabled = formBool("wifi");
+  formStr("ssid", cfg.wifi_ssid, sizeof(cfg.wifi_ssid), true);
+  formStr("psk", cfg.wifi_psk, sizeof(cfg.wifi_psk), false);
+  formStr("ntp", cfg.ntp_server, sizeof(cfg.ntp_server), true);
+  formStr("syslog", cfg.rsyslog_server, sizeof(cfg.rsyslog_server), true);
+  cfg.eth_enabled = formBool("eth");
+  cfg.ipv6_enabled = formBool("ipv6");
+  if (formBool("udp")) cfg.enabled_protocols |= meshtastic_Config_NetworkConfig_ProtocolFlags_UDP_BROADCAST;
+  else cfg.enabled_protocols &= ~((uint32_t)meshtastic_Config_NetworkConfig_ProtocolFlags_UDP_BROADCAST);
+  bool ok = sendLocalAdmin(admin);
+  appendLine(eventLog, LOG_SIZE, ok ? "[local] Heltec network config sent\n" : "[local] Heltec network config failed\n");
+  return ok;
+}
+
+static bool sendHeltecDisplayConfig() {
+  meshtastic_AdminMessage admin = meshtastic_AdminMessage_init_zero;
+  admin.which_payload_variant = meshtastic_AdminMessage_set_config_tag;
+  admin.set_config.which_payload_variant = meshtastic_Config_display_tag;
+  meshtastic_Config_DisplayConfig& cfg = admin.set_config.payload_variant.display;
+  if (heltecConfig.hasDisplay) cfg = heltecConfig.display;
+  cfg.screen_on_secs = formU32("screen", cfg.screen_on_secs);
+  cfg.auto_screen_carousel_secs = formU32("carousel", cfg.auto_screen_carousel_secs);
+  cfg.compass_north_top = formBool("north");
+  cfg.flip_screen = formBool("flip");
+  cfg.units = (meshtastic_Config_DisplayConfig_DisplayUnits)formU32("units", cfg.units);
+  cfg.oled = (meshtastic_Config_DisplayConfig_OledType)formU32("oled", cfg.oled);
+  cfg.displaymode = (meshtastic_Config_DisplayConfig_DisplayMode)formU32("mode", cfg.displaymode);
+  cfg.heading_bold = formBool("bold");
+  cfg.wake_on_tap_or_motion = formBool("wake");
+  cfg.use_12h_clock = formBool("clock12");
+  cfg.use_long_node_name = formBool("longName");
+  cfg.enable_message_bubbles = formBool("bubbles");
+  bool ok = sendLocalAdmin(admin);
+  appendLine(eventLog, LOG_SIZE, ok ? "[local] Heltec display config sent\n" : "[local] Heltec display config failed\n");
+  return ok;
+}
+
+static bool sendHeltecBluetoothConfig() {
+  meshtastic_AdminMessage admin = meshtastic_AdminMessage_init_zero;
+  admin.which_payload_variant = meshtastic_AdminMessage_set_config_tag;
+  admin.set_config.which_payload_variant = meshtastic_Config_bluetooth_tag;
+  meshtastic_Config_BluetoothConfig& cfg = admin.set_config.payload_variant.bluetooth;
+  if (heltecConfig.hasBluetooth) cfg = heltecConfig.bluetooth;
+  cfg.enabled = formBool("enabled");
+  cfg.mode = (meshtastic_Config_BluetoothConfig_PairingMode)formU32("mode", cfg.mode);
+  cfg.fixed_pin = formU32("pin", cfg.fixed_pin);
+  bool ok = sendLocalAdmin(admin);
+  appendLine(eventLog, LOG_SIZE, ok ? "[local] Heltec bluetooth config sent\n" : "[local] Heltec bluetooth config failed\n");
+  return ok;
+}
+
+static bool sendHeltecModuleConfig(const String& section) {
+  meshtastic_AdminMessage admin = meshtastic_AdminMessage_init_zero;
+  admin.which_payload_variant = meshtastic_AdminMessage_set_module_config_tag;
+
+  if (section == "mqtt") {
+    admin.set_module_config.which_payload_variant = meshtastic_ModuleConfig_mqtt_tag;
+    meshtastic_ModuleConfig_MQTTConfig& cfg = admin.set_module_config.payload_variant.mqtt;
+    if (heltecConfig.hasMqtt) cfg = heltecConfig.mqtt;
+    cfg.enabled = formBool("enabled");
+    formStr("address", cfg.address, sizeof(cfg.address), true);
+    formStr("username", cfg.username, sizeof(cfg.username), true);
+    formStr("password", cfg.password, sizeof(cfg.password), false);
+    formStr("root", cfg.root, sizeof(cfg.root), true);
+    cfg.encryption_enabled = formBool("encryption");
+    cfg.json_enabled = formBool("json");
+    cfg.tls_enabled = formBool("tls");
+    cfg.proxy_to_client_enabled = formBool("proxy");
+    cfg.map_reporting_enabled = formBool("mapReporting");
+  } else if (section == "external_notification") {
+    admin.set_module_config.which_payload_variant = meshtastic_ModuleConfig_external_notification_tag;
+    meshtastic_ModuleConfig_ExternalNotificationConfig& cfg = admin.set_module_config.payload_variant.external_notification;
+    if (heltecConfig.hasExternalNotification) cfg = heltecConfig.externalNotification;
+    cfg.enabled = formBool("enabled");
+    cfg.output = formU32("output", cfg.output);
+    cfg.output_vibra = formU8("vibra", cfg.output_vibra);
+    cfg.output_buzzer = formU8("buzzer", cfg.output_buzzer);
+    cfg.output_ms = formU32("outputMs", cfg.output_ms);
+    cfg.nag_timeout = (uint16_t)min<uint32_t>(formU32("nag", cfg.nag_timeout), 65535);
+    cfg.active = formBool("active");
+    cfg.alert_message = formBool("alertMessage");
+    cfg.alert_message_vibra = formBool("alertMessageVibra");
+    cfg.alert_message_buzzer = formBool("alertMessageBuzzer");
+    cfg.alert_bell = formBool("alertBell");
+    cfg.alert_bell_vibra = formBool("alertBellVibra");
+    cfg.alert_bell_buzzer = formBool("alertBellBuzzer");
+    cfg.use_pwm = formBool("usePwm");
+    cfg.use_i2s_as_buzzer = formBool("useI2s");
+  } else if (section == "store_forward") {
+    admin.set_module_config.which_payload_variant = meshtastic_ModuleConfig_store_forward_tag;
+    meshtastic_ModuleConfig_StoreForwardConfig& cfg = admin.set_module_config.payload_variant.store_forward;
+    if (heltecConfig.hasStoreForward) cfg = heltecConfig.storeForward;
+    cfg.enabled = formBool("enabled");
+    cfg.heartbeat = formBool("heartbeat");
+    cfg.records = formU32("records", cfg.records);
+    cfg.history_return_max = formU32("historyMax", cfg.history_return_max);
+    cfg.history_return_window = formU32("historyWindow", cfg.history_return_window);
+    cfg.is_server = formBool("server");
+  } else if (section == "range_test") {
+    admin.set_module_config.which_payload_variant = meshtastic_ModuleConfig_range_test_tag;
+    meshtastic_ModuleConfig_RangeTestConfig& cfg = admin.set_module_config.payload_variant.range_test;
+    if (heltecConfig.hasRangeTest) cfg = heltecConfig.rangeTest;
+    cfg.enabled = formBool("enabled");
+    cfg.sender = formU32("sender", cfg.sender);
+    cfg.save = formBool("save");
+    cfg.clear_on_reboot = formBool("clear");
+  } else if (section == "telemetry") {
+    admin.set_module_config.which_payload_variant = meshtastic_ModuleConfig_telemetry_tag;
+    meshtastic_ModuleConfig_TelemetryConfig& cfg = admin.set_module_config.payload_variant.telemetry;
+    if (heltecConfig.hasTelemetry) cfg = heltecConfig.telemetry;
+    cfg.device_telemetry_enabled = formBool("deviceEnabled");
+    cfg.device_update_interval = formU32("deviceInterval", cfg.device_update_interval);
+    cfg.environment_measurement_enabled = formBool("envEnabled");
+    cfg.environment_screen_enabled = formBool("envScreen");
+    cfg.environment_display_fahrenheit = formBool("envFahrenheit");
+    cfg.environment_update_interval = formU32("envInterval", cfg.environment_update_interval);
+    cfg.air_quality_enabled = formBool("airEnabled");
+    cfg.air_quality_screen_enabled = formBool("airScreen");
+    cfg.air_quality_interval = formU32("airInterval", cfg.air_quality_interval);
+    cfg.power_measurement_enabled = formBool("powerEnabled");
+    cfg.power_screen_enabled = formBool("powerScreen");
+    cfg.power_update_interval = formU32("powerInterval", cfg.power_update_interval);
+    cfg.health_measurement_enabled = formBool("healthEnabled");
+    cfg.health_screen_enabled = formBool("healthScreen");
+    cfg.health_update_interval = formU32("healthInterval", cfg.health_update_interval);
+  } else if (section == "canned_message") {
+    admin.set_module_config.which_payload_variant = meshtastic_ModuleConfig_canned_message_tag;
+    meshtastic_ModuleConfig_CannedMessageConfig& cfg = admin.set_module_config.payload_variant.canned_message;
+    if (heltecConfig.hasCannedMessage) cfg = heltecConfig.cannedMessage;
+    cfg.enabled = formBool("enabled");
+    cfg.rotary1_enabled = formBool("rotary");
+    cfg.updown1_enabled = formBool("updown");
+    cfg.inputbroker_pin_a = formU32("pinA", cfg.inputbroker_pin_a);
+    cfg.inputbroker_pin_b = formU32("pinB", cfg.inputbroker_pin_b);
+    cfg.inputbroker_pin_press = formU32("pinPress", cfg.inputbroker_pin_press);
+    cfg.inputbroker_event_cw = (meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar)formU32("cw", cfg.inputbroker_event_cw);
+    cfg.inputbroker_event_ccw = (meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar)formU32("ccw", cfg.inputbroker_event_ccw);
+    cfg.inputbroker_event_press = (meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar)formU32("press", cfg.inputbroker_event_press);
+    formStr("source", cfg.allow_input_source, sizeof(cfg.allow_input_source), true);
+    cfg.send_bell = formBool("sendBell");
+  } else if (section == "audio") {
+    admin.set_module_config.which_payload_variant = meshtastic_ModuleConfig_audio_tag;
+    meshtastic_ModuleConfig_AudioConfig& cfg = admin.set_module_config.payload_variant.audio;
+    if (heltecConfig.hasAudio) cfg = heltecConfig.audio;
+    cfg.codec2_enabled = formBool("enabled");
+    cfg.bitrate = (meshtastic_ModuleConfig_AudioConfig_Audio_Baud)formU32("bitrate", cfg.bitrate);
+    cfg.ptt_pin = formU8("ptt", cfg.ptt_pin);
+    cfg.i2s_ws = formU8("ws", cfg.i2s_ws);
+    cfg.i2s_sd = formU8("sd", cfg.i2s_sd);
+    cfg.i2s_din = formU8("din", cfg.i2s_din);
+    cfg.i2s_sck = formU8("sck", cfg.i2s_sck);
+  } else if (section == "neighbor_info") {
+    admin.set_module_config.which_payload_variant = meshtastic_ModuleConfig_neighbor_info_tag;
+    meshtastic_ModuleConfig_NeighborInfoConfig& cfg = admin.set_module_config.payload_variant.neighbor_info;
+    if (heltecConfig.hasNeighborInfo) cfg = heltecConfig.neighborInfo;
+    cfg.enabled = formBool("enabled");
+    cfg.update_interval = formU32("interval", cfg.update_interval);
+    cfg.transmit_over_lora = formBool("lora");
+  } else if (section == "ambient_lighting") {
+    admin.set_module_config.which_payload_variant = meshtastic_ModuleConfig_ambient_lighting_tag;
+    meshtastic_ModuleConfig_AmbientLightingConfig& cfg = admin.set_module_config.payload_variant.ambient_lighting;
+    if (heltecConfig.hasAmbientLighting) cfg = heltecConfig.ambientLighting;
+    cfg.led_state = formBool("enabled");
+    cfg.current = formU8("current", cfg.current);
+    cfg.red = formU8("red", cfg.red);
+    cfg.green = formU8("green", cfg.green);
+    cfg.blue = formU8("blue", cfg.blue);
+  } else if (section == "detection_sensor") {
+    admin.set_module_config.which_payload_variant = meshtastic_ModuleConfig_detection_sensor_tag;
+    meshtastic_ModuleConfig_DetectionSensorConfig& cfg = admin.set_module_config.payload_variant.detection_sensor;
+    if (heltecConfig.hasDetectionSensor) cfg = heltecConfig.detectionSensor;
+    cfg.enabled = formBool("enabled");
+    formStr("name", cfg.name, sizeof(cfg.name), true);
+    cfg.monitor_pin = formU8("pin", cfg.monitor_pin);
+    cfg.minimum_broadcast_secs = formU32("minSecs", cfg.minimum_broadcast_secs);
+    cfg.state_broadcast_secs = formU32("stateSecs", cfg.state_broadcast_secs);
+    cfg.detection_trigger_type = (meshtastic_ModuleConfig_DetectionSensorConfig_TriggerType)formU32("trigger", cfg.detection_trigger_type);
+    cfg.send_bell = formBool("sendBell");
+    cfg.use_pullup = formBool("pullup");
+  } else if (section == "paxcounter") {
+    admin.set_module_config.which_payload_variant = meshtastic_ModuleConfig_paxcounter_tag;
+    meshtastic_ModuleConfig_PaxcounterConfig& cfg = admin.set_module_config.payload_variant.paxcounter;
+    if (heltecConfig.hasPaxcounter) cfg = heltecConfig.paxcounter;
+    cfg.enabled = formBool("enabled");
+    cfg.paxcounter_update_interval = formU32("interval", cfg.paxcounter_update_interval);
+    cfg.wifi_threshold = formI32("wifi", cfg.wifi_threshold);
+    cfg.ble_threshold = formI32("ble", cfg.ble_threshold);
+  } else if (section == "status_message") {
+    admin.set_module_config.which_payload_variant = meshtastic_ModuleConfig_statusmessage_tag;
+    meshtastic_ModuleConfig_StatusMessageConfig& cfg = admin.set_module_config.payload_variant.statusmessage;
+    if (heltecConfig.hasStatusMessage) cfg = heltecConfig.statusMessage;
+    formStr("text", cfg.node_status, sizeof(cfg.node_status), true);
+  } else {
+    appendLine(eventLog, LOG_SIZE, "[local] unknown Heltec module section\n");
+    return false;
+  }
+
+  bool ok = sendLocalAdmin(admin);
+  char line[120];
+  snprintf(line, sizeof(line), "[local] Heltec module %s %s\n", section.c_str(), ok ? "sent" : "failed");
+  appendLine(eventLog, LOG_SIZE, line);
   return ok;
 }
 
@@ -6650,6 +7570,10 @@ static String buildStatusJson() {
   json += "\"fuelGaugeVersion\":\"0x" + String(localBattery.gaugeVersion, HEX) + "\",";
   json += "\"senseVoltage\":" + String(localBattery.filteredPackMv / 1000.0f, 2) + ",";
   json += "\"rawSenseVoltage\":" + String(localBattery.rawPackMv / 1000.0f, 2) + ",";
+  json += "\"batteryVoltageUnstable\":" + String(localBattery.voltageUnstable ? "true" : "false") + ",";
+  json += "\"batteryVoltageRejectedSamples\":" + String(localBattery.voltageRejectedSamples) + ",";
+  json += "\"batteryVoltageStableSamples\":" + String(localBattery.voltageStableSamples) + ",";
+  json += "\"batterySampleCount\":" + String(localBattery.sampleCount) + ",";
   json += "\"batterySource\":\"" + jsonEscape(localBattery.percentSource) + "\",";
   json += "\"powerState\":\"" + jsonEscape(localBattery.powerState) + "\",";
   json += "\"batteryTrend\":" + String(localBattery.deltaMvPerMinTenths / 10.0f, 1) + ",";
@@ -6680,6 +7604,14 @@ static String buildStatusJson() {
   json += "\"sdSizeMb\":" + String(bytesToWholeMb(sdStorage.totalBytes)) + ",";
   json += "\"sdWrites\":" + String(sdStorage.writes) + ",";
   json += "\"sdErrors\":" + String(sdStorage.writeErrors) + ",";
+  json += "\"sdLockTimeouts\":" + String(sdLockTimeouts) + ",";
+  json += "\"sdAppendQueueDepth\":" + String((unsigned)SD_APPEND_QUEUE_DEPTH) + ",";
+  json += "\"sdAppendQueueWaiting\":" + String((unsigned)sdAppendQueueWaiting()) + ",";
+  json += "\"sdAppendQueued\":" + String(sdAppendQueued) + ",";
+  json += "\"sdAppendWritten\":" + String(sdAppendWritten) + ",";
+  json += "\"sdAppendFallbacks\":" + String(sdAppendFallbacks) + ",";
+  json += "\"sdAppendDropped\":" + String(sdAppendDropped) + ",";
+  json += "\"sdAppendTruncated\":" + String(sdAppendTruncated) + ",";
   json += "\"rx\":" + String(stats.packetsRx) + ",";
   json += "\"tx\":" + String(stats.packetsTx) + ",";
   json += "\"online\":" + String(stats.onlineNodes) + ",";
@@ -6708,6 +7640,24 @@ static String buildStatusJson() {
   json += "\"mapCacheLoaded\":" + String(mapCanvasCached ? "true" : "false") + ",";
   json += "\"mapTileRoot\":\"" + jsonEscape(mapTileRoot) + "\",";
   json += "\"mapTileRootFound\":" + String(mapTileRootFound ? "true" : "false") + ",";
+  json += "\"heapFreeKb\":" + String(ESP.getFreeHeap() / 1024) + ",";
+  json += "\"heapMinKb\":" + String(ESP.getMinFreeHeap() / 1024) + ",";
+  json += "\"internalFreeKb\":" + String(heapCapKb(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)) + ",";
+  json += "\"internalLargestKb\":" + String(heapCapLargestKb(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)) + ",";
+  json += "\"psramFreeKb\":" + String(heapCapKb(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)) + ",";
+  json += "\"psramLargestKb\":" + String(heapCapLargestKb(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)) + ",";
+  json += "\"mapRenderLastMs\":" + String(lastMapRenderDurationMs) + ",";
+  json += "\"mapRenderMaxMs\":" + String(maxMapRenderDurationMs) + ",";
+  json += "\"mapRenderFinishedMs\":" + String(lastMapRenderFinishedMs) + ",";
+  json += "\"mapRenderCount\":" + String(mapRenderCount) + ",";
+  json += "\"mapRenderDraws\":" + String(mapRenderDraws) + ",";
+  json += "\"mapRenderCacheHits\":" + String(mapRenderCacheHits) + ",";
+  json += "\"mapRenderWorkerRunning\":" + String(mapRenderWorkerRunning ? "true" : "false") + ",";
+  json += "\"mapRenderResultPending\":" + String(mapRenderResultPending ? "true" : "false") + ",";
+  json += "\"mapRenderWorkerStarts\":" + String(mapRenderWorkerStarts) + ",";
+  json += "\"mapRenderWorkerApplies\":" + String(mapRenderWorkerApplies) + ",";
+  json += "\"mapRenderWorkerFailures\":" + String(mapRenderWorkerFailures) + ",";
+  json += "\"mapRenderWorkerBusySkips\":" + String(mapRenderWorkerBusySkips) + ",";
   json += "\"heltecConfig\":{";
   json += "\"ageSec\":" + String(heltecConfig.lastConfigMs ? (millis() - heltecConfig.lastConfigMs) / 1000 : -1) + ",";
   json += "\"moduleAgeSec\":" + String(heltecConfig.lastModuleMs ? (millis() - heltecConfig.lastModuleMs) / 1000 : -1) + ",";
@@ -6725,6 +7675,7 @@ static String buildStatusJson() {
   json += "\"txd\":" + String(heltecConfig.serial.txd) + ",";
   json += "\"baud\":\"" + String(serialBaudName(heltecConfig.serial.baud)) + "\",";
   json += "\"mode\":\"" + String(serialModeName(heltecConfig.serial.mode)) + "\",";
+  json += "\"timeout\":" + String(heltecConfig.serial.timeout) + ",";
   json += "\"override\":" + String(heltecConfig.serial.override_console_serial_port ? "true" : "false") + "},";
   json += "\"device\":{\"valid\":" + String(heltecConfig.hasDevice ? "true" : "false") + ",";
   json += "\"role\":\"" + String(deviceRoleName(heltecConfig.device.role)) + "\",";
@@ -6749,7 +7700,140 @@ static String buildStatusJson() {
   json += "\"waitBt\":" + String(heltecConfig.power.wait_bluetooth_secs) + ",";
   json += "\"sds\":" + String(heltecConfig.power.sds_secs) + ",";
   json += "\"ls\":" + String(heltecConfig.power.ls_secs) + ",";
-  json += "\"wake\":" + String(heltecConfig.power.min_wake_secs) + "}},";
+  json += "\"wake\":" + String(heltecConfig.power.min_wake_secs) + "},";
+  json += "\"network\":{\"valid\":" + String(heltecConfig.hasNetwork ? "true" : "false") + ",";
+  json += "\"wifi\":" + String(heltecConfig.network.wifi_enabled ? "true" : "false") + ",";
+  json += "\"ssid\":\"" + jsonEscape(heltecConfig.network.wifi_ssid) + "\",";
+  json += "\"pskSet\":" + String(strlen(heltecConfig.network.wifi_psk) ? "true" : "false") + ",";
+  json += "\"ntp\":\"" + jsonEscape(heltecConfig.network.ntp_server) + "\",";
+  json += "\"eth\":" + String(heltecConfig.network.eth_enabled ? "true" : "false") + ",";
+  json += "\"ipv6\":" + String(heltecConfig.network.ipv6_enabled ? "true" : "false") + ",";
+  json += "\"udp\":" + String((heltecConfig.network.enabled_protocols & meshtastic_Config_NetworkConfig_ProtocolFlags_UDP_BROADCAST) ? "true" : "false") + ",";
+  json += "\"syslog\":\"" + jsonEscape(heltecConfig.network.rsyslog_server) + "\"},";
+  json += "\"display\":{\"valid\":" + String(heltecConfig.hasDisplay ? "true" : "false") + ",";
+  json += "\"screen\":" + String(heltecConfig.display.screen_on_secs) + ",";
+  json += "\"carousel\":" + String(heltecConfig.display.auto_screen_carousel_secs) + ",";
+  json += "\"north\":" + String(heltecConfig.display.compass_north_top ? "true" : "false") + ",";
+  json += "\"flip\":" + String(heltecConfig.display.flip_screen ? "true" : "false") + ",";
+  json += "\"units\":" + String((int)heltecConfig.display.units) + ",";
+  json += "\"oled\":" + String((int)heltecConfig.display.oled) + ",";
+  json += "\"mode\":" + String((int)heltecConfig.display.displaymode) + ",";
+  json += "\"bold\":" + String(heltecConfig.display.heading_bold ? "true" : "false") + ",";
+  json += "\"wake\":" + String(heltecConfig.display.wake_on_tap_or_motion ? "true" : "false") + ",";
+  json += "\"clock12\":" + String(heltecConfig.display.use_12h_clock ? "true" : "false") + ",";
+  json += "\"longName\":" + String(heltecConfig.display.use_long_node_name ? "true" : "false") + ",";
+  json += "\"bubbles\":" + String(heltecConfig.display.enable_message_bubbles ? "true" : "false") + "},";
+  json += "\"bluetooth\":{\"valid\":" + String(heltecConfig.hasBluetooth ? "true" : "false") + ",";
+  json += "\"enabled\":" + String(heltecConfig.bluetooth.enabled ? "true" : "false") + ",";
+  json += "\"mode\":" + String((int)heltecConfig.bluetooth.mode) + ",";
+  json += "\"pin\":" + String(heltecConfig.bluetooth.fixed_pin) + "},";
+  json += "\"security\":{\"valid\":" + String(heltecConfig.hasSecurity ? "true" : "false") + ",";
+  json += "\"managed\":" + String(heltecConfig.security.is_managed ? "true" : "false") + ",";
+  json += "\"serial\":" + String(heltecConfig.security.serial_enabled ? "true" : "false") + ",";
+  json += "\"debugLog\":" + String(heltecConfig.security.debug_log_api_enabled ? "true" : "false") + ",";
+  json += "\"adminChannel\":" + String(heltecConfig.security.admin_channel_enabled ? "true" : "false") + "},";
+  json += "\"modules\":{";
+  json += "\"mqtt\":{\"valid\":" + String(heltecConfig.hasMqtt ? "true" : "false") + ",";
+  json += "\"enabled\":" + String(heltecConfig.mqtt.enabled ? "true" : "false") + ",";
+  json += "\"address\":\"" + jsonEscape(heltecConfig.mqtt.address) + "\",";
+  json += "\"username\":\"" + jsonEscape(heltecConfig.mqtt.username) + "\",";
+  json += "\"passwordSet\":" + String(strlen(heltecConfig.mqtt.password) ? "true" : "false") + ",";
+  json += "\"root\":\"" + jsonEscape(heltecConfig.mqtt.root) + "\",";
+  json += "\"encryption\":" + String(heltecConfig.mqtt.encryption_enabled ? "true" : "false") + ",";
+  json += "\"json\":" + String(heltecConfig.mqtt.json_enabled ? "true" : "false") + ",";
+  json += "\"tls\":" + String(heltecConfig.mqtt.tls_enabled ? "true" : "false") + ",";
+  json += "\"proxy\":" + String(heltecConfig.mqtt.proxy_to_client_enabled ? "true" : "false") + ",";
+  json += "\"mapReporting\":" + String(heltecConfig.mqtt.map_reporting_enabled ? "true" : "false") + "},";
+  json += "\"externalNotification\":{\"valid\":" + String(heltecConfig.hasExternalNotification ? "true" : "false") + ",";
+  json += "\"enabled\":" + String(heltecConfig.externalNotification.enabled ? "true" : "false") + ",";
+  json += "\"output\":" + String(heltecConfig.externalNotification.output) + ",";
+  json += "\"vibra\":" + String(heltecConfig.externalNotification.output_vibra) + ",";
+  json += "\"buzzer\":" + String(heltecConfig.externalNotification.output_buzzer) + ",";
+  json += "\"outputMs\":" + String(heltecConfig.externalNotification.output_ms) + ",";
+  json += "\"nag\":" + String(heltecConfig.externalNotification.nag_timeout) + ",";
+  json += "\"active\":" + String(heltecConfig.externalNotification.active ? "true" : "false") + ",";
+  json += "\"alertMessage\":" + String(heltecConfig.externalNotification.alert_message ? "true" : "false") + ",";
+  json += "\"alertMessageVibra\":" + String(heltecConfig.externalNotification.alert_message_vibra ? "true" : "false") + ",";
+  json += "\"alertMessageBuzzer\":" + String(heltecConfig.externalNotification.alert_message_buzzer ? "true" : "false") + ",";
+  json += "\"alertBell\":" + String(heltecConfig.externalNotification.alert_bell ? "true" : "false") + ",";
+  json += "\"alertBellVibra\":" + String(heltecConfig.externalNotification.alert_bell_vibra ? "true" : "false") + ",";
+  json += "\"alertBellBuzzer\":" + String(heltecConfig.externalNotification.alert_bell_buzzer ? "true" : "false") + ",";
+  json += "\"usePwm\":" + String(heltecConfig.externalNotification.use_pwm ? "true" : "false") + ",";
+  json += "\"useI2s\":" + String(heltecConfig.externalNotification.use_i2s_as_buzzer ? "true" : "false") + "},";
+  json += "\"storeForward\":{\"valid\":" + String(heltecConfig.hasStoreForward ? "true" : "false") + ",";
+  json += "\"enabled\":" + String(heltecConfig.storeForward.enabled ? "true" : "false") + ",";
+  json += "\"heartbeat\":" + String(heltecConfig.storeForward.heartbeat ? "true" : "false") + ",";
+  json += "\"records\":" + String(heltecConfig.storeForward.records) + ",";
+  json += "\"historyMax\":" + String(heltecConfig.storeForward.history_return_max) + ",";
+  json += "\"historyWindow\":" + String(heltecConfig.storeForward.history_return_window) + ",";
+  json += "\"server\":" + String(heltecConfig.storeForward.is_server ? "true" : "false") + "},";
+  json += "\"rangeTest\":{\"valid\":" + String(heltecConfig.hasRangeTest ? "true" : "false") + ",";
+  json += "\"enabled\":" + String(heltecConfig.rangeTest.enabled ? "true" : "false") + ",";
+  json += "\"sender\":" + String(heltecConfig.rangeTest.sender) + ",";
+  json += "\"save\":" + String(heltecConfig.rangeTest.save ? "true" : "false") + ",";
+  json += "\"clear\":" + String(heltecConfig.rangeTest.clear_on_reboot ? "true" : "false") + "},";
+  json += "\"telemetry\":{\"valid\":" + String(heltecConfig.hasTelemetry ? "true" : "false") + ",";
+  json += "\"deviceEnabled\":" + String(heltecConfig.telemetry.device_telemetry_enabled ? "true" : "false") + ",";
+  json += "\"deviceInterval\":" + String(heltecConfig.telemetry.device_update_interval) + ",";
+  json += "\"envEnabled\":" + String(heltecConfig.telemetry.environment_measurement_enabled ? "true" : "false") + ",";
+  json += "\"envScreen\":" + String(heltecConfig.telemetry.environment_screen_enabled ? "true" : "false") + ",";
+  json += "\"envFahrenheit\":" + String(heltecConfig.telemetry.environment_display_fahrenheit ? "true" : "false") + ",";
+  json += "\"envInterval\":" + String(heltecConfig.telemetry.environment_update_interval) + ",";
+  json += "\"airEnabled\":" + String(heltecConfig.telemetry.air_quality_enabled ? "true" : "false") + ",";
+  json += "\"airScreen\":" + String(heltecConfig.telemetry.air_quality_screen_enabled ? "true" : "false") + ",";
+  json += "\"airInterval\":" + String(heltecConfig.telemetry.air_quality_interval) + ",";
+  json += "\"powerEnabled\":" + String(heltecConfig.telemetry.power_measurement_enabled ? "true" : "false") + ",";
+  json += "\"powerScreen\":" + String(heltecConfig.telemetry.power_screen_enabled ? "true" : "false") + ",";
+  json += "\"powerInterval\":" + String(heltecConfig.telemetry.power_update_interval) + ",";
+  json += "\"healthEnabled\":" + String(heltecConfig.telemetry.health_measurement_enabled ? "true" : "false") + ",";
+  json += "\"healthScreen\":" + String(heltecConfig.telemetry.health_screen_enabled ? "true" : "false") + ",";
+  json += "\"healthInterval\":" + String(heltecConfig.telemetry.health_update_interval) + "},";
+  json += "\"cannedMessage\":{\"valid\":" + String(heltecConfig.hasCannedMessage ? "true" : "false") + ",";
+  json += "\"enabled\":" + String(heltecConfig.cannedMessage.enabled ? "true" : "false") + ",";
+  json += "\"rotary\":" + String(heltecConfig.cannedMessage.rotary1_enabled ? "true" : "false") + ",";
+  json += "\"updown\":" + String(heltecConfig.cannedMessage.updown1_enabled ? "true" : "false") + ",";
+  json += "\"pinA\":" + String(heltecConfig.cannedMessage.inputbroker_pin_a) + ",";
+  json += "\"pinB\":" + String(heltecConfig.cannedMessage.inputbroker_pin_b) + ",";
+  json += "\"pinPress\":" + String(heltecConfig.cannedMessage.inputbroker_pin_press) + ",";
+  json += "\"cw\":" + String((int)heltecConfig.cannedMessage.inputbroker_event_cw) + ",";
+  json += "\"ccw\":" + String((int)heltecConfig.cannedMessage.inputbroker_event_ccw) + ",";
+  json += "\"press\":" + String((int)heltecConfig.cannedMessage.inputbroker_event_press) + ",";
+  json += "\"source\":\"" + jsonEscape(heltecConfig.cannedMessage.allow_input_source) + "\",";
+  json += "\"sendBell\":" + String(heltecConfig.cannedMessage.send_bell ? "true" : "false") + "},";
+  json += "\"audio\":{\"valid\":" + String(heltecConfig.hasAudio ? "true" : "false") + ",";
+  json += "\"enabled\":" + String(heltecConfig.audio.codec2_enabled ? "true" : "false") + ",";
+  json += "\"bitrate\":" + String((int)heltecConfig.audio.bitrate) + ",";
+  json += "\"ptt\":" + String(heltecConfig.audio.ptt_pin) + ",";
+  json += "\"ws\":" + String(heltecConfig.audio.i2s_ws) + ",";
+  json += "\"sd\":" + String(heltecConfig.audio.i2s_sd) + ",";
+  json += "\"din\":" + String(heltecConfig.audio.i2s_din) + ",";
+  json += "\"sck\":" + String(heltecConfig.audio.i2s_sck) + "},";
+  json += "\"neighborInfo\":{\"valid\":" + String(heltecConfig.hasNeighborInfo ? "true" : "false") + ",";
+  json += "\"enabled\":" + String(heltecConfig.neighborInfo.enabled ? "true" : "false") + ",";
+  json += "\"interval\":" + String(heltecConfig.neighborInfo.update_interval) + ",";
+  json += "\"lora\":" + String(heltecConfig.neighborInfo.transmit_over_lora ? "true" : "false") + "},";
+  json += "\"ambientLighting\":{\"valid\":" + String(heltecConfig.hasAmbientLighting ? "true" : "false") + ",";
+  json += "\"enabled\":" + String(heltecConfig.ambientLighting.led_state ? "true" : "false") + ",";
+  json += "\"current\":" + String(heltecConfig.ambientLighting.current) + ",";
+  json += "\"red\":" + String(heltecConfig.ambientLighting.red) + ",";
+  json += "\"green\":" + String(heltecConfig.ambientLighting.green) + ",";
+  json += "\"blue\":" + String(heltecConfig.ambientLighting.blue) + "},";
+  json += "\"detectionSensor\":{\"valid\":" + String(heltecConfig.hasDetectionSensor ? "true" : "false") + ",";
+  json += "\"enabled\":" + String(heltecConfig.detectionSensor.enabled ? "true" : "false") + ",";
+  json += "\"name\":\"" + jsonEscape(heltecConfig.detectionSensor.name) + "\",";
+  json += "\"pin\":" + String(heltecConfig.detectionSensor.monitor_pin) + ",";
+  json += "\"minSecs\":" + String(heltecConfig.detectionSensor.minimum_broadcast_secs) + ",";
+  json += "\"stateSecs\":" + String(heltecConfig.detectionSensor.state_broadcast_secs) + ",";
+  json += "\"trigger\":" + String((int)heltecConfig.detectionSensor.detection_trigger_type) + ",";
+  json += "\"sendBell\":" + String(heltecConfig.detectionSensor.send_bell ? "true" : "false") + ",";
+  json += "\"pullup\":" + String(heltecConfig.detectionSensor.use_pullup ? "true" : "false") + "},";
+  json += "\"paxcounter\":{\"valid\":" + String(heltecConfig.hasPaxcounter ? "true" : "false") + ",";
+  json += "\"enabled\":" + String(heltecConfig.paxcounter.enabled ? "true" : "false") + ",";
+  json += "\"interval\":" + String(heltecConfig.paxcounter.paxcounter_update_interval) + ",";
+  json += "\"wifi\":" + String(heltecConfig.paxcounter.wifi_threshold) + ",";
+  json += "\"ble\":" + String(heltecConfig.paxcounter.ble_threshold) + "},";
+  json += "\"statusMessage\":{\"valid\":" + String(heltecConfig.hasStatusMessage ? "true" : "false") + ",";
+  json += "\"text\":\"" + jsonEscape(heltecConfig.statusMessage.node_status) + "\"}}},";
   json += "\"log\":\"" + jsonEscape(eventLog) + "\",";
   json += "\"channels\":[";
   bool firstChannel = true;
@@ -6797,24 +7881,35 @@ static void handleStatusSnapshot() {
     server.send(503, "text/plain", "SD card not available");
     return;
   }
-  if (SD_MMC.exists(SD_STATUS_SNAPSHOT_PATH)) SD_MMC.remove(SD_STATUS_SNAPSHOT_PATH);
-  File file = SD_MMC.open(SD_STATUS_SNAPSHOT_PATH, FILE_WRITE);
-  if (!file) {
-    sdStorage.writeErrors++;
-    strlcpy(sdStorage.status, "snapshot open failed", sizeof(sdStorage.status));
-    server.send(500, "text/plain", "snapshot open failed");
-    return;
+  bool ok = false;
+  {
+    SdLock lock;
+    if (!lock) {
+      server.send(503, "text/plain", "SD card busy");
+      return;
+    }
+    if (SD_MMC.exists(SD_STATUS_SNAPSHOT_PATH)) SD_MMC.remove(SD_STATUS_SNAPSHOT_PATH);
+    File file = SD_MMC.open(SD_STATUS_SNAPSHOT_PATH, FILE_WRITE);
+    if (!file) {
+      sdStorage.writeErrors++;
+      strlcpy(sdStorage.status, "snapshot open failed", sizeof(sdStorage.status));
+      server.send(500, "text/plain", "snapshot open failed");
+      return;
+    }
+    ok = file.print(json);
+    file.close();
+    if (ok) {
+      sdStorage.writes++;
+      strlcpy(sdStorage.status, "snapshot saved", sizeof(sdStorage.status));
+    } else {
+      sdStorage.writeErrors++;
+      strlcpy(sdStorage.status, "snapshot write failed", sizeof(sdStorage.status));
+    }
   }
-  bool ok = file.print(json);
-  file.close();
   if (ok) {
-    sdStorage.writes++;
-    strlcpy(sdStorage.status, "snapshot saved", sizeof(sdStorage.status));
     appendLine(eventLog, LOG_SIZE, "[sd] status snapshot saved\n");
     server.send(200, "application/json", json);
   } else {
-    sdStorage.writeErrors++;
-    strlcpy(sdStorage.status, "snapshot write failed", sizeof(sdStorage.status));
     server.send(500, "text/plain", "snapshot write failed");
   }
 }
@@ -6823,6 +7918,11 @@ static void handleSdDownload(const char* path, const char* downloadName, const c
   if (!requireWebAuth()) return;
   if (!sdStorage.available) {
     server.send(503, "text/plain", "SD card not available");
+    return;
+  }
+  SdLock lock(10000);
+  if (!lock) {
+    server.send(503, "text/plain", "SD card busy");
     return;
   }
   if (!SD_MMC.exists(path)) {
@@ -6846,6 +7946,16 @@ static void handleSend() {
     return;
   }
   String channel = server.hasArg("channel") ? server.arg("channel") : String("public");
+  if (server.hasArg("to") || channel == "direct") {
+    uint32_t to = parseNodeAddress(server.hasArg("to") ? server.arg("to").c_str() : "");
+    if (!isDirectAddress(to)) {
+      server.send(400, "text/plain", "missing direct target");
+      return;
+    }
+    bool ok = sendDirectTextMessage(server.arg("msg").c_str(), to);
+    server.send(ok ? 200 : 500, "text/plain", ok ? "direct sent" : "direct send failed");
+    return;
+  }
   int8_t channelIndex = PUBLIC_CHANNEL_INDEX;
   if (channel.startsWith("ch:")) {
     int parsed = channel.substring(3).toInt();
@@ -6945,7 +8055,10 @@ void setup() {
   Serial.begin(115200);
   delay(3000);
   Serial.println("[boot] serial ready");
+  initSdMutex();
+  initSdAppendWorker();
   allocateRuntimeBuffers();
+  initMapRenderWorker();
   nextMeshPacketId = esp_random();
   if (nextMeshPacketId == 0) nextMeshPacketId = 1;
   SerialLoRa.setRxBufferSize(4096);
@@ -7066,6 +8179,7 @@ void setup() {
                                      txd,
                                      baud.length() ? baud : String("115200"),
                                      mode.length() ? mode : String("PROTO"),
+                                     server.hasArg("timeout") ? (uint32_t)server.arg("timeout").toInt() : 0,
                                      server.arg("echo") == "1",
                                      server.arg("override") == "1");
     server.send(ok ? 200 : 500, "text/plain", ok ? "serial config sent" : "serial config failed");
@@ -7107,6 +8221,26 @@ void setup() {
                                     (uint32_t)server.arg("ls").toInt(),
                                     (uint32_t)server.arg("wake").toInt());
     server.send(ok ? 200 : 500, "text/plain", ok ? "power config sent" : "power config failed");
+  });
+  server.on("/heltec/network", HTTP_POST, []() {
+    if (!requireWebAuth()) return;
+    bool ok = sendHeltecNetworkConfig();
+    server.send(ok ? 200 : 500, "text/plain", ok ? "network config sent" : "network config failed");
+  });
+  server.on("/heltec/display", HTTP_POST, []() {
+    if (!requireWebAuth()) return;
+    bool ok = sendHeltecDisplayConfig();
+    server.send(ok ? 200 : 500, "text/plain", ok ? "display config sent" : "display config failed");
+  });
+  server.on("/heltec/bluetooth", HTTP_POST, []() {
+    if (!requireWebAuth()) return;
+    bool ok = sendHeltecBluetoothConfig();
+    server.send(ok ? 200 : 500, "text/plain", ok ? "bluetooth config sent" : "bluetooth config failed");
+  });
+  server.on("/heltec/module", HTTP_POST, []() {
+    if (!requireWebAuth()) return;
+    bool ok = sendHeltecModuleConfig(server.arg("section"));
+    server.send(ok ? 200 : 500, "text/plain", ok ? "module config sent" : "module config failed");
   });
   server.on("/heltec/timezone", HTTP_POST, []() {
     if (!requireWebAuth()) return;
