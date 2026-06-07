@@ -7618,6 +7618,22 @@ static void appendSdStatusJson(String& json) {
   json += "\"sdAppendTruncated\":" + String(sdAppendTruncated) + ",";
 }
 
+static void appendChatStatusJson(String& json) {
+  json += "\"chat\":\"" + jsonEscape(publicChatLog) + "\",";
+  json += "\"publicChat\":\"" + jsonEscape(publicChatLog) + "\",";
+  json += "\"secondaryChat\":\"" + jsonEscape(familyChatLog) + "\",";
+  json += "\"privateChat\":\"" + jsonEscape(familyChatLog) + "\",";
+  json += "\"familyChat\":\"" + jsonEscape(familyChatLog) + "\",";
+  json += "\"directChat\":\"" + jsonEscape(directChatLog) + "\",";
+  json += "\"chatHistoryLoaded\":" + String(chatHistoryLoadedFromSd ? "true" : "false") + ",";
+  json += "\"publicChatBytes\":" + String(strlen(publicChatLog)) + ",";
+  json += "\"secondaryChatBytes\":" + String(strlen(familyChatLog)) + ",";
+  json += "\"privateChatBytes\":" + String(strlen(familyChatLog)) + ",";
+  json += "\"directChatBytes\":" + String(strlen(directChatLog)) + ",";
+  json += "\"secondaryChannel\":" + String(privateChannelIndex) + ",";
+  json += "\"privateChannel\":" + String(privateChannelIndex) + ",";
+}
+
 static void appendMapStatusJson(String& json) {
   json += "\"gpsValid\":" + String(gpsStats.valid ? "true" : "false") + ",";
   json += "\"gpsLat\":" + String(gpsStats.latitude, 6) + ",";
@@ -7726,19 +7742,7 @@ static String buildStatusJson() {
   json += "\"tx\":" + String(stats.packetsTx) + ",";
   json += "\"online\":" + String(stats.onlineNodes) + ",";
   json += "\"total\":" + String(stats.totalNodes) + ",";
-  json += "\"chat\":\"" + jsonEscape(publicChatLog) + "\",";
-  json += "\"publicChat\":\"" + jsonEscape(publicChatLog) + "\",";
-  json += "\"secondaryChat\":\"" + jsonEscape(familyChatLog) + "\",";
-  json += "\"privateChat\":\"" + jsonEscape(familyChatLog) + "\",";
-  json += "\"familyChat\":\"" + jsonEscape(familyChatLog) + "\",";
-  json += "\"directChat\":\"" + jsonEscape(directChatLog) + "\",";
-  json += "\"chatHistoryLoaded\":" + String(chatHistoryLoadedFromSd ? "true" : "false") + ",";
-  json += "\"publicChatBytes\":" + String(strlen(publicChatLog)) + ",";
-  json += "\"secondaryChatBytes\":" + String(strlen(familyChatLog)) + ",";
-  json += "\"privateChatBytes\":" + String(strlen(familyChatLog)) + ",";
-  json += "\"directChatBytes\":" + String(strlen(directChatLog)) + ",";
-  json += "\"secondaryChannel\":" + String(privateChannelIndex) + ",";
-  json += "\"privateChannel\":" + String(privateChannelIndex) + ",";
+  appendChatStatusJson(json);
   appendMapStatusJson(json);
   json += "\"heltecConfig\":{";
   json += "\"ageSec\":" + String(heltecConfig.lastConfigMs ? (millis() - heltecConfig.lastConfigMs) / 1000 : -1) + ",";
