@@ -2371,7 +2371,7 @@ static void backlightSliderEvent(lv_event_t* e) {
 static const char TONE_STYLE_OPTIONS[] = "Bwomp\nChime\nDouble\nPulse\nAlert";
 
 static const ToneSegment TONE_PATTERN_BWOMP[] = {
-  {0, 35}, {520, 105, 300}, {280, 165, 150}, {0, 55}
+  {0, 20}, {1040, 45, 760}, {620, 110, 320}, {280, 145, 170}, {0, 45}
 };
 static const ToneSegment TONE_PATTERN_CHIME[] = {
   {0, 25}, {1175, 85, 880}, {0, 35}, {1568, 115, 1175}, {0, 45}
@@ -2435,8 +2435,16 @@ static const ToneSegment* tonePatternFor(ToneStyle style, size_t& count) {
 static uint8_t toneCodecVolumeRegister() {
   uint8_t pct = constrain((int)toneVolumePercent, 0, 100);
   if (pct == 0) return 0x00;
-  // ES8311 DAC volume is a dB-style register. Keep it audible and scale tones in PCM.
-  return (uint8_t)map(pct, 1, 100, 0xA8, 0xBF);
+  // ES8311 DAC volume is dB-style: 0xBF is 0 dB, 0xFF is +32 dB.
+  if (pct <= 50) return (uint8_t)map(pct, 1, 50, 0x80, 0xBF);
+  return (uint8_t)map(pct, 51, 100, 0xC0, 0xFF);
+}
+
+static float toneCodecGainDb() {
+  uint8_t reg = toneCodecVolumeRegister();
+  if (reg == 0x00) return -95.5f;
+  if (reg == 0x01) return -90.5f;
+  return ((int)reg - 0xBF) * 0.5f;
 }
 
 static bool toneCodecWrite(uint8_t reg, uint8_t value) {
@@ -2641,7 +2649,7 @@ static void serviceToneAudio() {
 
   int16_t frames[TONE_FRAMES_PER_SERVICE * 2];
   const ToneSegment& segment = pattern[activeToneSegment];
-  const int32_t amplitude = map(constrain((int)toneVolumePercent, 0, 100), 0, 100, 0, 30000);
+  const int32_t amplitude = map(constrain((int)toneVolumePercent, 0, 100), 0, 100, 0, 32700);
   const float startFrequency = (float)segment.frequency;
   const float endFrequency = (float)(segment.endFrequency ? segment.endFrequency : segment.frequency);
   for (uint32_t i = 0; i < framesToWrite; i++) {
@@ -2657,7 +2665,10 @@ static void serviceToneAudio() {
       float frequency = startFrequency + (endFrequency - startFrequency) * progress;
       float envelope = progress < 0.10f ? progress / 0.10f : 1.0f - ((progress - 0.10f) * 0.55f);
       if (envelope < 0.25f) envelope = 0.25f;
-      sample = (int16_t)(sinf(tonePhase) * amplitude * envelope);
+      float shaped = sinf(tonePhase) * 1.55f;
+      if (shaped > 1.0f) shaped = 1.0f;
+      if (shaped < -1.0f) shaped = -1.0f;
+      sample = (int16_t)(shaped * amplitude * envelope);
       float phaseStep = (6.28318530718f * frequency) / (float)TONE_SAMPLE_RATE;
       tonePhase += phaseStep;
       if (tonePhase >= 6.28318530718f) tonePhase -= 6.28318530718f;
@@ -7813,6 +7824,8 @@ static void appendInterfaceStatusJson(String& json, const String& wifiIp, const 
   json += "\"toneVolume\":" + String(toneVolumePercent) + ",";
   json += "\"toneMessage\":\"" + String(toneStyleName(toneMessageStyle)) + "\",";
   json += "\"toneDirect\":\"" + String(toneStyleName(toneDirectStyle)) + "\",";
+  json += "\"toneCodecReg\":" + String(toneCodecVolumeRegister()) + ",";
+  json += "\"toneCodecGainDb\":" + String(toneCodecGainDb(), 1) + ",";
   json += "\"toneAudioReady\":" + String(toneI2sReady ? "true" : "false") + ",";
   json += "\"toneCodecReady\":" + String(toneCodecReady ? "true" : "false") + ",";
   json += "\"toneActive\":" + String(toneActive ? "true" : "false") + ",";
