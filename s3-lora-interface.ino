@@ -265,6 +265,12 @@ struct LocalBatteryStats {
   uint32_t voltageRejectedSamples = 0;
   uint8_t voltageStableSamples = 0;
   bool voltageUnstable = false;
+  uint32_t lowVoltageSinceMs = 0;
+  uint32_t criticalVoltageSinceMs = 0;
+  bool voltageLowSustained = false;
+  bool voltageCriticalSustained = false;
+  bool batteryLow = false;
+  bool batteryCritical = false;
 };
 
 struct SdStorageStats {
@@ -1602,16 +1608,22 @@ static bool readMax17048ChargeRate(float& percentPerHour) {
 }
 
 static constexpr uint8_t BATTERY_VOLTAGE_QUALIFIED_SAMPLES = 8;
+static constexpr uint32_t BATTERY_VOLTAGE_ALERT_MS = 30000;
+static constexpr uint32_t BATTERY_LOW_VOLTAGE_MV = 3650;
+static constexpr uint32_t BATTERY_CRITICAL_VOLTAGE_MV = 3500;
+static constexpr int BATTERY_LOW_SOC_PERCENT = 20;
+static constexpr int BATTERY_CRITICAL_SOC_PERCENT = 10;
 
 static int estimateLiPoPercentFromMv(uint32_t mv) {
   if (mv >= 4200) return 100;
   if (mv >= 4100) return map(mv, 4100, 4200, 90, 100);
-  if (mv >= 4000) return map(mv, 4000, 4100, 78, 90);
-  if (mv >= 3900) return map(mv, 3900, 4000, 62, 78);
-  if (mv >= 3800) return map(mv, 3800, 3900, 45, 62);
-  if (mv >= 3700) return map(mv, 3700, 3800, 28, 45);
-  if (mv >= 3600) return map(mv, 3600, 3700, 12, 28);
-  if (mv >= 3300) return map(mv, 3300, 3600, 0, 12);
+  if (mv >= 4000) return map(mv, 4000, 4100, 75, 90);
+  if (mv >= 3900) return map(mv, 3900, 4000, 55, 75);
+  if (mv >= 3800) return map(mv, 3800, 3900, 35, 55);
+  if (mv >= 3700) return map(mv, 3700, 3800, 20, 35);
+  if (mv >= 3600) return map(mv, 3600, 3700, 10, 20);
+  if (mv >= 3500) return map(mv, 3500, 3600, 5, 10);
+  if (mv >= 3400) return map(mv, 3400, 3500, 0, 5);
   return 0;
 }
 
@@ -1664,6 +1676,39 @@ static bool batteryVoltageQualified() {
   return !localBattery.voltageUnstable &&
          localBattery.sampleCount >= BATTERY_VOLTAGE_QUALIFIED_SAMPLES &&
          localBattery.voltageStableSamples >= BATTERY_VOLTAGE_QUALIFIED_SAMPLES;
+}
+
+static const char* batteryAlertLabel() {
+  if (localBattery.batteryCritical) return "critical";
+  if (localBattery.batteryLow) return "low";
+  return "ok";
+}
+
+static void updateBatteryAlertState(int displayedPercent, uint32_t packMv, bool charging, uint32_t nowMs) {
+  bool voltageCanAlert = batteryVoltageQualified() && !charging;
+
+  if (voltageCanAlert && packMv <= BATTERY_LOW_VOLTAGE_MV) {
+    if (!localBattery.lowVoltageSinceMs) localBattery.lowVoltageSinceMs = nowMs;
+  } else {
+    localBattery.lowVoltageSinceMs = 0;
+  }
+
+  if (voltageCanAlert && packMv <= BATTERY_CRITICAL_VOLTAGE_MV) {
+    if (!localBattery.criticalVoltageSinceMs) localBattery.criticalVoltageSinceMs = nowMs;
+  } else {
+    localBattery.criticalVoltageSinceMs = 0;
+  }
+
+  localBattery.voltageLowSustained =
+    localBattery.lowVoltageSinceMs && nowMs - localBattery.lowVoltageSinceMs >= BATTERY_VOLTAGE_ALERT_MS;
+  localBattery.voltageCriticalSustained =
+    localBattery.criticalVoltageSinceMs && nowMs - localBattery.criticalVoltageSinceMs >= BATTERY_VOLTAGE_ALERT_MS;
+  localBattery.batteryCritical =
+    displayedPercent <= BATTERY_CRITICAL_SOC_PERCENT || localBattery.voltageCriticalSustained;
+  localBattery.batteryLow =
+    localBattery.batteryCritical ||
+    displayedPercent <= BATTERY_LOW_SOC_PERCENT ||
+    localBattery.voltageLowSustained;
 }
 
 static int smoothDisplayedBatteryPercent(int targetPercent, bool charging) {
@@ -1795,6 +1840,10 @@ static bool sampleMax17048() {
   uint16_t rawSoc = 0;
   if (!max17048ReadReg16(0x02, rawVcell) || !max17048ReadReg16(0x04, rawSoc)) {
     localBattery.gaugePresent = false;
+    localBattery.batteryLow = false;
+    localBattery.batteryCritical = false;
+    localBattery.voltageLowSustained = false;
+    localBattery.voltageCriticalSustained = false;
     strlcpy(localBattery.powerState, "gauge missing", sizeof(localBattery.powerState));
     return false;
   }
@@ -1822,6 +1871,7 @@ static bool sampleMax17048() {
   bool charging = decideBatteryCharging(chargeRateValid, chargeRate, packMv, now);
   updateBatteryLearning(soc, voltagePercent, socReliable, charging, chargeRateValid, chargeRate, now);
   int displayedPercent = smoothDisplayedBatteryPercent(chooseDisplayedBatteryPercent(soc, voltagePercent, socReliable, charging), charging);
+  updateBatteryAlertState(displayedPercent, packMv, charging, now);
   localBattery.gaugePresent = true;
   localBattery.lastGaugeMs = now;
   localBattery.rawGaugeSoc = rawSoc;
@@ -4970,6 +5020,11 @@ static void refreshScreenUi() {
       strlcpy(batteryStatus, "No gauge", sizeof(batteryStatus));
     }
     lv_label_set_text(lblBatteryStatus, batteryStatus);
+    uint32_t batteryColor = localBattery.gaugePresent
+                              ? (localBattery.batteryCritical ? 0xFF5A5F :
+                                 (localBattery.batteryLow ? 0xFFD166 : COLOR_ACCENT))
+                              : COLOR_MUTED;
+    lv_obj_set_style_text_color(lblBatteryStatus, lv_color_hex(batteryColor), 0);
   }
 
   refreshDashboardLabels();
@@ -5345,13 +5400,14 @@ static void refreshScreenUi() {
   }
 
   if (currentPage == pageBattery && lblBatteryStats) {
-    char batteryText[860];
+    char batteryText[960];
     uint32_t gaugeAge = localBattery.lastGaugeMs ? (millis() - localBattery.lastGaugeMs) / 1000 : 0;
     if (localBattery.gaugePresent) {
       snprintf(batteryText, sizeof(batteryText),
                "LiPo fuel gauge\n"
                "Chip: MAX17048  v0x%04X\n"
                "Displayed: %d%%\n"
+               "Alert: %s\n"
                "Displayed source: %s\n"
                "Gauge SOC: %.1f%%  raw 0x%04X\n"
                "MAX corrected: %d%%  trim %.1f%%\n"
@@ -5359,6 +5415,7 @@ static void refreshScreenUi() {
                "Pack raw: %.3f V\n"
                "Code voltage estimate: %d%%\n"
                "Voltage filter: %s  rejected %lu\n"
+               "Voltage low/critical: %s/%s\n"
                "Charge rate: %.1f%%/hr\n"
                "Last change: %ld mV\n"
                "Voltage trend: %.1f mV/min\n"
@@ -5374,6 +5431,7 @@ static void refreshScreenUi() {
                "PSRAM free: %lu KB",
                localBattery.gaugeVersion,
                localBattery.percent,
+               batteryAlertLabel(),
                localBattery.percentSource,
                localBattery.gaugeSoc,
                localBattery.rawGaugeSoc,
@@ -5384,6 +5442,8 @@ static void refreshScreenUi() {
                localBattery.voltagePercent,
                localBattery.voltageUnstable ? "settling" : "stable",
                (unsigned long)localBattery.voltageRejectedSamples,
+               localBattery.voltageLowSustained ? "yes" : "no",
+               localBattery.voltageCriticalSustained ? "yes" : "no",
                localBattery.chargeRateValid ? localBattery.chargeRatePercentHr : 0.0f,
                (long)localBattery.instantDeltaMv,
                localBattery.deltaMvPerMinTenths / 10.0f,
@@ -7574,6 +7634,11 @@ static String buildStatusJson() {
   json += "\"batteryVoltageRejectedSamples\":" + String(localBattery.voltageRejectedSamples) + ",";
   json += "\"batteryVoltageStableSamples\":" + String(localBattery.voltageStableSamples) + ",";
   json += "\"batterySampleCount\":" + String(localBattery.sampleCount) + ",";
+  json += "\"batteryLow\":" + String(localBattery.batteryLow ? "true" : "false") + ",";
+  json += "\"batteryCritical\":" + String(localBattery.batteryCritical ? "true" : "false") + ",";
+  json += "\"batteryHealth\":\"" + String(batteryAlertLabel()) + "\",";
+  json += "\"batteryVoltageLowSustained\":" + String(localBattery.voltageLowSustained ? "true" : "false") + ",";
+  json += "\"batteryVoltageCriticalSustained\":" + String(localBattery.voltageCriticalSustained ? "true" : "false") + ",";
   json += "\"batterySource\":\"" + jsonEscape(localBattery.percentSource) + "\",";
   json += "\"powerState\":\"" + jsonEscape(localBattery.powerState) + "\",";
   json += "\"batteryTrend\":" + String(localBattery.deltaMvPerMinTenths / 10.0f, 1) + ",";
