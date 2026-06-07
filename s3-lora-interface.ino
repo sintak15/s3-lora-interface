@@ -7659,6 +7659,32 @@ static void appendLinkStatusJson(String& json, const char* rxAge) {
   json += "\"serialPeek\":\"" + jsonEscape(serialPeek) + "\",";
 }
 
+static void appendInterfaceStatusJson(String& json, const String& wifiIp, const esp_partition_t* runningPartition) {
+  json += "\"title\":\"" + jsonEscape(interfaceDeviceName) + "\",";
+  json += "\"deviceName\":\"" + jsonEscape(interfaceDeviceName) + "\",";
+  json += "\"hostname\":\"" + jsonEscape(interfaceHostname) + "\",";
+  json += "\"apSsid\":\"" + jsonEscape(interfaceApSsid) + "\",";
+  json += "\"apChannel\":" + String(interfaceApChannel) + ",";
+  json += "\"webUser\":\"" + jsonEscape(webUiUser) + "\",";
+  json += "\"setupRequired\":" + String(usingDefaultWebCredentials() ? "true" : "false") + ",";
+  json += "\"firmwareVersion\":\"" + String(FIRMWARE_VERSION) + "\",";
+  json += "\"buildDate\":\"" + String(__DATE__) + "\",";
+  json += "\"buildTime\":\"" + String(__TIME__) + "\",";
+  json += "\"runningPartition\":\"" + String(runningPartition ? runningPartition->label : "unknown") + "\",";
+  json += "\"sketchSize\":" + String(ESP.getSketchSize()) + ",";
+  json += "\"freeSketchSpace\":" + String(ESP.getFreeSketchSpace()) + ",";
+  json += "\"ip\":\"" + wifiIp + "\",";
+  json += "\"wifiEnabled\":" + String(wifiEnabled ? "true" : "false") + ",";
+  json += "\"wifiMode\":\"" + String(wifiApMode ? "AP" : "Local") + "\",";
+  json += "\"wifiStations\":" + String((wifiEnabled && wifiApMode) ? WiFi.softAPgetStationNum() : 0) + ",";
+  json += "\"wifiToggles\":" + String(wifiToggleCount) + ",";
+  json += "\"toneVolume\":" + String(toneVolumePercent) + ",";
+  json += "\"toneAudioReady\":" + String(toneI2sReady ? "true" : "false") + ",";
+  json += "\"toneCodecReady\":" + String(toneCodecReady ? "true" : "false") + ",";
+  json += "\"toneActive\":" + String(toneActive ? "true" : "false") + ",";
+  json += "\"toneLastMs\":" + String(lastToneMs) + ",";
+}
+
 static void appendMapStatusJson(String& json) {
   json += "\"gpsValid\":" + String(gpsStats.valid ? "true" : "false") + ",";
   json += "\"gpsLat\":" + String(gpsStats.latitude, 6) + ",";
@@ -7714,29 +7740,7 @@ static String buildStatusJson() {
   String json;
   json.reserve(STATUS_JSON_RESERVE);
   json = "{";
-  json += "\"title\":\"" + jsonEscape(interfaceDeviceName) + "\",";
-  json += "\"deviceName\":\"" + jsonEscape(interfaceDeviceName) + "\",";
-  json += "\"hostname\":\"" + jsonEscape(interfaceHostname) + "\",";
-  json += "\"apSsid\":\"" + jsonEscape(interfaceApSsid) + "\",";
-  json += "\"apChannel\":" + String(interfaceApChannel) + ",";
-  json += "\"webUser\":\"" + jsonEscape(webUiUser) + "\",";
-  json += "\"setupRequired\":" + String(usingDefaultWebCredentials() ? "true" : "false") + ",";
-  json += "\"firmwareVersion\":\"" + String(FIRMWARE_VERSION) + "\",";
-  json += "\"buildDate\":\"" + String(__DATE__) + "\",";
-  json += "\"buildTime\":\"" + String(__TIME__) + "\",";
-  json += "\"runningPartition\":\"" + String(runningPartition ? runningPartition->label : "unknown") + "\",";
-  json += "\"sketchSize\":" + String(ESP.getSketchSize()) + ",";
-  json += "\"freeSketchSpace\":" + String(ESP.getFreeSketchSpace()) + ",";
-  json += "\"ip\":\"" + wifiIp + "\",";
-  json += "\"wifiEnabled\":" + String(wifiEnabled ? "true" : "false") + ",";
-  json += "\"wifiMode\":\"" + String(wifiApMode ? "AP" : "Local") + "\",";
-  json += "\"wifiStations\":" + String((wifiEnabled && wifiApMode) ? WiFi.softAPgetStationNum() : 0) + ",";
-  json += "\"wifiToggles\":" + String(wifiToggleCount) + ",";
-  json += "\"toneVolume\":" + String(toneVolumePercent) + ",";
-  json += "\"toneAudioReady\":" + String(toneI2sReady ? "true" : "false") + ",";
-  json += "\"toneCodecReady\":" + String(toneCodecReady ? "true" : "false") + ",";
-  json += "\"toneActive\":" + String(toneActive ? "true" : "false") + ",";
-  json += "\"toneLastMs\":" + String(lastToneMs) + ",";
+  appendInterfaceStatusJson(json, wifiIp, runningPartition);
   appendLinkStatusJson(json, rxAge);
   json += "\"myNode\":\"!" + String(stats.myNodeNum, HEX) + "\",";
   json += "\"myNodeName\":\"" + jsonEscape(nodeName(stats.myNodeNum)) + "\",";
