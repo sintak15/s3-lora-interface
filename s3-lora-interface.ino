@@ -530,6 +530,7 @@ static ToneKind pendingToneKind = TONE_NONE;
 static ToneStyle activeToneStyle = TONE_STYLE_BWOMP;
 static ToneStyle toneMessageStyle = TONE_STYLE_BWOMP;
 static ToneStyle toneDirectStyle = TONE_STYLE_DOUBLE;
+static uint8_t toneBoostLevel = 2;
 static uint8_t activeToneSegment = 0;
 static uint32_t activeToneFramesRemaining = 0;
 static uint32_t activeToneSegmentTotalFrames = 0;
@@ -626,6 +627,7 @@ static lv_obj_t* sliderBacklight = nullptr;
 static lv_obj_t* lblBacklight = nullptr;
 static lv_obj_t* sliderToneVolume = nullptr;
 static lv_obj_t* lblToneVolume = nullptr;
+static lv_obj_t* dropdownToneBoost = nullptr;
 static lv_obj_t* dropdownToneMessage = nullptr;
 static lv_obj_t* dropdownToneDirect = nullptr;
 static lv_obj_t* swReadableText = nullptr;
@@ -2370,6 +2372,7 @@ static void backlightSliderEvent(lv_event_t* e) {
 }
 
 static const char TONE_STYLE_OPTIONS[] = "Bwomp\nChime\nDouble\nPulse\nAlert\nLoud";
+static const char TONE_BOOST_OPTIONS[] = "0 dB\n+3 dB\n+6 dB\n+9 dB\n+12 dB\nMax";
 
 static const ToneSegment TONE_PATTERN_BWOMP[] = {
   {0, 90}, {2200, 60, 1620}, {1400, 125, 980}, {900, 145, 680}, {0, 80}
@@ -2389,6 +2392,36 @@ static const ToneSegment TONE_PATTERN_ALERT[] = {
 static const ToneSegment TONE_PATTERN_LOUD[] = {
   {0, 90}, {3200, 120}, {0, 35}, {2800, 120}, {0, 35}, {2400, 155}, {0, 90}
 };
+
+static uint8_t clampToneBoost(uint8_t level) {
+  return level <= 5 ? level : 2;
+}
+
+static const char* toneBoostName(uint8_t level) {
+  switch (clampToneBoost(level)) {
+    case 1: return "+3 dB";
+    case 2: return "+6 dB";
+    case 3: return "+9 dB";
+    case 4: return "+12 dB";
+    case 5: return "Max";
+    case 0:
+    default:
+      return "0 dB";
+  }
+}
+
+static uint8_t toneBoostTargetRegister() {
+  switch (clampToneBoost(toneBoostLevel)) {
+    case 1: return 0xC5;
+    case 2: return 0xCB;
+    case 3: return 0xD1;
+    case 4: return 0xD7;
+    case 5: return 0xFF;
+    case 0:
+    default:
+      return 0xBF;
+  }
+}
 
 static ToneStyle clampToneStyle(uint8_t style) {
   return style < TONE_STYLE_COUNT ? (ToneStyle)style : TONE_STYLE_BWOMP;
@@ -2443,8 +2476,7 @@ static const ToneSegment* tonePatternFor(ToneStyle style, size_t& count) {
 static uint8_t toneCodecVolumeRegister() {
   uint8_t pct = constrain((int)toneVolumePercent, 0, 100);
   if (pct == 0) return 0x00;
-  // Keep this board at or below 0 dB; higher ES8311 gain mutes the speaker path.
-  return (uint8_t)map(pct, 1, 100, 0x90, 0xBF);
+  return (uint8_t)map(pct, 1, 100, 0x90, toneBoostTargetRegister());
 }
 
 static float toneCodecGainDb() {
@@ -2536,11 +2568,13 @@ static const char* toneAudioStateLabel() {
 
 static void updateToneVolumeLabel() {
   if (!lblToneVolume) return;
-  char text[144];
+  char text[176];
   snprintf(text, sizeof(text),
-           "Volume: %u%%\nSpeaker: %s\nMsg: %s  DM: %s",
+           "Volume: %u%%  Boost: %s\nCodec: %s  %.1f dB\nMsg: %s  DM: %s",
            toneVolumePercent,
+           toneBoostName(toneBoostLevel),
            toneAudioStateLabel(),
+           toneCodecGainDb(),
            toneStyleName(toneMessageStyle),
            toneStyleName(toneDirectStyle));
   lv_label_set_text(lblToneVolume, text);
@@ -2555,12 +2589,23 @@ static void toneVolumeSliderEvent(lv_event_t* e) {
 }
 
 static void updateToneDropdowns() {
+  if (dropdownToneBoost && lv_dropdown_get_selected(dropdownToneBoost) != (uint16_t)toneBoostLevel) {
+    lv_dropdown_set_selected(dropdownToneBoost, (uint16_t)toneBoostLevel);
+  }
   if (dropdownToneMessage && lv_dropdown_get_selected(dropdownToneMessage) != (uint16_t)toneMessageStyle) {
     lv_dropdown_set_selected(dropdownToneMessage, (uint16_t)toneMessageStyle);
   }
   if (dropdownToneDirect && lv_dropdown_get_selected(dropdownToneDirect) != (uint16_t)toneDirectStyle) {
     lv_dropdown_set_selected(dropdownToneDirect, (uint16_t)toneDirectStyle);
   }
+}
+
+static void toneBoostDropdownEvent(lv_event_t* e) {
+  lv_obj_t* dropdown = (lv_obj_t*)lv_event_get_target(e);
+  toneBoostLevel = clampToneBoost((uint8_t)lv_dropdown_get_selected(dropdown));
+  prefs.putUChar("toneBoost", toneBoostLevel);
+  applyToneVolume();
+  updateToneVolumeLabel();
 }
 
 static void toneMessageDropdownEvent(lv_event_t* e) {
@@ -3046,6 +3091,7 @@ static void clearUiObjectPointers() {
   lblBacklight = nullptr;
   sliderToneVolume = nullptr;
   lblToneVolume = nullptr;
+  dropdownToneBoost = nullptr;
   dropdownToneMessage = nullptr;
   dropdownToneDirect = nullptr;
   swReadableText = nullptr;
@@ -4203,30 +4249,43 @@ static void buildScreenUi() {
   makePageTitle(pageSound, "Sound");
   makePageScrollable(pageSound);
   lv_obj_t* soundPanel = makePanel(pageSound);
-  lv_obj_set_size(soundPanel, SCREEN_W - 12, 292);
+  lv_obj_set_size(soundPanel, SCREEN_W - 12, 356);
   lv_obj_align(soundPanel, LV_ALIGN_TOP_MID, 0, 30);
   lblToneVolume = lv_label_create(soundPanel);
-  lv_label_set_text(lblToneVolume, "Volume: 75%\nSpeaker: not ready\nMsg: Bwomp  DM: Double");
+  lv_label_set_text(lblToneVolume, "Volume: 75%  Boost: +6 dB\nCodec: not ready\nMsg: Loud  DM: Loud");
   styleBoundedLabel(lblToneVolume, lv_pct(100), COLOR_TEXT, LV_LABEL_LONG_WRAP);
   lv_obj_align(lblToneVolume, LV_ALIGN_TOP_LEFT, 2, 4);
   sliderToneVolume = lv_slider_create(soundPanel);
   lv_obj_set_size(sliderToneVolume, SCREEN_W - 42, 24);
-  lv_obj_align(sliderToneVolume, LV_ALIGN_TOP_MID, 0, 78);
+  lv_obj_align(sliderToneVolume, LV_ALIGN_TOP_MID, 0, 74);
   lv_slider_set_range(sliderToneVolume, 0, 100);
   lv_slider_set_value(sliderToneVolume, toneVolumePercent, LV_ANIM_OFF);
   lv_obj_set_style_bg_color(sliderToneVolume, lv_color_hex(0x16342C), LV_PART_MAIN);
   lv_obj_set_style_bg_color(sliderToneVolume, lv_color_hex(COLOR_ACTION), LV_PART_INDICATOR);
   lv_obj_set_style_bg_color(sliderToneVolume, lv_color_hex(COLOR_TEXT), LV_PART_KNOB);
   lv_obj_add_event_cb(sliderToneVolume, toneVolumeSliderEvent, LV_EVENT_VALUE_CHANGED, nullptr);
+  lv_obj_t* lblBoost = lv_label_create(soundPanel);
+  lv_label_set_text(lblBoost, "Output boost");
+  styleBoundedLabel(lblBoost, lv_pct(100), COLOR_MUTED, LV_LABEL_LONG_WRAP);
+  lv_obj_align(lblBoost, LV_ALIGN_TOP_LEFT, 2, 110);
+  dropdownToneBoost = lv_dropdown_create(soundPanel);
+  lv_dropdown_set_options(dropdownToneBoost, TONE_BOOST_OPTIONS);
+  lv_dropdown_set_selected(dropdownToneBoost, (uint16_t)toneBoostLevel);
+  lv_obj_set_size(dropdownToneBoost, SCREEN_W - 42, 34);
+  lv_obj_align(dropdownToneBoost, LV_ALIGN_TOP_MID, 0, 130);
+  styleDarkObject(dropdownToneBoost, COLOR_INPUT, COLOR_TEXT);
+  styleDarkBorder(dropdownToneBoost, 0x2F705F);
+  lv_obj_set_style_radius(dropdownToneBoost, 6, 0);
+  lv_obj_add_event_cb(dropdownToneBoost, toneBoostDropdownEvent, LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_t* lblMessageTone = lv_label_create(soundPanel);
   lv_label_set_text(lblMessageTone, "Message tone");
   styleBoundedLabel(lblMessageTone, lv_pct(100), COLOR_MUTED, LV_LABEL_LONG_WRAP);
-  lv_obj_align(lblMessageTone, LV_ALIGN_TOP_LEFT, 2, 118);
+  lv_obj_align(lblMessageTone, LV_ALIGN_TOP_LEFT, 2, 174);
   dropdownToneMessage = lv_dropdown_create(soundPanel);
   lv_dropdown_set_options(dropdownToneMessage, TONE_STYLE_OPTIONS);
   lv_dropdown_set_selected(dropdownToneMessage, (uint16_t)toneMessageStyle);
   lv_obj_set_size(dropdownToneMessage, SCREEN_W - 42, 34);
-  lv_obj_align(dropdownToneMessage, LV_ALIGN_TOP_MID, 0, 138);
+  lv_obj_align(dropdownToneMessage, LV_ALIGN_TOP_MID, 0, 194);
   styleDarkObject(dropdownToneMessage, COLOR_INPUT, COLOR_TEXT);
   styleDarkBorder(dropdownToneMessage, 0x2F705F);
   lv_obj_set_style_radius(dropdownToneMessage, 6, 0);
@@ -4234,20 +4293,20 @@ static void buildScreenUi() {
   lv_obj_t* lblDirectTone = lv_label_create(soundPanel);
   lv_label_set_text(lblDirectTone, "Direct tone");
   styleBoundedLabel(lblDirectTone, lv_pct(100), COLOR_MUTED, LV_LABEL_LONG_WRAP);
-  lv_obj_align(lblDirectTone, LV_ALIGN_TOP_LEFT, 2, 182);
+  lv_obj_align(lblDirectTone, LV_ALIGN_TOP_LEFT, 2, 238);
   dropdownToneDirect = lv_dropdown_create(soundPanel);
   lv_dropdown_set_options(dropdownToneDirect, TONE_STYLE_OPTIONS);
   lv_dropdown_set_selected(dropdownToneDirect, (uint16_t)toneDirectStyle);
   lv_obj_set_size(dropdownToneDirect, SCREEN_W - 42, 34);
-  lv_obj_align(dropdownToneDirect, LV_ALIGN_TOP_MID, 0, 202);
+  lv_obj_align(dropdownToneDirect, LV_ALIGN_TOP_MID, 0, 258);
   styleDarkObject(dropdownToneDirect, COLOR_INPUT, COLOR_TEXT);
   styleDarkBorder(dropdownToneDirect, 0x2F705F);
   lv_obj_set_style_radius(dropdownToneDirect, 6, 0);
   lv_obj_add_event_cb(dropdownToneDirect, toneDirectDropdownEvent, LV_EVENT_VALUE_CHANGED, nullptr);
-  makeSmallButton(soundPanel, "Test Msg", 8, 250, 106, [](lv_event_t*) {
+  makeSmallButton(soundPanel, "Test Msg", 8, 312, 106, [](lv_event_t*) {
     queueToneStyle(toneMessageStyle, true);
   });
-  makeSmallButton(soundPanel, "Test DM", 126, 250, 106, [](lv_event_t*) {
+  makeSmallButton(soundPanel, "Test DM", 126, 312, 106, [](lv_event_t*) {
     queueToneStyle(toneDirectStyle, true);
   });
   updateToneVolumeLabel();
@@ -7833,6 +7892,7 @@ static void appendInterfaceStatusJson(String& json, const String& wifiIp, const 
   json += "\"wifiStations\":" + String((wifiEnabled && wifiApMode) ? WiFi.softAPgetStationNum() : 0) + ",";
   json += "\"wifiToggles\":" + String(wifiToggleCount) + ",";
   json += "\"toneVolume\":" + String(toneVolumePercent) + ",";
+  json += "\"toneBoost\":\"" + String(toneBoostName(toneBoostLevel)) + "\",";
   json += "\"toneMessage\":\"" + String(toneStyleName(toneMessageStyle)) + "\",";
   json += "\"toneDirect\":\"" + String(toneStyleName(toneDirectStyle)) + "\",";
   json += "\"toneCodecReg\":" + String(toneCodecVolumeRegister()) + ",";
@@ -8334,6 +8394,7 @@ void setup() {
   wifiApMode = prefs.getBool("wifiApMode", true);
   readableTextMode = prefs.getBool("readableText", false);
   toneVolumePercent = constrain((int)prefs.getUChar("toneVol", 75), 0, 100);
+  toneBoostLevel = clampToneBoost(prefs.getUChar("toneBoost", 2));
   toneMessageStyle = clampToneStyle(prefs.getUChar("toneMsg", (uint8_t)TONE_STYLE_LOUD));
   toneDirectStyle = clampToneStyle(prefs.getUChar("toneDir", (uint8_t)TONE_STYLE_LOUD));
   if (!prefs.getBool("toneLoudV60", false)) {
