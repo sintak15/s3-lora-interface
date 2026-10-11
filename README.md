@@ -1,5 +1,8 @@
 # Heltec LoRa Interface
 
+Build dependencies, verification commands, source layout, and hardware checks
+are documented in [docs/BUILD.md](docs/BUILD.md).
+
 This project turns an ESP32-S3 touch display, often called a CYD, into a
 handheld screen and web interface for a Heltec Meshtastic LoRa device.
 
@@ -264,7 +267,8 @@ status, SD downloads, and the node map.
 
 This project uses ESP32-S3 PSRAM for large UI data, logs, and the map canvas.
 
-In the active Arduino `lv_conf.h`, LVGL should be configured to use PSRAM:
+The checked-in `config/lv_conf.h`, selected by `build_opt.h`, configures LVGL to
+use PSRAM:
 
 - Set `LV_MEM_CUSTOM` to `1`
 - Use `heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)` for

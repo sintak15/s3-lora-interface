@@ -18,6 +18,8 @@ $distPath = Join-Path $repo 'dist'
 $arduinoCli = Join-Path $env:LOCALAPPDATA 'Programs\Arduino IDE\resources\app\lib\backend\resources\arduino-cli.exe'
 $fqbn = 'esp32:esp32:esp32s3:FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,PSRAM=opi,CDCOnBoot=cdc,DebugLevel=info'
 
+& (Join-Path $PSScriptRoot 'check_build_environment.ps1') -ArduinoCli $arduinoCli
+
 $constants = Get-Content -Raw -LiteralPath $constantsPath
 $match = [regex]::Match($constants, '#define\s+FIRMWARE_VERSION\s+"v(\d+)\.(\d+)\.(\d+)"')
 if (-not $match.Success) {

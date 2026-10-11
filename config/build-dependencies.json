@@ -1,0 +1,26 @@
+{
+  "core": {
+    "id": "esp32:esp32",
+    "version": "3.3.7"
+  },
+  "fqbn": "esp32:esp32:esp32s3:FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,PSRAM=opi,CDCOnBoot=cdc,DebugLevel=info",
+  "libraries": {
+    "lvgl": "8.3.11",
+    "TFT_eSPI": "2.5.43",
+    "TinyGPSPlus": "1.0.3"
+  },
+  "nanopb": {
+    "name": "nanopb-master",
+    "version": "nanopb-1.0.0-dev",
+    "sha256": {
+      "pb.h": "23cacf284a9ffb6dda629801d4c76ebca9bc74e813cae02cb856f6755b50fd7a",
+      "pb_common.h": "6495a691aca68d6973f2274b5dd54b74fbb57f6b019c45fff255a857fe1abcfd",
+      "pb_common.c": "8d2ec28baaaf2b7a5e90e4cb2fa9700d21cef7f826f051a637c30b7a1e6a0516",
+      "pb_decode.h": "1747746e5961de5789bcf0795588da0790cd18b2e4e706ad9c7099a0fa1cc83f",
+      "pb_decode.c": "3c3394300a93a152ac6280786a2d98ed57e0012ab9ee69af31176a6c549e51b5",
+      "pb_encode.h": "9aa00fee4ff08adf0da16e33a55be08810ea657800a648dc78f82e89c60c10cf",
+      "pb_encode.c": "30e22b48c5a4134f42d32a5abc9bc622f747c50049204a32210b1097e1554dd9"
+    },
+    "source_dir": "src/nanopb"
+  }
+}

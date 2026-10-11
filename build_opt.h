@@ -1,2 +1,3 @@
 -DUSER_SETUP_LOADED
 -include constants.h
+-DLV_CONF_PATH=config/lv_conf.h
