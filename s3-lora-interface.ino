@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <limits.h>
+#include <atomic>
 #include <errno.h>
 #include <lwip/sockets.h>
 #include <WiFi.h>
@@ -30,10 +31,22 @@
 #include "src/meshtastic/portnums.pb.h"
 #include "src/UIConfig.h"
 #include "src/WebUi.h"
+#include "src/WebMapAssets.h"
 #include "src/Reliability.h"
+#include "src/FieldStatus.h"
+#include "src/MapTileCache.h"
+#include "src/TileUpload.h"
+#include "src/MapNavigation.h"
+#include "src/MapCoverage.h"
+#include "src/BuildIdentity.h"
 
 #ifdef FIRMWARE_RUN_TESTS
 #include "src/tests/ReliabilityTests.h"
+#include "src/tests/FieldStatusTests.h"
+#include "src/tests/MapTileCacheTests.h"
+#include "src/tests/TileUploadTests.h"
+#include "src/tests/MapNavigationTests.h"
+#include "src/tests/MapCoverageTests.h"
 #endif
 
 #include "src/firmware/State.h"
@@ -48,14 +61,19 @@
 #include "src/firmware/Audio.inc"
 #include "src/firmware/Ui.inc"
 #include "src/firmware/Map.inc"
+#include "src/firmware/UsbSdExport.inc"
+#include "src/firmware/UsbTiles.inc"
 #include "src/firmware/UiRefresh.inc"
 #include "src/firmware/Radio.inc"
 #include "src/firmware/Http.inc"
 
 void setup() {
+  // Hold a complete encoded tile chunk while the main loop services radio/UI work.
+  Serial.setRxBufferSize(8192);
   Serial.begin(115200);
   delay(3000);
   Serial.println("[boot] serial ready");
+  printFirmwareIdentity();
   initSdMutex();
   initSdAppendWorker();
   allocateRuntimeBuffers();
@@ -64,9 +82,11 @@ void setup() {
   if (nextMeshPacketId == 0) nextMeshPacketId = 1;
   SerialLoRa.setRxBufferSize(4096);
   SerialLoRa.begin(LORA_BAUD, SERIAL_8N1, LORA_RX_PIN, LORA_TX_PIN);
+  SerialGPS.setRxBufferSize(4096);
   SerialGPS.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
   Serial.println("[boot] prefs");
   prefs.begin("s3-lora", false);
+  mapView.zoom = MapNavigation::clampZoom(prefs.getUChar("mapZoom", MAP_TILE_MAX_ZOOM));
   wifiApMode = prefs.getBool("wifiApMode", true);
   readableTextMode = prefs.getBool("readableText", false);
   nodeListViewMode = prefs.getBool("nodeCompact", true) ? NODE_LIST_VIEW_COMPACT : NODE_LIST_VIEW_DETAILED;

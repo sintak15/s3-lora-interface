@@ -363,6 +363,7 @@ static bool sampleMax17048() {
   uint16_t rawSoc = 0;
   if (!max17048ReadReg16(0x02, rawVcell) || !max17048ReadReg16(0x04, rawSoc)) {
     localBattery.gaugePresent = false;
+    batteryRuntime.reset();
     localBattery.batteryLow = false;
     localBattery.batteryCritical = false;
     localBattery.voltageLowSustained = false;
@@ -406,6 +407,7 @@ static bool sampleMax17048() {
   localBattery.charging = charging;
   localBattery.percent = displayedPercent;
   updateBatteryTrend(packMv, now);
+  batteryRuntime.sample(now, soc, socReliable && !localBattery.voltageUnstable, charging);
   strlcpy(localBattery.powerState, localBattery.percentSource, sizeof(localBattery.powerState));
   return true;
 }

@@ -19,6 +19,51 @@ static String jsonEscape(const char* text) {
   return out;
 }
 
+static void appendTileCacheStatusJson(String& json) {
+  json += "\"mapTileCacheEnabled\":" + String(mapTileCacheBuffer ? "true" : "false") + ",";
+  json += "\"mapTileCacheSlots\":" + String(mapTileCacheBuffer ? (unsigned)MAP_TILE_CACHE_SLOTS : 0) + ",";
+  json += "\"mapTileCacheKb\":" + String(mapTileCacheBuffer ? (unsigned)(MAP_TILE_CACHE_SLOTS * MAP_TILE_BYTES / 1024) : 0) + ",";
+  json += "\"mapTileCacheResident\":" + String(mapTileCacheResident.load()) + ",";
+  json += "\"mapTileCacheHits\":" + String(mapTileCacheHits.load()) + ",";
+  json += "\"mapTileCacheMisses\":" + String(mapTileCacheMisses.load()) + ",";
+  json += "\"mapTileCacheLoads\":" + String(mapTileCacheLoads.load()) + ",";
+  json += "\"mapTileCacheEvictions\":" + String(mapTileCacheEvictions.load()) + ",";
+  json += "\"mapTileReadErrors\":" + String(mapTileCacheReadErrors.load()) + ",";
+  json += "\"mapTileSdReadCalls\":" + String(mapTileSdReadCalls.load()) + ",";
+  json += "\"mapTileSdReadBytes\":" + String(mapTileSdReadBytes.load()) + ",";
+  json += "\"mapTileLastReadUs\":" + String(lastMapTileReadUs) + ",";
+  json += "\"mapTileStorageGeneration\":" + String(mapStorageGeneration.load()) + ",";
+  bool coverageChecked = mapCoverage.ready && mapCoverage.generation == mapStorageGeneration.load() && sdStorage.available && mapTileRootFound;
+  json += "\"mapRequestedZoom\":" + String(mapView.zoom) + ",";
+  json += "\"mapDisplayedZoom\":" + (mapCanvasCached ? String(cachedMapZoom) : String("null")) + ",";
+  json += "\"mapCoverageChecked\":" + String(coverageChecked ? "true" : "false") + ",";
+  json += "\"mapCoverageAgeSec\":" + (coverageChecked ? String((millis() - mapCoverage.checkedMs) / 1000) : String("null")) + ",";
+  json += "\"mapCoverageLevels\":[";
+  for (int i = 0; i < MapCoverage::levels; ++i) {
+    if (i) json += ",";
+    const auto& level = mapCoverage.zooms[i];
+    json += "{\"zoom\":" + String(i + MAP_TILE_MIN_ZOOM) + ",\"status\":\"" + String(coverageChecked ? MapCoverage::status(level) : "Unchecked") + "\",";
+    json += "\"available\":" + String(coverageChecked ? level.available() : 0) + ",\"required\":" + String(coverageChecked ? (unsigned)level.area.count : 0) + ",";
+    json += "\"invalid\":" + String(coverageChecked ? level.invalid() : 0) + ",\"center\":" + String(coverageChecked && level.center() ? "true" : "false") + "}";
+  }
+  json += "],";
+  json += "\"mapBenchmarkRunning\":" + String(mapBenchmarkRunning ? "true" : "false") + ",";
+  json += "\"mapBenchmark\":";
+  if (!lastMapBenchmarkAvailable) json += "null,";
+  else {
+    json += "{\"passed\":" + String(lastMapBenchmarkPassed ? "true" : "false") + ",\"samples\":[";
+    static const char* labels[] = {"baseline", "cold", "warm", "baseline-pan", "cached-pan", "baseline-return", "cached-return"};
+    for (size_t i = 0; i < 7; ++i) {
+      if (i) json += ",";
+      const auto& sample = lastMapBenchmark[i];
+      json += "{\"mode\":\"" + String(labels[i]) + "\",\"durationUs\":" + String(sample.durationUs) + ",";
+      json += "\"readCalls\":" + String(sample.readCalls) + ",\"readBytes\":" + String(sample.readBytes) + ",";
+      json += "\"ok\":" + String(sample.ok ? "true" : "false") + ",\"pixelsMatch\":" + String(sample.pixelsMatch ? "true" : "false") + "}";
+    }
+    json += "]},";
+  }
+}
+
 static void appendBatteryStatusJson(String& json) {
   json += "\"battery\":" + String(localBattery.percent) + ",";
   json += "\"voltage\":" + String(localBattery.batteryMv / 1000.0f, 2) + ",";
@@ -59,6 +104,8 @@ static void appendBatteryStatusJson(String& json) {
       trendWindowSec = (localBattery.trendMs[newestIndex] - localBattery.trendMs[oldestIndex]) / 1000;
     }
   }
+  json += "\"batteryRuntimeMinutes\":" + String(batteryRuntime.minutes()) + ",";
+  json += "\"batteryDischargePercentHr\":" + String(batteryRuntime.percentPerHour(), 2) + ",";
   json += "\"batteryTrendWindowSec\":" + String(trendWindowSec) + ",";
   json += "\"batteryCalibrationOffsetPercent\":" + String(localBattery.calibrationOffsetTenths / 10.0f, 1) + ",";
   json += "\"batteryCalibrationOffsetMv\":" + String(localBattery.calibrationOffsetMv) + ",";
@@ -86,6 +133,24 @@ static void appendSdStatusJson(String& json) {
   json += "\"sdAppendTruncated\":" + String(sdAppendTruncated) + ",";
 }
 
+static void appendTxStatusJson(String& json) {
+  json += "\"txHistory\":[";
+  for (size_t offset = 0; offset < txHistoryCount; ++offset) {
+    if (offset) json += ",";
+    const TxRecord& record = txHistory[(txHistoryNext + TX_HISTORY_COUNT - 1 - offset) % TX_HISTORY_COUNT];
+    char destination[24];
+    describeTxDestination(record, destination, sizeof(destination));
+    json += "{\"id\":" + String(record.packetId) + ",\"destination\":\"" + jsonEscape(destination) + "\",";
+    json += "\"text\":\"" + jsonEscape(record.text) + "\",\"status\":\"" + txStatusText(record, millis()) + "\",";
+    json += "\"ageSec\":" + String((millis() - record.sentMs) / 1000) + ",";
+    json += "\"error\":\"" + String(txErrorText(record)) + "\",\"errorCode\":" + String(record.errorCode) + ",";
+    json += "\"localEcho\":" + String(record.echoSeen ? "true" : "false") + ",";
+    json += "\"retriedAs\":" + String(record.retriedAs) + ",";
+    json += "\"canRetry\":" + String(!record.retriedAs && FieldStatus::retryAllowed(record.delivery, record.sentMs, millis()) ? "true" : "false") + "}";
+  }
+  json += "],";
+}
+
 static void appendChatStatusJson(String& json) {
   json += "\"chat\":\"" + jsonEscape(publicChatLog) + "\",";
   json += "\"publicChat\":\"" + jsonEscape(publicChatLog) + "\",";
@@ -103,6 +168,8 @@ static void appendChatStatusJson(String& json) {
 }
 
 static void appendLinkStatusJson(String& json, const char* rxAge) {
+  json += "\"linkHealth\":\"" + String(linkHealthText()) + "\",";
+  json += "\"lastRadioResponseSec\":" + (radioResponseSeen ? String((millis() - lastRadioResponseMs) / 1000) : String("null")) + ",";
   json += "\"frames\":" + String(framesDecoded) + ",";
   json += "\"errors\":" + String(decodeErrors) + ",";
   json += "\"bytes\":" + String(bytesFromRadio) + ",";
@@ -137,6 +204,8 @@ static void appendInterfaceStatusJson(String& json, const String& wifiIp, const 
   json += "\"webUser\":\"" + jsonEscape(webUiUser) + "\",";
   json += "\"setupRequired\":" + String(usingDefaultWebCredentials() ? "true" : "false") + ",";
   json += "\"firmwareVersion\":\"" + String(FIRMWARE_VERSION) + "\",";
+  json += "\"gitCommit\":\"" + String(FIRMWARE_GIT_COMMIT) + "\",";
+  json += "\"sourceDirty\":" + String(FIRMWARE_SOURCE_DIRTY ? "true" : "false") + ",";
   json += "\"buildDate\":\"" + String(__DATE__) + "\",";
   json += "\"buildTime\":\"" + String(__TIME__) + "\",";
   json += "\"runningPartition\":\"" + String(runningPartition ? runningPartition->label : "unknown") + "\",";
@@ -206,12 +275,11 @@ static void appendInterfaceStatusJson(String& json, const String& wifiIp, const 
 }
 
 static void appendMapStatusJson(String& json) {
+  json += "\"offlineMapCenter\":" + (lastMapLocationValid ? String("{\"lat\":") + String(defaultMapLat, 6) + ",\"lon\":" + String(defaultMapLon, 6) + "}" : String("null")) + ",";
   json += "\"gpsValid\":" + String(gpsStats.valid ? "true" : "false") + ",";
   json += "\"gpsLat\":" + String(gpsStats.latitude, 6) + ",";
   json += "\"gpsLon\":" + String(gpsStats.longitude, 6) + ",";
-  json += "\"localGpsBytes\":" + String(gpsBytesFromLocal) + ",";
-  json += "\"localGpsSentences\":" + String(localGps.sentencesWithFix()) + ",";
-  json += "\"localGpsFailedChecksum\":" + String(localGps.failedChecksum()) + ",";
+  appendLocalGpsHealthJson(json);
   json += "\"positionedNodes\":" + String(countPositionedNodes()) + ",";
   json += "\"mapCacheStatus\":\"" + jsonEscape(mapCacheStatus) + "\",";
   json += "\"mapCacheLoaded\":" + String(mapCanvasCached ? "true" : "false") + ",";
@@ -485,11 +553,13 @@ static String buildStatusJson() {
   json += "\"myNodeName\":\"" + jsonEscape(nodeName(stats.myNodeNum)) + "\",";
   appendBatteryStatusJson(json);
   appendSdStatusJson(json);
+  appendTileCacheStatusJson(json);
   json += "\"rx\":" + String(stats.packetsRx) + ",";
   json += "\"tx\":" + String(stats.packetsTx) + ",";
   json += "\"online\":" + String(stats.onlineNodes) + ",";
   json += "\"total\":" + String(stats.totalNodes) + ",";
   appendChatStatusJson(json);
+  appendTxStatusJson(json);
   appendMapStatusJson(json);
   appendHeltecConfigStatusJson(json);
   json += "\"i2cProbeSummary\":\"" + jsonEscape(i2cProbeSummary) + "\",";
@@ -499,6 +569,69 @@ static String buildStatusJson() {
   appendNodesStatusJson(json);
   json += "}";
   return json;
+}
+
+// Health-only report: omit credentials, channel keys, positions and chat contents.
+static String buildFieldReportJson() {
+  String json;
+  json.reserve(3500);
+  json = "{\"reportVersion\":1,";
+  json += "\"firmwareVersion\":\"" + String(FIRMWARE_VERSION) + "\",";
+  json += "\"gitCommit\":\"" + String(FIRMWARE_GIT_COMMIT) + "\",";
+  json += "\"sourceDirty\":" + String(FIRMWARE_SOURCE_DIRTY ? "true" : "false") + ",";
+  json += "\"built\":\"" + String(__DATE__) + " " + __TIME__ + "\",";
+  json += "\"partition\":\"" + String(esp_ota_get_running_partition()->label) + "\",";
+  json += "\"uptimeSec\":" + String(millis() / 1000) + ",";
+  json += "\"resetReason\":" + String((int)esp_reset_reason()) + ",";
+  json += "\"linkHealth\":\"" + String(linkHealthText()) + "\",";
+  json += "\"lastRadioResponseSec\":" + (radioResponseSeen ? String((millis() - lastRadioResponseMs) / 1000) : String("null")) + ",";
+  json += "\"framesDecoded\":" + String(framesDecoded) + ",\"decodeErrors\":" + String(decodeErrors) + ",";
+  json += "\"rxBytes\":" + String(bytesFromRadio) + ",\"txBytes\":" + String(bytesToRadio) + ",";
+  json += "\"frameTimeouts\":" + String(serialFrameTimeouts) + ",\"invalidLengths\":" + String(invalidFrameLengths) + ",";
+  json += "\"heartbeats\":" + String(heartbeatCount) + ",\"apiResyncs\":" + String(apiResyncCount) + ",";
+  appendLocalGpsHealthJson(json);
+  appendBatteryStatusJson(json);
+  appendSdStatusJson(json);
+  appendTileCacheStatusJson(json);
+  json += "\"internalFreeKb\":" + String(heapCapKb(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)) + ",";
+  json += "\"internalLargestKb\":" + String(heapCapLargestKb(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)) + ",";
+  json += "\"heapMinKb\":" + String(ESP.getMinFreeHeap() / 1024) + ",";
+  json += "\"psramFreeKb\":" + String(heapCapKb(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)) + ",";
+  json += "\"mapWorkerFailures\":" + String(mapRenderWorkerFailures) + ",";
+  unsigned queued = 0, sent = 0, acknowledged = 0, failed = 0, unconfirmed = 0;
+  for (size_t i = 0; i < txHistoryCount; ++i) {
+    switch (FieldStatus::visibleDelivery(txHistory[i].delivery, txHistory[i].sentMs, millis())) {
+      case FieldStatus::Delivery::Queued: ++queued; break;
+      case FieldStatus::Delivery::Sent: ++sent; break;
+      case FieldStatus::Delivery::Acknowledged: ++acknowledged; break;
+      case FieldStatus::Delivery::Failed: ++failed; break;
+      default: ++unconfirmed; break;
+    }
+  }
+  json += "\"delivery\":{\"tracked\":" + String(txHistoryCount) + ",\"queued\":" + String(queued) + ",";
+  json += "\"sent\":" + String(sent) + ",\"acknowledged\":" + String(acknowledged) + ",";
+  json += "\"failed\":" + String(failed) + ",\"unconfirmed\":" + String(unconfirmed) + "}}";
+  return json;
+}
+
+static void handleFieldReport() {
+  if (!requireWebAuth()) return;
+  sampleLocalBattery();
+  refreshSdUsage();
+  server.sendHeader("Cache-Control", "no-store");
+  server.sendHeader("Content-Disposition", "attachment; filename=field-diagnostics.json");
+  server.send(200, "application/json", buildFieldReportJson());
+}
+
+static void handleRetryTx() {
+  if (!requireWebAuth()) return;
+  int64_t id = 0;
+  if (!server.hasArg("id") || !Reliability::parseInteger(server.arg("id").c_str(), 1, UINT32_MAX, id)) {
+    server.send(400, "text/plain", "invalid packet ID");
+    return;
+  }
+  bool ok = retryTx((uint32_t)id);
+  server.send(ok ? 200 : 409, "text/plain", ok ? "Retry queued. See TX history for delivery." : "Retry unavailable: already retried, still pending, acknowledged, or expired from history.");
 }
 
 static void handleStatus() {
@@ -559,6 +692,8 @@ struct SdDownload {
   size_t offset = 0;
   uint32_t lastProgressMs = 0;
   bool active = false;
+  uint8_t* memory = nullptr; // PSRAM snapshot for web tiles; no SD lock during network sends.
+  size_t memoryOffset = 0;
   uint8_t buffer[1024];
 };
 static SdDownload sdDownload;
@@ -569,11 +704,14 @@ static bool sdDownloadPathActive(const char* path) {
 
 static void finishSdDownload() {
   // If another SD worker is busy, retry closing on the next main-loop pass.
-  {
+  if (!sdDownload.memory) {
     SdLock lock(0);
     if (!lock) return;
     sdDownload.file.close();
   }
+  if (sdDownload.memory) heap_caps_free(sdDownload.memory);
+  sdDownload.memory = nullptr;
+  sdDownload.memoryOffset = 0;
   sdDownload.client.stop();
   sdDownload.active = false;
   sdDownload.path = nullptr;
@@ -585,6 +723,16 @@ static void serviceSdDownload() {
       millis() - sdDownload.lastProgressMs >= 10000 ||
       (sdDownload.remaining == 0 && sdDownload.offset == sdDownload.buffered)) {
     finishSdDownload();
+    return;
+  }
+  if (sdDownload.memory) {
+    size_t requested = min(sdDownload.remaining, (size_t)4096);
+    int written = lwip_send(sdDownload.client.fd(), sdDownload.memory + sdDownload.memoryOffset, requested, MSG_DONTWAIT);
+    if (written > 0) {
+      sdDownload.memoryOffset += written;
+      sdDownload.remaining -= written;
+      sdDownload.lastProgressMs = millis();
+    } else if (written == 0 || (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)) finishSdDownload();
     return;
   }
   if (sdDownload.offset == sdDownload.buffered) {
@@ -646,10 +794,13 @@ static void handleSdDownload(const char* path, const char* downloadName, const c
   server.send(200, contentType, "");
 }
 
+#include "WebMap.inc"
+#include "WebMapTests.inc"
+
 static void handleSend() {
   if (!requireWebAuth()) return;
-  if (!server.hasArg("msg")) {
-    server.send(400, "text/plain", "missing msg");
+  if (!server.hasArg("msg") || server.arg("msg").length() == 0 || server.arg("msg").length() > 233) {
+    server.send(400, "text/plain", "message must contain 1-233 UTF-8 bytes");
     return;
   }
   String channel = server.hasArg("channel") ? server.arg("channel") : String("public");
@@ -660,7 +811,7 @@ static void handleSend() {
       return;
     }
     bool ok = sendDirectTextMessage(server.arg("msg").c_str(), to);
-    server.send(ok ? 200 : 500, "text/plain", ok ? "direct sent" : "direct send failed");
+    server.send(ok ? 200 : 500, "text/plain", ok ? "direct queued" : "direct send failed");
     return;
   }
   int8_t channelIndex = PUBLIC_CHANNEL_INDEX;
@@ -683,7 +834,7 @@ static void handleSend() {
     return;
   }
   bool ok = sendTextMessage(server.arg("msg").c_str(), channelIndex);
-  server.send(ok ? 200 : 500, "text/plain", ok ? "sent" : "send failed");
+  server.send(ok ? 200 : 500, "text/plain", ok ? "queued" : "send failed");
 }
 
 static void handleSerialCmd() {
@@ -826,6 +977,10 @@ static void handleRoot() {
 }
 
 static void handleFirmwareUpload() {
+  if (usbTileUploadActive() || usbSdExportActive()) {
+    otaUploadOk = false;
+    return;
+  }
   if (!server.authenticate(webUiUser, webUiPass)) {
     otaUploadOk = false;
     return;
@@ -892,8 +1047,11 @@ static void handleFirmwareUpdateDone() {
 
 
 static void registerWebRoutes() {
+  registerWebMapRoutes();
   server.on("/", HTTP_GET, handleRoot);
   server.on("/status", HTTP_GET, handleStatus);
+  server.on("/diagnostics/report", HTTP_GET, handleFieldReport);
+  server.on("/tx/retry", HTTP_POST, handleRetryTx);
   server.on("/tone/status", HTTP_GET, handleToneStatus);
   server.on("/i2c/probe", HTTP_POST, handleI2cProbe);
   server.on("/tone/test", HTTP_GET, handleToneTest);
@@ -940,6 +1098,10 @@ static void registerWebRoutes() {
   server.on("/sd/snapshot", HTTP_POST, handleStatusSnapshot);
   server.on("/sd/mount", HTTP_POST, []() {
     if (!requireWebAuth()) return;
+    if (mapRenderWorkerRunning || mapBenchmarkRunning || usbTileUploadActive() || usbSdExportActive()) {
+      server.send(409, "text/plain", "wait for map rendering, benchmark or USB SD transfer to finish");
+      return;
+    }
     if (sdDownload.active) {
       server.send(409, "text/plain", "wait for the SD download to finish");
       return;

@@ -123,6 +123,7 @@ static void loadMapCacheFromSd() {
   }
   if (header.magic != MAP_CACHE_MAGIC ||
       header.version != MAP_CACHE_VERSION ||
+      header.zoom < MAP_TILE_MIN_ZOOM || header.zoom > MAP_TILE_MAX_ZOOM ||
       header.width != MAP_PLOT_W ||
       (header.height != MAP_PLOT_H_NORMAL && header.height != MAP_PLOT_H_EXPANDED)) {
     file.close();
@@ -265,87 +266,101 @@ static bool mapRenderHasPendingResult() {
          (mapRenderResultQueue && uxQueueMessagesWaiting(mapRenderResultQueue) > 0);
 }
 
-static bool assembleMapTilesToBuffer(const MapRenderJob& job, MapRenderResult& result) {
-  if (!mapWorkerBuf) {
-    strlcpy(result.status, "render buffer missing", sizeof(result.status));
+#include "TileCache.inc"
+#include "MapCoverage.inc"
+
+static bool assembleMapTilesToBuffer(const MapRenderJob& job, MapRenderResult& result, bool useTileCache) {
+  result.drawnMask = 0;
+  result.centerTileFound = result.drewTiles = false;
+  if (!mapWorkerBuf || job.plotH == 0 || job.plotH > MAP_PLOT_H) {
+    strlcpy(result.status, "render buffer/bounds invalid", sizeof(result.status));
     return false;
   }
-
   SdLock lock(10000);
-  if (!lock) {
-    strlcpy(result.status, "SD busy", sizeof(result.status));
+  if (!lock) { strlcpy(result.status, "SD busy", sizeof(result.status)); return false; }
+  if (job.storageGeneration != mapStorageGeneration.load() || !sdStorage.available || !mapTileRootFound) {
+    strlcpy(result.status, "tile source changed/unavailable", sizeof(result.status));
     return false;
   }
-  if (!sdStorage.available || !mapTileRootFound) {
-    strlcpy(result.status, "tiles unavailable", sizeof(result.status));
-    return false;
-  }
-
+  useTileCache = useTileCache && mapTileCacheBuffer;
+  if (useTileCache) prepareMapTileCache(job);
   char centerPath[96];
   buildTilePath(job.tileRoot, job.zoom, job.centerTileX, job.centerTileY, centerPath, sizeof(centerPath));
-  result.centerTileFound = SD_MMC.exists(centerPath);
-  if (!result.centerTileFound) {
+  bool centerResident = useTileCache && mapTileIndex.find({job.zoom, (int32_t)job.centerTileX, (int32_t)job.centerTileY}, false) != mapTileIndex.missing;
+  if (!centerResident && !SD_MMC.exists(centerPath)) {
     strlcpy(result.status, "center tile missing", sizeof(result.status));
     return false;
   }
-
   const lv_color_t bg = lv_color_make(0x07, 0x10, 0x0D);
-  for (size_t i = 0; i < MAP_CANVAS_PIXELS; i++) {
-    mapWorkerBuf[i] = bg;
-  }
-
+  for (size_t i = 0; i < MAP_CANVAS_PIXELS; i++) mapWorkerBuf[i] = bg;
   int startX = job.centerPixelX - (MAP_PLOT_W / 2);
   int startY = job.centerPixelY - (job.plotH / 2);
-  int endX = startX + MAP_PLOT_W - 1;
-  int endY = startY + job.plotH - 1;
+  int endX = startX + MAP_PLOT_W - 1, endY = startY + job.plotH - 1;
   long tileX0 = max(0L, (long)floor((double)startX / MAP_TILE_SIZE));
   long tileY0 = max(0L, (long)floor((double)startY / MAP_TILE_SIZE));
-  long tileX1 = max(0L, (long)floor((double)endX / MAP_TILE_SIZE));
-  long tileY1 = max(0L, (long)floor((double)endY / MAP_TILE_SIZE));
+  long tileX1 = min((1L << job.zoom) - 1, max(0L, (long)floor((double)endX / MAP_TILE_SIZE)));
+  long tileY1 = min((1L << job.zoom) - 1, max(0L, (long)floor((double)endY / MAP_TILE_SIZE)));
+  unsigned areaIndex = 0;
   uint16_t readBuf[MAP_PLOT_W];
-
   for (long tileY = tileY0; tileY <= tileY1; tileY++) {
     for (long tileX = tileX0; tileX <= tileX1; tileX++) {
-      char path[96];
-      buildTilePath(job.tileRoot, job.zoom, tileX, tileY, path, sizeof(path));
-      File tile = SD_MMC.open(path, FILE_READ);
-      if (!tile) continue;
-
-      int tileGlobalX0 = tileX * MAP_TILE_SIZE;
-      int tileGlobalY0 = tileY * MAP_TILE_SIZE;
-      int overlapX0 = max(startX, tileGlobalX0);
-      int overlapY0 = max(startY, tileGlobalY0);
+      uint8_t areaBit = (uint8_t)(1U << areaIndex++);
+      const uint16_t* cached = nullptr;
+      File tile;
+      if (useTileCache) {
+        cached = loadCachedMapTile(job, tileX, tileY, result);
+        if (!cached) continue;
+      } else {
+        char path[96];
+        buildTilePath(job.tileRoot, job.zoom, tileX, tileY, path, sizeof(path));
+        tile = SD_MMC.open(path, FILE_READ);
+        if (!tile) continue;
+        if (tile.isDirectory() || tile.size() != MAP_TILE_BYTES) {
+          tile.close(); mapTileCacheReadErrors.fetch_add(1); continue;
+        }
+      }
+      int tileGlobalX0 = tileX * MAP_TILE_SIZE, tileGlobalY0 = tileY * MAP_TILE_SIZE;
+      int overlapX0 = max(startX, tileGlobalX0), overlapY0 = max(startY, tileGlobalY0);
       int overlapX1 = min(endX, tileGlobalX0 + MAP_TILE_SIZE - 1);
       int overlapY1 = min(endY, tileGlobalY0 + MAP_TILE_SIZE - 1);
-      int segment = overlapX1 - overlapX0 + 1;
-      int outX = overlapX0 - startX;
-      int inTileX = overlapX0 - tileGlobalX0;
+      int segment = overlapX1 - overlapX0 + 1, outX = overlapX0 - startX, inTileX = overlapX0 - tileGlobalX0;
       for (int globalY = overlapY0; globalY <= overlapY1; globalY++) {
-        int outY = globalY - startY;
-        int inTileY = globalY - tileGlobalY0;
-        size_t bytesToRead = segment * sizeof(uint16_t);
-        tile.seek((inTileY * MAP_TILE_SIZE + inTileX) * sizeof(uint16_t));
-        size_t bytesRead = tile.read((uint8_t*)readBuf, bytesToRead);
-        int pixelsRead = bytesRead / sizeof(uint16_t);
-        for (int i = 0; i < pixelsRead; i++) {
-          mapWorkerBuf[outY * MAP_PLOT_W + outX + i] = rgb565ToLvColor(readBuf[i]);
+        int outY = globalY - startY, inTileY = globalY - tileGlobalY0;
+        const uint16_t* pixels = cached ? cached + inTileY * MAP_TILE_SIZE + inTileX : readBuf;
+        if (!cached) {
+          uint32_t seekStarted = micros();
+          bool sought = tile.seek((inTileY * MAP_TILE_SIZE + inTileX) * sizeof(uint16_t));
+          result.tileReadUs += (uint32_t)(micros() - seekStarted);
+          if (!sought || readMapTileBytes(tile, (uint8_t*)readBuf, segment * sizeof(uint16_t), result) != segment * sizeof(uint16_t)) {
+            tile.close(); mapTileCacheReadErrors.fetch_add(1);
+            result.centerTileFound = false;
+            strlcpy(result.status, "tile read failed", sizeof(result.status));
+            return false;
+          }
         }
+        for (int i = 0; i < segment; i++) mapWorkerBuf[outY * MAP_PLOT_W + outX + i] = rgb565ToLvColor(pixels[i]);
         if ((globalY & 0x0F) == 0) delay(0);
       }
-      tile.close();
+      if (tile) tile.close();
+      result.drawnMask |= areaBit;
+      if (tileX == job.centerTileX && tileY == job.centerTileY) result.centerTileFound = true;
       delay(0);
     }
   }
-
-  result.drewTiles = true;
-  strlcpy(result.status, "drawn", sizeof(result.status));
-  return true;
+  result.drewTiles = result.centerTileFound;
+  strlcpy(result.status, result.drewTiles ? "drawn" : "center tile unreadable", sizeof(result.status));
+  return result.drewTiles;
 }
+
+#include "MapBenchmark.inc"
 
 static void mapRenderTask(void*) {
   MapRenderJob job = mapRenderActiveJob;
   MapRenderResult result = {};
+  result.viewRevision = job.viewRevision;
   result.id = job.id;
+  result.storageGeneration = job.storageGeneration;
+  result.benchmark = job.benchmark;
   result.lat = job.lat;
   result.lon = job.lon;
   result.zoom = job.zoom;
@@ -355,7 +370,8 @@ static void mapRenderTask(void*) {
   result.centerPixelX = job.centerPixelX;
   result.centerPixelY = job.centerPixelY;
   uint32_t startedMs = millis();
-  assembleMapTilesToBuffer(job, result);
+  if (job.benchmark) runMapBenchmark(job, result);
+  else renderCoveredMap(job, result);
   result.durationMs = millis() - startedMs;
   if (mapRenderResultQueue) {
     xQueueOverwrite(mapRenderResultQueue, &result);
@@ -391,6 +407,8 @@ static bool requestMapTileRender(double lat,
   }
 
   MapRenderJob job = {};
+  job.viewRevision = mapView.revision;
+  job.storageGeneration = mapStorageGeneration.load();
   job.id = nextMapRenderJobId++;
   if (nextMapRenderJobId == 0) nextMapRenderJobId = 1;
   job.lat = lat;
@@ -423,6 +441,36 @@ static void serviceMapRenderWorker() {
   if (xQueueReceive(mapRenderResultQueue, &result, 0) != pdTRUE) return;
   mapRenderResultPending = false;
   mapRenderWorkerApplies++;
+  if (result.benchmark) {
+    memcpy(lastMapBenchmark, result.samples, sizeof(lastMapBenchmark));
+    lastMapBenchmarkAvailable = true;
+    lastMapBenchmarkPassed = result.benchmarkPassed;
+    static const char* names[] = {"baseline", "cold", "warm", "baseline-pan", "cached-pan", "baseline-return", "cached-return"};
+    for (size_t i = 0; i < 7; ++i) {
+      const auto& sample = result.samples[i];
+      Serial.printf("[mapbench] %s us=%lu tileReads=%lu tileBytes=%lu ok=%s pixels=%s\n", names[i],
+                    (unsigned long)sample.durationUs, (unsigned long)sample.readCalls, (unsigned long)sample.readBytes,
+                    sample.ok ? "true" : "false", sample.pixelsMatch ? "match" : "different");
+    }
+    Serial.printf("[mapbench] complete=%s status=%s\n", result.benchmarkPassed ? "PASS" : "FAIL", result.status);
+    mapBenchmarkRunning = false;
+    if (mapRenderRetryPending) {
+      mapRenderRetryPending = false;
+      mapRenderPending = true;
+      lastMapUiRefreshMs = 0;
+    }
+    forcePageRefresh = true;
+    return; // Benchmark pixels must never replace the displayed map or SD snapshot.
+  }
+  if (result.storageGeneration != mapStorageGeneration.load() || result.viewRevision != mapView.revision || mapDragging) {
+    mapRenderRetryPending = false;
+    mapRenderPending = true;
+    lastMapUiRefreshMs = 0;
+    forcePageRefresh = true;
+    return;
+  }
+  lastMapTileReadUs = result.tileReadUs;
+  mapCoverage = result.coverage;
 
   if (result.centerTileFound && result.drewTiles && mapCanvas && mapCanvasBuf && mapWorkerBuf) {
     memcpy(mapCanvasBuf, mapWorkerBuf, MAP_CANVAS_BYTES);
@@ -439,7 +487,7 @@ static void serviceMapRenderWorker() {
     strlcpy(mapCacheStatus, result.status[0] ? result.status : "drawn", sizeof(mapCacheStatus));
     lv_obj_invalidate(mapCanvas);
     recordMapRenderTimingDuration(result.durationMs, true, false);
-    if (!mapNodeDetailViewActive && (!lastMapCacheSaveMs || millis() - lastMapCacheSaveMs > 15000)) {
+    if (!mapNavigationTesting && !mapView.manual && mapView.follow && !mapNodeDetailViewActive && (!lastMapCacheSaveMs || millis() - lastMapCacheSaveMs > 15000)) {
       saveMapCacheToSd();
       lastMapCacheSaveMs = millis();
     }
@@ -450,7 +498,8 @@ static void serviceMapRenderWorker() {
     cachedMapLat = result.lat;
     cachedMapLon = result.lon;
     cachedMapTileFound = false;
-    if (!mapCanvasCached && mapCanvas) {
+    mapCanvasCached = false;
+    if (mapCanvas) {
       lv_canvas_fill_bg(mapCanvas, lv_color_hex(0x07100D), LV_OPA_COVER);
       lv_obj_invalidate(mapCanvas);
     }
@@ -463,44 +512,31 @@ static void serviceMapRenderWorker() {
     mapRenderPending = true;
     lastMapUiRefreshMs = 0;
   }
+  lastMapUiRefreshMs = 0;
   forcePageRefresh = true;
 }
 
 static bool renderOfflineTileMap(double lat, double lon, int zoom, char* centerPath, size_t centerPathSize) {
-  uint32_t renderStartedMs = millis();
-  if (!mapCanvas || !sdStorage.available || !mapTileRootFound) {
-    recordMapRenderTiming(renderStartedMs, false, false);
+  uint32_t started = millis();
+  if (!mapCanvas || !sdStorage.available || !mapTileRootFound) return false;
+  uint16_t height = (uint16_t)activeMapPlotHeight();
+  bool checked = mapCoverageMatches(lat, lon, height);
+  int actual = checked ? MapCoverage::choose(mapCoverage, zoom) : -1;
+  if (checked && actual < 0) {
+    mapCanvasCached = false;
+    lv_canvas_fill_bg(mapCanvas, lv_color_hex(0x07100D), LV_OPA_COVER);
+    strlcpy(mapCacheStatus, "no usable coverage", sizeof(mapCacheStatus));
     return false;
   }
-  int plotH = activeMapPlotHeight();
-
-  double centerX = lonToGlobalPixelX(lon, zoom);
-  double centerY = latToGlobalPixelY(lat, zoom);
-  long centerTileX = (long)floor(centerX / MAP_TILE_SIZE);
-  long centerTileY = (long)floor(centerY / MAP_TILE_SIZE);
-  int centerPixelX = (int)round(centerX);
-  int centerPixelY = (int)round(centerY);
-  if (mapCacheMatchesCenter(lat, lon, zoom, (uint16_t)plotH, &centerTileX, &centerTileY, &centerPixelX, &centerPixelY)) {
-    recordMapRenderTiming(renderStartedMs, false, true);
+  if (checked && mapCacheMatchesCenter(lat, lon, actual, height)) {
+    recordMapRenderTiming(started, false, true);
     return cachedMapTileFound;
   }
-
-  bool centerTileFound = mapTileExists(zoom, centerTileX, centerTileY, centerPath, centerPathSize);
-  if (!centerTileFound) {
-    cachedMapZoom = zoom;
-    cachedMapTileX = centerTileX;
-    cachedMapTileY = centerTileY;
-    cachedMapLat = lat;
-    cachedMapLon = lon;
-    cachedMapTileFound = false;
-    if (!mapCanvasCached) lv_canvas_fill_bg(mapCanvas, lv_color_hex(0x07100D), LV_OPA_COVER);
-    strlcpy(mapCacheStatus, "center tile missing", sizeof(mapCacheStatus));
-    recordMapRenderTiming(renderStartedMs, false, false);
-    return false;
-  }
-
-  requestMapTileRender(lat, lon, zoom, (uint16_t)plotH, centerTileX, centerTileY, centerPixelX, centerPixelY);
-  return centerTileFound;
+  double x = lonToGlobalPixelX(lon, zoom), y = latToGlobalPixelY(lat, zoom);
+  long tileX = (long)floor(x / MAP_TILE_SIZE), tileY = (long)floor(y / MAP_TILE_SIZE);
+  if (centerPath && centerPathSize) buildTilePath(mapTileRoot, zoom, tileX, tileY, centerPath, centerPathSize);
+  requestMapTileRender(lat, lon, zoom, height, tileX, tileY, (int)round(x), (int)round(y));
+  return true; // The worker resolves coverage; the main loop never probes SD files.
 }
 
 static bool placeMapDot(size_t index, double centerLat, double centerLon, double lat, double lon, int zoom, lv_color_t color, int size) {

@@ -446,7 +446,7 @@ static void describeTxDestination(const TxRecord& record, char* out, size_t outS
   }
 }
 
-static void recordTxMessage(uint8_t channel, uint32_t to, const char* text, size_t len, bool ok) {
+static void recordTxMessage(uint8_t channel, uint32_t to, const char* text, size_t len, bool ok, uint32_t packetId) {
   TxRecord& record = txHistory[txHistoryNext];
   memset(&record, 0, sizeof(record));
   size_t copyLen = min(len, sizeof(record.text) - 1);
@@ -457,6 +457,8 @@ static void recordTxMessage(uint8_t channel, uint32_t to, const char* text, size
   record.sentMs = millis();
   record.direct = isDirectAddress(to);
   record.ok = ok;
+  record.packetId = packetId;
+  record.delivery = ok ? FieldStatus::Delivery::Queued : FieldStatus::Delivery::Failed;
   record.echoSeen = false;
   txHistoryNext = (txHistoryNext + 1) % TX_HISTORY_COUNT;
   if (txHistoryCount < TX_HISTORY_COUNT) txHistoryCount++;
@@ -478,22 +480,61 @@ static void markTxEchoSeen(uint8_t channel, uint32_t to, const uint8_t* text, si
   }
 }
 
+static TxRecord* findTxRecord(uint32_t packetId) {
+  if (!packetId) return nullptr;
+  for (size_t i = 0; i < txHistoryCount; ++i) {
+    size_t index = (txHistoryNext + TX_HISTORY_COUNT - 1 - i) % TX_HISTORY_COUNT;
+    if (txHistory[index].packetId == packetId) return &txHistory[index];
+  }
+  return nullptr;
+}
+
 static const char* txStatusText(const TxRecord& record, uint32_t nowMs) {
-  if (!record.ok) return "failed";
-  if (record.echoSeen) return "echo";
-  if (nowMs - record.sentMs > 15000) return "no echo";
-  return "sent";
+  switch (FieldStatus::visibleDelivery(record.delivery, record.sentMs, nowMs)) {
+    case FieldStatus::Delivery::Queued: return "queued";
+    case FieldStatus::Delivery::Sent: return "sent to radio";
+    case FieldStatus::Delivery::Acknowledged: return record.direct ? "acknowledged" : "mesh acknowledged";
+    case FieldStatus::Delivery::Failed: return "failed";
+    default: return "unconfirmed";
+  }
+}
+
+static const char* txErrorText(const TxRecord& record) {
+  if (!record.ok) return "local send failed";
+  if (record.queueError) return "radio queue rejected";
+  switch (record.errorCode) {
+    case 0: return "";
+    case 1: return "no route";
+    case 2: return "negative acknowledgment";
+    case 3: return "radio timeout";
+    case 4: return "no radio interface";
+    case 5: return "retries exhausted";
+    case 6: return "no channel";
+    case 7: return "message too large";
+    case 8: return "no response";
+    case 9: return "duty cycle limit";
+    case 33: return "not authorized";
+    case 34: return "encryption failed";
+    case 35: return "public key unknown";
+    default: return "routing error";
+  }
 }
 
 static void refreshTxHistoryView() {
   if (!taTxHistory || currentPage != pageTxHistory) return;
+  if (btnTxRetry) {
+    const TxRecord* latest = latestTxRecord();
+    bool allowed = latest && !latest->retriedAs && FieldStatus::retryAllowed(latest->delivery, latest->sentMs, millis());
+    if (allowed) lv_obj_clear_state(btnTxRetry, LV_STATE_DISABLED);
+    else lv_obj_add_state(btnTxRetry, LV_STATE_DISABLED);
+  }
   if (txHistoryCount == 0) {
     setReadonlyTextStable(taTxHistory, "No messages sent yet");
     clearUiDirty(UI_DIRTY_TX);
     return;
   }
   uint32_t now = millis();
-  char text[1200];
+  static char text[3600];
   size_t used = 0;
   for (size_t offset = 0; offset < txHistoryCount && used < sizeof(text) - 1; offset++) {
     size_t index = (txHistoryNext + TX_HISTORY_COUNT - 1 - offset) % TX_HISTORY_COUNT;
@@ -502,12 +543,13 @@ static void refreshTxHistoryView() {
     describeTxDestination(record, dest, sizeof(dest));
     int written = snprintf(text + used,
                            sizeof(text) - used,
-                           "%lus  %s  ch%u %s\n%.63s\n\n",
+                           "%lus  %s  ch%u %s\n%.233s\n%s%s\n\n",
                            (unsigned long)((now - record.sentMs) / 1000),
                            txStatusText(record, now),
                            record.channel,
                            dest,
-                           record.text);
+                           record.text,
+                           txErrorText(record), record.echoSeen ? " (local echo)" : "");
     if (written <= 0) break;
     used += min((size_t)written, sizeof(text) - used - 1);
   }
@@ -516,15 +558,25 @@ static void refreshTxHistoryView() {
   clearUiDirty(UI_DIRTY_TX);
 }
 
+static bool retryTx(uint32_t packetId) {
+  TxRecord* record = findTxRecord(packetId);
+  if (!record || !record->text[0] || record->retriedAs ||
+      !FieldStatus::retryAllowed(record->delivery, record->sentMs, millis())) return false;
+  // Copy before sending: the ring may overwrite the selected record.
+  TxRecord copy = *record;
+  bool ok = copy.direct ? sendDirectTextMessage(copy.text, copy.to) : sendTextMessage(copy.text, copy.channel);
+  if (ok) {
+    if (TxRecord* original = findTxRecord(packetId)) original->retriedAs = latestTxRecord()->packetId;
+  }
+  appendLine(eventLog, LOG_SIZE, ok ? "[local] retried TX\n" : "[local] retry failed\n");
+  return ok;
+}
+
 static bool retryLastTx() {
   TxRecord* record = latestTxRecord();
-  if (!record || !record->text[0]) {
-    appendLine(eventLog, LOG_SIZE, "[local] retry failed: no TX history\n");
-    refreshTxHistoryView();
-    return false;
-  }
-  bool ok = record->direct ? sendDirectTextMessage(record->text, record->to) : sendTextMessage(record->text, record->channel);
-  appendLine(eventLog, LOG_SIZE, ok ? "[local] retried last TX\n" : "[local] retry failed\n");
+  bool ok = record && retryTx(record->packetId);
+  if (!ok) appendLine(eventLog, LOG_SIZE, "[local] retry unavailable: wait for result, or no failed/unconfirmed TX\n");
+  refreshTxHistoryView();
   return ok;
 }
 
@@ -870,6 +922,7 @@ static void copyChatPreview(char* out, size_t outSize, const char* sender, const
 }
 
 static void recordChatActivity(uint8_t channel, uint32_t to, const char* sender, const uint8_t* text, size_t len) {
+  copyChatPreview(previewLatest, sizeof(previewLatest), sender, text, len);
   bool isLocal = sender && strcmp(sender, "me") == 0;
   if (isDirectAddress(to)) {
     copyChatPreview(previewDirect, sizeof(previewDirect), sender, text, len);
@@ -896,13 +949,14 @@ static void appendChatMessage(uint8_t channel, uint32_t to, const char* sender, 
   refreshChatViews();
 }
 
-static void writeStreamFrame(const uint8_t* payload, size_t len) {
-  SerialLoRa.write(0x94);
-  SerialLoRa.write(0xC3);
-  SerialLoRa.write((len >> 8) & 0xFF);
-  SerialLoRa.write(len & 0xFF);
-  SerialLoRa.write(payload, len);
-  bytesToRadio += len + 4;
+static bool writeStreamFrame(const uint8_t* payload, size_t len) {
+  const uint8_t header[] = {0x94, 0xC3, (uint8_t)(len >> 8), (uint8_t)len};
+  size_t written = SerialLoRa.write(header, sizeof(header));
+  bytesToRadio += written;
+  if (written != sizeof(header)) return false;
+  written = SerialLoRa.write(payload, len);
+  bytesToRadio += written;
+  return written == len;
 }
 
 static uint32_t allocateMeshPacketId() {
@@ -984,7 +1038,7 @@ static void serviceConfigRequests() {
 }
 
 static bool sendTextMessage(const char* text, int8_t channelIndex) {
-  if (!text || !text[0]) return false;
+  if (!text || !text[0] || strlen(text) > 233) return false;
   ChannelRecord* selected = channelIndex >= 0 && channelIndex < (int8_t)MAX_CHANNELS
                             ? channelRecordByIndex(channelIndex) : nullptr;
   if (!selected || !selected->enabled) {
@@ -1010,13 +1064,16 @@ static bool sendTextMessage(const char* text, int8_t channelIndex) {
   uint8_t out[512];
   pb_ostream_t stream = pb_ostream_from_buffer(out, sizeof(out));
   if (!pb_encode(&stream, meshtastic_ToRadio_fields, &toRadio)) {
-    recordTxMessage(packet.channel, packet.to, text, data.payload.size, false);
+    recordTxMessage(packet.channel, packet.to, text, data.payload.size, false, packet.id);
     return false;
   }
-  writeStreamFrame(out, stream.bytes_written);
+  if (!writeStreamFrame(out, stream.bytes_written)) {
+    recordTxMessage(packet.channel, packet.to, text, data.payload.size, false, packet.id);
+    return false;
+  }
 
   rememberLocalSentText(packet.channel, packet.to, text, data.payload.size);
-  recordTxMessage(packet.channel, packet.to, text, data.payload.size, true);
+  recordTxMessage(packet.channel, packet.to, text, data.payload.size, true, packet.id);
   appendChatMessage(packet.channel, packet.to, "me", data.payload.bytes, data.payload.size);
 
   char line[96];
@@ -1026,7 +1083,7 @@ static bool sendTextMessage(const char* text, int8_t channelIndex) {
 }
 
 static bool sendDirectTextMessage(const char* text, uint32_t toNode) {
-  if (!text || !text[0] || !isDirectAddress(toNode)) return false;
+  if (!text || !text[0] || strlen(text) > 233 || !isDirectAddress(toNode)) return false;
 
   meshtastic_ToRadio toRadio = meshtastic_ToRadio_init_zero;
   toRadio.which_payload_variant = meshtastic_ToRadio_packet_tag;
@@ -1046,13 +1103,16 @@ static bool sendDirectTextMessage(const char* text, uint32_t toNode) {
   uint8_t out[512];
   pb_ostream_t stream = pb_ostream_from_buffer(out, sizeof(out));
   if (!pb_encode(&stream, meshtastic_ToRadio_fields, &toRadio)) {
-    recordTxMessage(packet.channel, packet.to, text, data.payload.size, false);
+    recordTxMessage(packet.channel, packet.to, text, data.payload.size, false, packet.id);
     return false;
   }
-  writeStreamFrame(out, stream.bytes_written);
+  if (!writeStreamFrame(out, stream.bytes_written)) {
+    recordTxMessage(packet.channel, packet.to, text, data.payload.size, false, packet.id);
+    return false;
+  }
 
   rememberLocalSentText(packet.channel, packet.to, text, data.payload.size);
-  recordTxMessage(packet.channel, packet.to, text, data.payload.size, true);
+  recordTxMessage(packet.channel, packet.to, text, data.payload.size, true, packet.id);
   appendChatMessage(packet.channel, packet.to, "me", data.payload.bytes, data.payload.size);
 
   char line[96];
@@ -1821,7 +1881,26 @@ static void handleDecodedPacket(const meshtastic_MeshPacket& packet) {
   const meshtastic_Data& data = packet.decoded;
   char line[320];
 
-  if (data.portnum == meshtastic_PortNum_TEXT_MESSAGE_APP ||
+  if (data.portnum == meshtastic_PortNum_ROUTING_APP) {
+    meshtastic_Routing routing = meshtastic_Routing_init_zero;
+    pb_istream_t stream = pb_istream_from_buffer(data.payload.bytes, data.payload.size);
+    TxRecord* record = findTxRecord(data.request_id);
+    if (record && packet.to == stats.myNodeNum &&
+        pb_decode(&stream, meshtastic_Routing_fields, &routing) &&
+        routing.which_variant == meshtastic_Routing_error_reason_tag) {
+      bool success = routing.error_reason == meshtastic_Routing_Error_NONE;
+      // Local firmware synthesizes broadcast implicit ACKs. For direct messages,
+      // accept success only from the intended destination, including self-tests.
+      bool sourceAllowed = FieldStatus::acceptRouting(record->direct, record->to, stats.myNodeNum, packet.from, packet.to, routing.error_reason);
+      if (sourceAllowed && (success || record->delivery != FieldStatus::Delivery::Acknowledged)) {
+        record->delivery = success ? FieldStatus::Delivery::Acknowledged : FieldStatus::Delivery::Failed;
+        record->errorCode = (int16_t)routing.error_reason;
+        record->queueError = false;
+        markUiDirty(UI_DIRTY_TX | UI_DIRTY_DASHBOARD);
+      }
+    }
+    lastPortNum = data.portnum;
+  } else if (data.portnum == meshtastic_PortNum_TEXT_MESSAGE_APP ||
       data.portnum == meshtastic_PortNum_TEXT_MESSAGE_COMPRESSED_APP) {
     textPackets++;
     lastPortNum = data.portnum;
@@ -1927,6 +2006,10 @@ static void decodeFromRadio(const uint8_t* payload, size_t len) {
   }
 
   framesDecoded++;
+  if (fromRadio.which_payload_variant != 0) {
+    radioResponseSeen = true;
+    lastRadioResponseMs = millis();
+  }
   if (fromRadio.which_payload_variant == meshtastic_FromRadio_packet_tag) {
     handleDecodedPacket(fromRadio.packet);
   } else if (fromRadio.which_payload_variant == meshtastic_FromRadio_my_info_tag) {
@@ -1981,6 +2064,17 @@ static void decodeFromRadio(const uint8_t* payload, size_t len) {
              nodeName(fromRadio.node_info.num),
              node ? node->snr : 0.0f);
     appendPacketEvent(line);
+  } else if (fromRadio.which_payload_variant == meshtastic_FromRadio_queueStatus_tag) {
+    const auto& queue = fromRadio.queueStatus;
+    TxRecord* record = findTxRecord(queue.mesh_packet_id);
+    if (record && record->delivery != FieldStatus::Delivery::Acknowledged && record->delivery != FieldStatus::Delivery::Failed) {
+      record->delivery = FieldStatus::queueResult(record->delivery, queue.res);
+      if (record->delivery == FieldStatus::Delivery::Failed) {
+        record->queueError = true;
+        record->errorCode = queue.res;
+      }
+      markUiDirty(UI_DIRTY_TX | UI_DIRTY_DASHBOARD);
+    }
   } else if (fromRadio.which_payload_variant == meshtastic_FromRadio_log_record_tag) {
     char line[420];
     snprintf(line, sizeof(line), "[node log] %.380s\n", fromRadio.log_record.message);

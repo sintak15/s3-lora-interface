@@ -1,30 +1,36 @@
 // Internal implementation module; included once by the main sketch.
 static const char* linkHealthText() {
-  if (!lastByteMs) return "No LoRa data";
-  uint32_t age = (millis() - lastByteMs) / 1000;
-  if (age > 45) return "No recent RX";
-  if (decodeErrors > 0 && decodeErrors > framesDecoded / 2) return "Weak signal";
-  return age > 15 ? "RX stale" : "RX active";
+  return FieldStatus::linkState(radioResponseSeen, lastRadioResponseMs, millis());
 }
 
 static const char* shortLinkHealthText() {
-  if (!lastByteMs) return "LoRa idle";
-  uint32_t age = (millis() - lastByteMs) / 1000;
-  if (age > 45) return "LoRa no RX";
-  if (decodeErrors > 0 && decodeErrors > framesDecoded / 2) return "LoRa weak";
-  return age > 15 ? "LoRa stale" : "LoRa OK";
+  if (!radioResponseSeen) return "Heltec waiting";
+  uint32_t age = millis() - lastRadioResponseMs;
+  if (age >= 90000) return "Heltec stale";
+  return age >= 45000 ? "Heltec quiet" : "Heltec OK";
 }
 
 static uint32_t loraStatusColor() {
-  if (!lastByteMs) return 0xFF5A5F;
-  uint32_t age = (millis() - lastByteMs) / 1000;
-  if (age > 45) return 0xFF5A5F;
-  if (decodeErrors > 0 && decodeErrors > framesDecoded / 2) return 0xFFD166;
-  if (age > 15) return 0xFFD166;
-  return COLOR_ACTION;
+  if (!radioResponseSeen || millis() - lastRadioResponseMs >= 90000) return 0xFF5A5F;
+  return millis() - lastRadioResponseMs >= 45000 ? 0xFFD166 : COLOR_ACTION;
+}
+
+static void printFirmwareIdentity() {
+  Serial.printf("[version] firmware=%s commit=%s dirty=%s built=%s %s partition=%s\n",
+                FIRMWARE_VERSION, FIRMWARE_GIT_COMMIT, FIRMWARE_SOURCE_DIRTY ? "true" : "false",
+                __DATE__, __TIME__, esp_ota_get_running_partition()->label);
+}
+
+static void formatBatteryRuntime(char* out, size_t size) {
+  if (!localBattery.gaugePresent) strlcpy(out, "unavailable (no gauge)", size);
+  else if (localBattery.charging) strlcpy(out, "charging", size);
+  else if (batteryRuntime.minutes() < 0) strlcpy(out, "learning discharge (10+ min)", size);
+  else snprintf(out, size, "~%ldh %ldm", (long)(batteryRuntime.minutes() / 60), (long)(batteryRuntime.minutes() % 60));
 }
 
 static bool gpsSatsPresent() {
+  if (localGpsSatellitesInView() > 0) return true;
+  if (localGps.satellites.isValid() && localGps.satellites.age() <= 30000 && localGps.satellites.value() > 0) return true;
   if (!gpsStats.hasSats || gpsStats.sats == 0 || gpsStats.lastUpdateMs == 0) return false;
   return millis() - gpsStats.lastUpdateMs <= 300000UL;
 }
@@ -39,26 +45,61 @@ static void formatPreviewLine(const char* name, uint16_t unread, const char* pre
 static void refreshDashboardLabels() {
   char line[160];
   if (lblHomeLink) {
-    snprintf(line, sizeof(line), "LoRa\n%s", linkHealthText());
-    lv_label_set_text(lblHomeLink, line);
+    const char* state = linkHealthText();
+    lv_label_set_text(lblHomeLink, !radioResponseSeen ? "Waiting" : strcmp(state, "responsive") == 0 ? "Connected" : strcmp(state, "quiet") == 0 ? "Quiet" : "No response");
+    if (lblHomeLinkDetail) {
+      if (!radioResponseSeen) strlcpy(line, "Listening for Heltec", sizeof(line));
+      else {
+        uint32_t age = (millis() - lastRadioResponseMs) / 1000;
+        if (age < 60) snprintf(line, sizeof(line), "Last heard %lus ago", (unsigned long)age);
+        else if (age < 3600) snprintf(line, sizeof(line), "Last heard %lum ago", (unsigned long)(age / 60));
+        else snprintf(line, sizeof(line), "Last heard %luh ago", (unsigned long)(age / 3600));
+      }
+      lv_label_set_text(lblHomeLinkDetail, line);
+    }
+    if (homeLinkIcon) lv_obj_set_style_text_color(homeLinkIcon, lv_color_hex(radioResponseSeen ? loraStatusColor() : 0xCDB681), 0);
   }
   if (lblHomeGps) {
-    snprintf(line, sizeof(line), "GPS\n%s", gpsSatsPresent() ? "Sats" : (gpsStats.valid ? "Fix" : "Waiting"));
-    lv_label_set_text(lblHomeGps, line);
+    bool fresh = MapNavigation::fresh(gpsStats.valid, gpsStats.lastUpdateMs, millis());
+    lv_label_set_text(lblHomeGps, fresh ? "GPS ready" : (gpsSatsPresent() ? "Finding GPS" : "GPS waiting"));
+    lv_obj_set_style_text_color(lblHomeGps, lv_color_hex(fresh ? 0xA9D4B7 : 0xA8BCB0), 0);
   }
-  if (lblHomeMessages) {
+  if (lblHomeNodes) {
+    snprintf(line, sizeof(line), "%u", (unsigned)nodeCount);
+    lv_label_set_text(lblHomeNodes, line);
+  }
+  if (lblHomeMessageTitle) {
     uint16_t unreadTotal = unreadPublic + unreadFamily + unreadDirect;
-    const char* latest = previewFamily[0] ? previewFamily : (previewPublic[0] ? previewPublic : (previewDirect[0] ? previewDirect : "No messages yet"));
-    snprintf(line, sizeof(line), "Messages %u new\n%s", unreadTotal, latest);
-    lv_label_set_text(lblHomeMessages, line);
+    lv_label_set_text(lblHomeMessageTitle, "Messages");
+    if (lblHomeUnread) {
+      if (unreadTotal) snprintf(line, sizeof(line), "%u new", unreadTotal);
+      else line[0] = 0;
+      lv_label_set_text(lblHomeUnread, line);
+    }
   }
+  if (lblHomeMessages) lv_label_set_text(lblHomeMessages, previewLatest[0] ? previewLatest : "No messages yet");
   if (lblHomePower) {
-    snprintf(line, sizeof(line), "Power %d%% %s\n%s %s",
-             localBattery.percent,
-             localBattery.charging ? "charging" : "battery",
-             privateChannelLabel(),
-             privateChannelIndex >= 0 ? "ready" : "not loaded");
+    if (!localBattery.gaugePresent) strlcpy(line, "--", sizeof(line));
+    else snprintf(line, sizeof(line), "%d%%", localBattery.percent);
     lv_label_set_text(lblHomePower, line);
+    uint32_t color = !localBattery.gaugePresent ? 0xA8BCB0 : localBattery.batteryCritical ? 0xF29A91 : localBattery.batteryLow ? 0xE2C17E : 0xEDF5EF;
+    lv_obj_set_style_text_color(lblHomePower, lv_color_hex(color), 0);
+    if (lblHomePowerDetail) {
+      if (!localBattery.gaugePresent) strlcpy(line, "No gauge", sizeof(line));
+      else if (localBattery.charging) strlcpy(line, "Charging", sizeof(line));
+      else if (localBattery.batteryCritical) strlcpy(line, "Charge soon", sizeof(line));
+      else if (localBattery.batteryLow) strlcpy(line, "Battery low", sizeof(line));
+      else if (batteryRuntime.minutes() >= 60) snprintf(line, sizeof(line), "~%ldh %ldm left", (long)(batteryRuntime.minutes() / 60), (long)(batteryRuntime.minutes() % 60));
+      else if (batteryRuntime.minutes() >= 0) snprintf(line, sizeof(line), "~%ldm left", (long)batteryRuntime.minutes());
+      else strlcpy(line, "On battery", sizeof(line));
+      lv_label_set_text(lblHomePowerDetail, line);
+    }
+    if (homePowerBar) {
+      if (localBattery.gaugePresent) lv_obj_clear_flag(homePowerBar, LV_OBJ_FLAG_HIDDEN);
+      else lv_obj_add_flag(homePowerBar, LV_OBJ_FLAG_HIDDEN);
+      lv_bar_set_value(homePowerBar, constrain(localBattery.percent, 0, 100), LV_ANIM_OFF);
+      lv_obj_set_style_bg_color(homePowerBar, lv_color_hex(localBattery.batteryLow || localBattery.batteryCritical ? color : 0x8DCEAA), LV_PART_INDICATOR);
+    }
   }
   if (lblMsgPublic) {
     formatPreviewLine(publicChannelLabel(), unreadPublic, previewPublic, line, sizeof(line));
@@ -74,171 +115,9 @@ static void refreshDashboardLabels() {
   }
 }
 
-static void refreshMapUi() {
-  if (!mapPlot || !lblMapStats) return;
-  if (currentPage != pageGps) return;
-  uint32_t minIntervalMs = mapRenderPending ? 750 : 5000;
-  if (lastMapUiRefreshMs && millis() - lastMapUiRefreshMs < minIntervalMs) return;
-  lastMapUiRefreshMs = millis();
-  mapRenderPending = false;
-
-  const NodeRecord* selected = mapCenterMode == MAP_CENTER_SELECTED_NODE ? findNode(selectedNodeNum) : nullptr;
-  const NodeRecord* ownNode = stats.myNodeNum ? findNode(stats.myNodeNum) : nullptr;
-  const bool hasLocalFix = gpsStats.valid;
-  const bool hasOwnNodePosition = ownNode && ownNode->hasPosition;
-  const bool focusSelected = mapCenterMode == MAP_CENTER_SELECTED_NODE && selected && selected->hasPosition;
-  const bool preferLastLocation = mapCenterMode == MAP_CENTER_LAST_LOCATION;
-  const bool hasSavedCenter = lastMapLocationValid;
-  const bool hasMapCenter = focusSelected || (!preferLastLocation && hasLocalFix) || (!preferLastLocation && hasOwnNodePosition) || hasSavedCenter;
-  double centerLat = focusSelected ? selected->latitude : ((!preferLastLocation && hasLocalFix) ? gpsStats.latitude : ((!preferLastLocation && hasOwnNodePosition) ? ownNode->latitude : defaultMapLat));
-  double centerLon = focusSelected ? selected->longitude : ((!preferLastLocation && hasLocalFix) ? gpsStats.longitude : ((!preferLastLocation && hasOwnNodePosition) ? ownNode->longitude : defaultMapLon));
-  const char* centerSource = focusSelected ? "Selected node" : ((!preferLastLocation && hasLocalFix) ? "CYD GPS" : ((!preferLastLocation && hasOwnNodePosition) ? "This device" : "Last device location"));
-  for (size_t i = 0; i < MAP_DOT_COUNT; i++) {
-    if (mapDots[i]) lv_obj_add_flag(mapDots[i], LV_OBJ_FLAG_HIDDEN);
-  }
-
-  if (!hasMapCenter) {
-    if (mapCanvas) {
-      lv_canvas_fill_bg(mapCanvas, lv_color_hex(0x07100D), LV_OPA_COVER);
-      lv_obj_invalidate(mapCanvas);
-    }
-    mapCanvasCached = false;
-    char waitingText[160];
-    snprintf(waitingText, sizeof(waitingText),
-             "%s\n"
-             "Cache: %s\n"
-             "RX GPIO%d: %lu bytes\nSD maps: %s",
-             mapFocusSelectedNode ? "Selected node has no GPS fix..." : "Waiting for current device location...",
-             mapCacheStatus,
-             GPS_RX_PIN,
-             (unsigned long)gpsBytesFromLocal,
-             sdStorage.available ? "ready" : sdStorage.status);
-    lv_label_set_text(lblMapStats, waitingText);
-    clearUiDirty(UI_DIRTY_MAP);
-    return;
-  }
-
-  if (!sdStorage.available || !mapTileRootFound) {
-    char waitingText[180];
-    snprintf(waitingText, sizeof(waitingText),
-             "%s\n"
-             "Center: %.5f, %.5f\n"
-             "%s\n"
-             "Tile root: %s",
-             mapCanvasCached ? "Showing cached map" : "Map tiles unavailable",
-             centerLat,
-             centerLon,
-             sdStorage.available ? "No tile folder found" : sdStorage.status,
-             mapTileRoot);
-    lv_label_set_text(lblMapStats, waitingText);
-    clearUiDirty(UI_DIRTY_MAP);
-    return;
-  }
-
-  char tilePath[96];
-  int mapZoom = cachedMapZoom;
-  const uint16_t plotH = (uint16_t)activeMapPlotHeight();
-  bool usingCachedZoom = mapZoom >= MAP_TILE_MIN_ZOOM &&
-                         mapZoom <= MAP_TILE_MAX_ZOOM &&
-                         mapCacheMatchesCenter(centerLat, centerLon, mapZoom, plotH);
-  if (!usingCachedZoom) {
-    mapZoom = findBestMapZoom(centerLat, centerLon, tilePath, sizeof(tilePath));
-    if (mapZoomedOut) mapZoom = max(MAP_TILE_MIN_ZOOM, mapZoom - 2);
-  } else {
-    buildTilePath(mapTileRoot, mapZoom, cachedMapTileX, cachedMapTileY, tilePath, sizeof(tilePath));
-  }
-  bool centerTileFound = renderOfflineTileMap(centerLat, centerLon, mapZoom, tilePath, sizeof(tilePath));
-  size_t plotted = 0;
-  const NodeRecord* nearest = nullptr;
-  bool selectedPlotted = false;
-  double nearestMeters = 0.0;
-  for (size_t i = 0; i < nodeCount; i++) {
-    if (!nodes[i].hasPosition) continue;
-    bool isSelected = selected && nodes[i].num == selected->num;
-    lv_color_t color = nodes[i].num == stats.myNodeNum ? lv_color_hex(0x00C985) : lv_color_hex(isSelected ? 0xFFD166 : 0x68FFC0);
-    int dotSize = isSelected ? 14 : 8;
-    if (placeMapDot(i, centerLat, centerLon, nodes[i].latitude, nodes[i].longitude, mapZoom, color, dotSize)) {
-      if (isSelected) {
-        selectedPlotted = true;
-        lv_obj_set_style_border_width(mapDots[i], 2, 0);
-        lv_obj_set_style_border_color(mapDots[i], lv_color_hex(0xFFF3C4), 0);
-        lv_obj_move_foreground(mapDots[i]);
-      }
-      plotted++;
-      if (nodes[i].num != stats.myNodeNum) {
-        double meters = distanceMeters(centerLat, centerLon, nodes[i].latitude, nodes[i].longitude);
-        if (!nearest || meters < nearestMeters) {
-          nearest = &nodes[i];
-          nearestMeters = meters;
-        }
-      }
-    }
-  }
-
-  if (hasLocalFix) {
-    placeMapDot(MAP_DOT_COUNT - 1, centerLat, centerLon, gpsStats.latitude, gpsStats.longitude, mapZoom, lv_color_hex(0x00C985), 10);
-    plotted++;
-  }
-
-  long tileX = lonToTileX(centerLon, mapZoom);
-  long tileY = latToTileY(centerLat, mapZoom);
-
-  char nearestText[72];
-  if (nearest) snprintf(nearestText, sizeof(nearestText), "%s %.1f km", nodeName(nearest->num), nearestMeters / 1000.0);
-  else strlcpy(nearestText, "none", sizeof(nearestText));
-
-  char tileText[48];
-  snprintf(tileText, sizeof(tileText), "Tile z%d/%ld/%ld %s", mapZoom, tileX, tileY, centerTileFound ? "drawn" : "missing");
-
-  char mapText[320];
-  if (selected) {
-    char selectedRange[32];
-    formatRangeBearing(*selected, selectedRange, sizeof(selectedRange));
-    if (selected->hasPosition) {
-      uint32_t posAge = selected->lastPositionMs ? (millis() - selected->lastPositionMs) / 1000 : 0;
-      snprintf(mapText, sizeof(mapText),
-               "%s%s\n"
-               "%s | pos %lu s\n"
-               "%s\n"
-               "%u point%s | nearest %s",
-               nodeName(selected->num),
-               focusSelected ? " centered" : (selectedPlotted ? " on map" : " selected"),
-               selectedRange,
-               (unsigned long)posAge,
-               tileText,
-               (unsigned)plotted,
-               plotted == 1 ? "" : "s",
-               nearestText);
-    } else {
-      snprintf(mapText, sizeof(mapText),
-               "%s selected\n"
-               "No node GPS yet\n"
-               "%s %.5f, %.5f\n"
-               "%s",
-               nodeName(selected->num),
-               centerSource,
-               centerLat,
-               centerLon,
-               tileText);
-    }
-  } else {
-    snprintf(mapText, sizeof(mapText),
-             "%s%s\n"
-             "Center: %.5f, %.5f\n"
-             "%u point%s | nearest %s\n"
-             "%s",
-             centerSource,
-             mapZoomedOut ? " wide" : "",
-             centerLat,
-             centerLon,
-             (unsigned)plotted,
-             plotted == 1 ? "" : "s",
-             nearestText,
-             tileText);
-  }
-  lv_label_set_text(lblMapStats, mapText);
-  clearUiDirty(UI_DIRTY_MAP);
-}
+#include "MapUi.inc"
+#include "MapNavigationTests.inc"
+#include "MapCoverageTests.inc"
 
 static void refreshScreenUi() {
   if (!lblStatus) return;
@@ -266,13 +145,16 @@ static void refreshScreenUi() {
     char gpsStatus[16];
     bool satsPresent = gpsSatsPresent();
     if (satsPresent) {
-      unsigned long shownSats = gpsStats.sats > 99 ? 99 : gpsStats.sats;
+      int visible = localGpsSatellitesInView();
+      unsigned long shownSats = visible >= 0 ? (unsigned long)visible : gpsStats.sats;
+      if (shownSats > 99) shownSats = 99;
       snprintf(gpsStatus, sizeof(gpsStatus), LV_SYMBOL_GPS " %lu", shownSats);
     } else {
       strlcpy(gpsStatus, LV_SYMBOL_GPS " 0", sizeof(gpsStatus));
     }
     lv_label_set_text(lblGpsStatus, gpsStatus);
-    lv_obj_set_style_text_color(lblGpsStatus, lv_color_hex(satsPresent ? COLOR_ACTION : 0xFF5A5F), 0);
+    bool fresh = MapNavigation::fresh(gpsStats.valid, gpsStats.lastUpdateMs, millis());
+    lv_obj_set_style_text_color(lblGpsStatus, lv_color_hex(fresh ? COLOR_ACTION : satsPresent ? 0xFFD166 : 0xFF5A5F), 0);
   }
 
   if (lblBatteryStatus) {
@@ -305,7 +187,7 @@ static void refreshScreenUi() {
     String wifiIp = wifiEnabled ? (wifiApMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString()) : String("off");
     char interfaceText[680];
     snprintf(interfaceText, sizeof(interfaceText),
-             "S3 interface\n"
+             "S3 interface %s\nSource: %.12s%s\n"
              "Uptime: %lu s\n"
              "WiFi: %s\n\n"
              "Memory\n"
@@ -325,6 +207,7 @@ static void refreshScreenUi() {
              "Append depth/fallback: %u/%lu\n\n"
              "UI\n"
              "Frames decoded: %lu",
+             FIRMWARE_VERSION, FIRMWARE_GIT_COMMIT, FIRMWARE_SOURCE_DIRTY ? " modified" : "",
              (unsigned long)(millis() / 1000),
               wifiIp.c_str(),
              (unsigned long)(ESP.getFreeHeap() / 1024),
@@ -363,6 +246,8 @@ static void refreshScreenUi() {
     if (lastByteMs) snprintf(rxAge, sizeof(rxAge), "%lus ago", (unsigned long)((millis() - lastByteMs) / 1000));
     else strlcpy(rxAge, "never", sizeof(rxAge));
     snprintf(serialText, sizeof(serialText),
+             "Heltec: %s\n"
+             "Last valid response: %s\n"
              "Serial link\n"
              "RX bytes: %lu\n"
              "TX bytes: %lu\n"
@@ -377,6 +262,8 @@ static void refreshScreenUi() {
              "Refreshes: %lu\n\n"
              "ASCII seen\n"
              "%.48s",
+             linkHealthText(),
+             radioResponseSeen ? String((millis() - lastRadioResponseMs) / 1000).c_str() : "never",
              (unsigned long)bytesFromRadio,
              (unsigned long)bytesToRadio,
              rxAge,
@@ -540,6 +427,7 @@ static void refreshScreenUi() {
              "Traffic\n"
              "Frames: %lu  Errors: %lu\n"
              "RX/TX packets: %lu/%lu\n"
+             "Heltec: %s  valid response %s s ago\n"
              "Bytes RX/TX: %lu/%lu\n"
              "Last byte: %s\n\n"
              "Packet mix\n"
@@ -566,6 +454,8 @@ static void refreshScreenUi() {
              (unsigned long)decodeErrors,
              (unsigned long)stats.packetsRx,
              (unsigned long)stats.packetsTx,
+             linkHealthText(),
+             radioResponseSeen ? String((millis() - lastRadioResponseMs) / 1000).c_str() : "never",
              (unsigned long)bytesFromRadio,
              (unsigned long)bytesToRadio,
              rxAge,
@@ -681,13 +571,16 @@ static void refreshScreenUi() {
   }
 
   if (currentPage == pageBattery && lblBatteryStats) {
-    char batteryText[960];
+    char batteryText[1100];
+    char runtimeText[48];
+    formatBatteryRuntime(runtimeText, sizeof(runtimeText));
     uint32_t gaugeAge = localBattery.lastGaugeMs ? (millis() - localBattery.lastGaugeMs) / 1000 : 0;
     if (localBattery.gaugePresent) {
       snprintf(batteryText, sizeof(batteryText),
                "LiPo fuel gauge\n"
                "Chip: MAX17048  v0x%04X\n"
                "Displayed: %d%%\n"
+               "Remaining: %s\n"
                "Alert: %s\n"
                "Displayed source: %s\n"
                "Gauge SOC: %.1f%%  raw 0x%04X\n"
@@ -712,6 +605,7 @@ static void refreshScreenUi() {
                "PSRAM free: %lu KB",
                localBattery.gaugeVersion,
                localBattery.percent,
+               runtimeText,
                batteryAlertLabel(),
                localBattery.percentSource,
                localBattery.gaugeSoc,
@@ -848,14 +742,28 @@ static void refreshScreenUi() {
                (unsigned long)gpsStats.sensorId,
                (unsigned long)age);
     } else {
+      int inView = localGpsSatellitesInView();
+      char visible[16], used[16];
+      if (inView >= 0) snprintf(visible, sizeof(visible), "%d", inView); else strlcpy(visible, "unknown", sizeof(visible));
+      if (localGps.satellites.isValid() && localGps.satellites.age() <= 30000) snprintf(used, sizeof(used), "%lu", (unsigned long)localGps.satellites.value()); else strlcpy(used, "unknown", sizeof(used));
       snprintf(gpsText, sizeof(gpsText),
                "Waiting for GPS...\n\n"
                "CYD local GPS:\n"
-               "RX GPIO%d  %lu bytes\n\n"
+               "RX GPIO%d at %lu baud\n"
+               "Bytes: %lu\n"
+               "Valid NMEA: %lu\n"
+               "Checksum errors: %lu\n"
+               "Fix sentences: %lu\n"
+               "Satellites in view: %s\n"
+               "Satellites used: %s\n\n"
                "Heltec GPS can still feed\n"
                "Meshtastic position packets.",
                GPS_RX_PIN,
-               (unsigned long)gpsBytesFromLocal);
+               (unsigned long)GPS_BAUD,
+               (unsigned long)gpsBytesFromLocal,
+               (unsigned long)localGps.passedChecksum(),
+               (unsigned long)localGps.failedChecksum(),
+               (unsigned long)localGps.sentencesWithFix(), visible, used);
     }
     lv_label_set_text(lblGpsStats, gpsText);
   }
@@ -867,7 +775,7 @@ static void refreshScreenUi() {
     setReadonlyTextStable(taPacketInspector, packetLog[0] ? packetLog : "No packets decoded yet");
     clearUiDirty(UI_DIRTY_PACKET_LOG);
   }
-  if (currentPage == pageTxHistory && (pageForce || isUiDirty(UI_DIRTY_TX))) {
+  if (currentPage == pageTxHistory) {
     refreshTxHistoryView();
   }
   if (currentPage == pageSystemSerial && taScreenLog && (pageForce || isUiDirty(UI_DIRTY_EVENT_LOG))) {
@@ -893,6 +801,103 @@ static void refreshScreenUi() {
   }
 }
 
+#ifdef FIRMWARE_RUN_TESTS
+// Exercise UI formatting/rendering only; this does not simulate battery discharge.
+static void runUiSmokeTests() {
+  lv_obj_t* savedPage = currentPage;
+  lv_obj_t* savedNavigation[8];
+  memcpy(savedNavigation, navigationStack, sizeof(savedNavigation));
+  uint8_t savedDepth = navigationDepth;
+  bool savedGaugePresent = localBattery.gaugePresent;
+  bool passed = pageBattery && lblBatteryStats;
+  if (passed) {
+    showPage(pageBattery, false);
+    localBattery.gaugePresent = true;
+    refreshScreenUi();
+    const char* text = lv_label_get_text(lblBatteryStats);
+    bool presentOk = strstr(text, "Remaining:") && strstr(text, "PSRAM free:");
+    Serial.printf("[test-ui] Battery gauge present: %s\n", presentOk ? "PASS" : "FAIL");
+    passed &= presentOk;
+    localBattery.gaugePresent = false;
+    forcePageRefresh = true;
+    refreshScreenUi();
+    text = lv_label_get_text(lblBatteryStats);
+    bool missingOk = strstr(text, "MAX17048 not detected") && strstr(text, "PSRAM free:");
+    Serial.printf("[test-ui] Battery gauge missing: %s\n", missingOk ? "PASS" : "FAIL");
+    passed &= missingOk;
+  }
+  localBattery.gaugePresent = savedGaugePresent;
+  struct ScreenCheck { lv_obj_t* page; lv_obj_t* label; const char* expected; const char* name; };
+  const ScreenCheck checks[] = {
+    {pageLauncher, lblHomeMessageTitle, "Messages", "Home dashboard"},
+    {pageOperate, lblMsgDirect, "Direct", "Messages"},
+    {pageMeshHealth, lblMeshHealth, "Heltec:", "Mesh Health"},
+    {pageSystemInterface, lblSystemInterface, FIRMWARE_VERSION, "System Interface"},
+    {pageSystemSerial, lblSystemSerial, "Last valid response:", "System Serial"},
+    {pageGps, lblMapZoom, "Zoom", "Map view"},
+  };
+  for (const auto& check : checks) {
+    bool ok = check.page && check.label;
+    if (ok) {
+      showPage(check.page, false);
+      refreshScreenUi();
+      ok = strstr(lv_label_get_text(check.label), check.expected) != nullptr;
+    }
+    Serial.printf("[test-ui] %s: %s\n", check.name, ok ? "PASS" : "FAIL");
+    passed &= ok;
+  }
+  showPage(pageLauncher, false);
+  refreshScreenUi();
+  lv_obj_update_layout(pageLauncher);
+  lv_area_t homeArea;
+  lv_obj_get_coords(pageLauncher, &homeArea);
+  bool layoutOk = true;
+  for (uint32_t i = 0; i < lv_obj_get_child_cnt(pageLauncher); ++i) {
+    lv_obj_t* child = lv_obj_get_child(pageLauncher, i);
+    lv_area_t area;
+    lv_obj_get_coords(child, &area);
+    layoutOk &= area.x1 >= homeArea.x1 && area.x2 <= homeArea.x2 && area.y1 >= homeArea.y1 && area.y2 <= homeArea.y2;
+    if (lv_obj_has_flag(child, LV_OBJ_FLAG_CLICKABLE)) layoutOk &= lv_obj_get_height(child) >= 44;
+  }
+  bool menuOk = btnNavBack && btnNavHome && strcmp(lv_label_get_text(lv_obj_get_child(btnNavBack, 0)), "Menu") == 0;
+  if (menuOk) {
+    lv_event_send(btnNavBack, LV_EVENT_CLICKED, nullptr);
+    menuOk = currentPage == pageFunctions && !lv_obj_has_flag(pageFunctions, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_update_layout(pageFunctions);
+    unsigned menuActions = 0;
+    for (uint32_t i = 0; i < lv_obj_get_child_cnt(pageFunctions); ++i) {
+      lv_obj_t* child = lv_obj_get_child(pageFunctions, i);
+      if (lv_obj_has_flag(child, LV_OBJ_FLAG_CLICKABLE)) {
+        ++menuActions;
+        menuOk &= lv_obj_get_height(child) >= 44;
+      }
+    }
+    menuOk &= menuActions == 5;
+    // Exercise the nested System > Health route and its Back chain.
+    showPage(pageSystem);
+    showPage(pageDiagnose);
+    showPage(pageMeshHealth);
+    lv_event_send(btnNavBack, LV_EVENT_CLICKED, nullptr);
+    menuOk &= currentPage == pageDiagnose;
+    lv_event_send(btnNavBack, LV_EVENT_CLICKED, nullptr);
+    menuOk &= currentPage == pageSystem;
+    lv_event_send(btnNavBack, LV_EVENT_CLICKED, nullptr);
+    menuOk &= currentPage == pageFunctions;
+    lv_event_send(btnNavHome, LV_EVENT_CLICKED, nullptr);
+    menuOk &= currentPage == pageLauncher;
+  }
+  Serial.printf("[test-ui] Launcher menu navigation: %s\n", menuOk ? "PASS" : "FAIL");
+  passed &= menuOk;
+  Serial.printf("[test-ui] Home bounds and touch targets: %s\n", layoutOk ? "PASS" : "FAIL");
+  passed &= layoutOk;
+  memcpy(navigationStack, savedNavigation, sizeof(savedNavigation));
+  navigationDepth = savedDepth;
+  showPage(savedPage, false);
+  refreshScreenUi();
+  Serial.printf("[test-ui] complete: %s\n", passed ? "PASS" : "FAIL");
+}
+#endif
+
 static uint32_t parseNodeAddress(const char* text) {
   if (!text) return 0;
   while (*text == ' ' || *text == '\t' || *text == '!') text++;
@@ -913,6 +918,7 @@ static void sendDirectFromInput(lv_obj_t* toInput, lv_obj_t* msgInput) {
 }
 
 static void serviceScreen() {
+  serviceMapNavigationSettings();
   serviceToneAudio();
   serviceMapRenderWorker();
   processDeferredWifiAction();
@@ -928,7 +934,9 @@ static void printSerialDiagnostics() {
 
   uint32_t age = lastByteMs ? (millis() - lastByteMs) / 1000 : 0xFFFFFFFF;
   Serial.printf(
-    "[LINK] rx=%lu tx=%lu last=%s frames=%lu decoded=%lu err=%lu magic=%lu/%lu badlen=%lu hb=%lu resync=%lu ascii=\"%.60s\"\n",
+    "[LINK] health=%s response=%lus rx=%lu tx=%lu last=%s frames=%lu decoded=%lu err=%lu magic=%lu/%lu badlen=%lu hb=%lu resync=%lu ascii=\"%.60s\"\n",
+    linkHealthText(),
+    (unsigned long)(radioResponseSeen ? (millis() - lastRadioResponseMs) / 1000 : UINT32_MAX),
     (unsigned long)bytesFromRadio,
     (unsigned long)bytesToRadio,
     lastByteMs ? String(age).c_str() : "never",
@@ -1005,18 +1013,67 @@ static void printSerialDiagnostics() {
       (unsigned long)mapRenderWorkerBusySkips,
       mapCacheStatus
     );
+    Serial.printf("[TILECACHE] slots=%u resident=%lu hit=%lu miss=%lu loads=%lu evict=%lu errors=%lu sdReads=%lu bytes=%lu readUs=%lu\n",
+                  mapTileCacheBuffer ? (unsigned)MAP_TILE_CACHE_SLOTS : 0,
+                  (unsigned long)mapTileCacheResident.load(), (unsigned long)mapTileCacheHits.load(),
+                  (unsigned long)mapTileCacheMisses.load(), (unsigned long)mapTileCacheLoads.load(),
+                  (unsigned long)mapTileCacheEvictions.load(), (unsigned long)mapTileCacheReadErrors.load(),
+                  (unsigned long)mapTileSdReadCalls.load(), (unsigned long)mapTileSdReadBytes.load(),
+                  (unsigned long)lastMapTileReadUs);
   }
 }
 
+#include "HomeUiTests.inc"
+
 static void serviceUsbSerialCommands() {
-  static char command[48];
+#ifdef FIRMWARE_RUN_TESTS
+  if (testScreenPixels && millis() - testScreenCapturedMs > 30000) { heap_caps_free(testScreenPixels); testScreenPixels = nullptr; }
+#endif
+  static char command[4224];
   static size_t commandLen = 0;
-  while (Serial.available()) {
+  static bool overflow = false;
+  serviceUsbTileTimeout();
+  serviceUsbSdTimeout();
+  // Bound work per loop so GPS, radio, touch and HTTP keep being serviced.
+  size_t budget = 8192;
+  while (budget-- && Serial.available()) {
     char c = (char)Serial.read();
     if (c == '\r') continue;
     if (c == '\n') {
+      if (overflow) {
+        Serial.println("[TILEUSB] 00000000 ERROR line-too-long");
+        overflow = false;
+        commandLen = 0;
+        continue;
+      }
       command[commandLen] = '\0';
-      if (strcmp(command, "tiles") == 0 || strcmp(command, "maps") == 0) {
+      if (handleUsbTileCommand(command) || handleUsbSdCommand(command)) {
+        commandLen = 0;
+        continue;
+      }
+#ifdef FIRMWARE_RUN_TESTS
+      if (handleScreenCaptureCommand(command)) {
+      } else if (strcmp(command, "test-home") == 0) {
+        runHomeUiTests();
+      } else if (strcmp(command, "test-webmap") == 0) {
+        runWebMapTests();
+      } else if (strcmp(command, "test-coverage") == 0) {
+        runMapCoverageTests();
+      } else if (strcmp(command, "test-map") == 0) {
+        runMapNavigationTests();
+      } else if (strcmp(command, "test-ui") == 0) {
+        runUiSmokeTests();
+      } else
+#endif
+      if (strcmp(command, "gps") == 0) {
+        printLocalGpsDiagnostics();
+      } else if (strcmp(command, "mapbench") == 0) {
+        requestMapBenchmark();
+      } else if (strcmp(command, "version") == 0) {
+        printFirmwareIdentity();
+      } else if (strcmp(command, "diagnostics") == 0) {
+        Serial.println(buildFieldReportJson());
+      } else if (strcmp(command, "tiles") == 0 || strcmp(command, "maps") == 0) {
         printSdTileSummary();
       } else if (strcmp(command, "tilesfast") == 0) {
         printSdTileFastSummary();
@@ -1041,12 +1098,12 @@ static void serviceUsbSerialCommands() {
                       (unsigned long)sdAppendDropped);
       } else if (commandLen > 0) {
         Serial.printf("[serial] unknown command: %s\n", command);
-        Serial.println("[serial] commands: sd, tiles, tilesfast, tileroots");
+        Serial.println("[serial] commands: version, diagnostics, mapbench, sd, tiles, tilesfast, tileroots, tile-hello");
       }
       commandLen = 0;
       command[0] = '\0';
     } else if (commandLen + 1 < sizeof(command)) {
       command[commandLen++] = c;
-    }
+    } else overflow = true;
   }
 }

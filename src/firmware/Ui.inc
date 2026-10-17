@@ -6,6 +6,11 @@ static void lvFlush(lv_disp_drv_t* disp, const lv_area_t* area, lv_color_t* colo
   tft.setAddrWindow(area->x1, area->y1, w, h);
   tft.pushColors((uint16_t*)colors, w * h, true);
   tft.endWrite();
+#ifdef FIRMWARE_RUN_TESTS
+  if (testScreenPixels && testScreenCapturedMs == 0 && area->x1 >= 0 && area->y1 >= 0 && area->x2 < SCREEN_W && area->y2 < SCREEN_H) {
+    for (uint32_t row = 0; row < h; ++row) memcpy(testScreenPixels + (area->y1 + row) * SCREEN_W + area->x1, colors + row * w, w * sizeof(lv_color_t));
+  }
+#endif
   lv_disp_flush_ready(disp);
 }
 
@@ -157,11 +162,17 @@ static void buildStatusBar(lv_obj_t* screen) {
 
 static void showPage(lv_obj_t* target, bool remember) {
   if (!target) return;
-  bool leavingNodeDetailMap = currentPage == pageGps && target != pageGps && mapNodeDetailViewActive;
-  if (remember && currentPage && currentPage != target) previousPage = currentPage;
+  bool leavingNodeDetailMap = (currentPage == pageGps || currentPage == pageMapCoverage) && target != pageGps && target != pageMapCoverage && mapNodeDetailViewActive;
+  if (remember && currentPage && currentPage != target) {
+    if (navigationDepth == 8) {
+      memmove(navigationStack, navigationStack + 1, 7 * sizeof(navigationStack[0]));
+      navigationDepth = 7;
+    }
+    navigationStack[navigationDepth++] = currentPage;
+  }
   lv_obj_t* pages[] = {
-    pageLauncher, pageOperate, pageDiagnose, pageNodes, pageNodeDetail, pageMeshHealth, pagePacketInspector,
-    pageTxHistory, pagePublicChat, pagePrivateChat, pageDirectChat, pageMessageDiag, pageGps,
+    pageLauncher, pageFunctions, pageOperate, pageDiagnose, pageNodes, pageNodeDetail, pageMeshHealth, pagePacketInspector,
+    pageTxHistory, pagePublicChat, pagePrivateChat, pageDirectChat, pageMessageDiag, pageGps, pageMapCoverage,
     pageSystem, pageSystemInterface, pageSystemSerial, pageSystemRadio, pageSystemGps,
     pageWifi, pageWifiStats, pageWifiLocal, pageWifiScan, pageBacklight, pageSound, pageBattery
   };
@@ -172,6 +183,18 @@ static void showPage(lv_obj_t* target, bool remember) {
   }
   if (keyboard) lv_obj_add_flag(keyboard, LV_OBJ_FLAG_HIDDEN);
   currentPage = target;
+  if (btnNavBack && btnNavHome) {
+    bool home = target == pageLauncher;
+    lv_label_set_text(lv_obj_get_child(btnNavBack, 0), home ? "Menu" : "Back");
+    lv_obj_set_width(btnNavBack, home ? 220 : 92);
+    lv_obj_set_width(lv_obj_get_child(btnNavBack, 0), home ? 200 : 80);
+    if (home) lv_obj_add_flag(btnNavHome, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_clear_flag(btnNavHome, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_radius(btnNavBack, home ? 10 : 6, 0);
+    lv_obj_set_style_bg_color(btnNavBack, lv_color_hex(home ? 0x18362B : 0x111A18), 0);
+    lv_obj_set_style_border_color(btnNavBack, lv_color_hex(home ? 0x345346 : 0x315B50), 0);
+    lv_obj_set_style_text_font(lv_obj_get_child(btnNavBack, 0), home ? &lv_font_montserrat_14 : UI_FONT_SMALL, 0);
+  }
   if (target == pagePublicChat) unreadPublic = 0;
   if (target == pagePrivateChat) unreadFamily = 0;
   if (target == pageDirectChat) unreadDirect = 0;
@@ -180,6 +203,7 @@ static void showPage(lv_obj_t* target, bool remember) {
     mapFocusSelectedNode = false;
     mapNearbyMode = false;
     mapCenterMode = MAP_CENTER_CURRENT_DEVICE;
+    mapView.resume();
     mapCanvasCached = false;
     mapRenderPending = true;
     lastMapUiRefreshMs = 0;
@@ -194,23 +218,6 @@ static void showPage(lv_obj_t* target, bool remember) {
     if (!mapFocusSelectedNode) mapNearbyMode = false;
     mapRenderPending = true;
     lastMapUiRefreshMs = 0;
-    if (mapCanvasCached && lblMapStats) {
-      char cacheText[180];
-      if (lastMapLocationValid) {
-        snprintf(cacheText, sizeof(cacheText),
-                 "Current location ready\n"
-                 "Default: %.5f, %.5f\n"
-                 "Checking SD tiles...",
-                 defaultMapLat,
-                 defaultMapLon);
-      } else {
-        snprintf(cacheText, sizeof(cacheText),
-                 "Map ready\n"
-                 "Waiting for current device location\n"
-                 "Checking SD tiles...");
-      }
-      lv_label_set_text(lblMapStats, cacheText);
-    }
   }
 }
 
@@ -219,43 +226,124 @@ static void setMapNearbyMode(bool enabled) {
   mapFocusSelectedNode = false;
   mapNodeDetailViewActive = false;
   mapCenterMode = MAP_CENTER_CURRENT_DEVICE;
+  mapView.resume();
   mapRenderPending = true;
   lastMapUiRefreshMs = 0;
   refreshMapUi();
 }
 
 static int activeMapPlotHeight() {
-  return mapExpanded ? MAP_PLOT_H_EXPANDED : MAP_PLOT_H_NORMAL;
+  return MAP_PLOT_H_NORMAL;
 }
 
-static void setMapExpanded(bool expanded) {
-  mapExpanded = expanded;
+static void invalidateMapView() {
   mapCanvasCached = false;
   mapRenderPending = true;
   markUiDirty(UI_DIRTY_MAP);
   lastMapUiRefreshMs = 0;
-  if (mapPlot) lv_obj_set_size(mapPlot, MAP_PLOT_W, activeMapPlotHeight());
-  if (lblMapStats) {
-    if (expanded) lv_obj_add_flag(lblMapStats, LV_OBJ_FLAG_HIDDEN);
-    else {
-      lv_obj_clear_flag(lblMapStats, LV_OBJ_FLAG_HIDDEN);
-      lv_obj_align(lblMapStats, LV_ALIGN_TOP_LEFT, 6, 164);
-    }
+  forcePageRefresh = true;
+  if (mapLayer) lv_obj_set_pos(mapLayer, 0, 0);
+  if (mapCanvas) lv_canvas_fill_bg(mapCanvas, lv_color_hex(0x07100D), LV_OPA_COVER);
+  for (auto* dot : mapDots) if (dot) lv_obj_add_flag(dot, LV_OBJ_FLAG_HIDDEN);
+  if (mapScale) lv_obj_add_flag(mapScale, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void updateMapControls() {
+  if (!lblMapZoom) return;
+  char text[24];
+  snprintf(text, sizeof(text), "Zoom %d\nCoverage", mapView.zoom);
+  lv_label_set_text(lblMapZoom, text);
+  if (mapView.zoom <= MAP_TILE_MIN_ZOOM) lv_obj_add_state(btnMapZoomOut, LV_STATE_DISABLED);
+  else lv_obj_clear_state(btnMapZoomOut, LV_STATE_DISABLED);
+  if (mapView.zoom >= MAP_TILE_MAX_ZOOM) lv_obj_add_state(btnMapZoomIn, LV_STATE_DISABLED);
+  else lv_obj_clear_state(btnMapZoomIn, LV_STATE_DISABLED);
+  lv_label_set_text(lblMapFollow, mapView.follow ? "Follow on" : "Follow off");
+  if (mapView.follow) lv_obj_add_state(btnMapFollow, LV_STATE_CHECKED);
+  else lv_obj_clear_state(btnMapFollow, LV_STATE_CHECKED);
+}
+
+static void updateMapScale() {
+  if (!mapScale) return;
+  if (!mapCanvasCached) { lv_obj_add_flag(mapScale, LV_OBJ_FLAG_HIDDEN); return; }
+  auto scale = MapNavigation::scale(cachedMapLat, cachedMapZoom);
+  char text[20];
+  if (scale.feet) snprintf(text, sizeof(text), "%u ft", scale.feet);
+  else if (scale.miles == 0.25) strlcpy(text, "1/4 mi", sizeof(text));
+  else if (scale.miles == 0.5) strlcpy(text, "1/2 mi", sizeof(text));
+  else snprintf(text, sizeof(text), "%.0f mi", scale.miles);
+  lv_label_set_text(lblMapScale, text);
+  lv_obj_set_width(mapScaleBar, scale.pixels);
+  lv_obj_set_x(mapScaleEnd, 4 + scale.pixels - 1);
+  lv_obj_clear_flag(mapScale, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_move_foreground(mapScale);
+}
+
+static void setMapZoom(int zoom, bool save) {
+  if (!mapView.setZoom(zoom)) return;
+  mapDragging = mapDragMoved = false;
+  if (save) { mapZoomSavePending = true; mapZoomSaveAtMs = millis() + 1000; }
+  invalidateMapView();
+  updateMapControls();
+  refreshMapUi();
+}
+
+static void serviceMapNavigationSettings() {
+  if (mapZoomSavePending && !mapNavigationTesting && (int32_t)(millis() - mapZoomSaveAtMs) >= 0) {
+    prefs.putUChar("mapZoom", (uint8_t)mapView.zoom);
+    mapZoomSavePending = false;
   }
+}
+
+static void setMapFollow(bool enabled) {
+  if (enabled) {
+    mapView.resume();
+    mapCenterMode = MAP_CENTER_CURRENT_DEVICE;
+    mapNodeDetailViewActive = false;
+    mapFocusSelectedNode = false;
+  } else {
+    if (mapCanvasCached) { mapView.center = {cachedMapLat, cachedMapLon}; mapView.hasCenter = true; }
+    mapView.pause();
+  }
+  mapDragging = mapDragMoved = false;
+  invalidateMapView();
+  updateMapControls();
   refreshMapUi();
 }
 
-static void setMapZoomedOut(bool zoomedOut) {
-  mapZoomedOut = zoomedOut;
-  mapCanvasCached = false;
-  mapRenderPending = true;
-  markUiDirty(UI_DIRTY_MAP);
-  lastMapUiRefreshMs = 0;
-  refreshMapUi();
+static void mapDragEvent(lv_event_t* e) {
+  lv_event_code_t code = lv_event_get_code(e);
+  lv_indev_t* input = lv_indev_get_act();
+  if (!input) return;
+  lv_point_t point;
+  lv_indev_get_point(input, &point);
+  if (code == LV_EVENT_PRESSED) {
+    mapDragging = mapView.hasCenter;
+    mapDragMoved = false;
+    mapDragStart = point;
+    mapDragOrigin = mapCanvasCached ? MapNavigation::Point{cachedMapLat, cachedMapLon} : mapView.center;
+    mapDragZoom = mapCanvasCached ? cachedMapZoom : mapView.zoom;
+  } else if (code == LV_EVENT_PRESSING && mapDragging) {
+    int dx = point.x - mapDragStart.x, dy = point.y - mapDragStart.y;
+    if (abs(dx) >= 6 || abs(dy) >= 6) mapDragMoved = true;
+    if (mapDragMoved && mapLayer) lv_obj_set_pos(mapLayer, dx, dy);
+  } else if ((code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) && mapDragging) {
+    mapDragging = false;
+    if (mapDragMoved) {
+      mapView.center = MapNavigation::pan(mapDragOrigin, mapDragZoom, point.x - mapDragStart.x, point.y - mapDragStart.y);
+      mapView.hasCenter = mapView.manual = true;
+      mapView.follow = false;
+      ++mapView.revision;
+      invalidateMapView();
+      updateMapControls();
+      refreshMapUi();
+    } else if (mapLayer) lv_obj_set_pos(mapLayer, 0, 0);
+    mapDragMoved = false;
+  }
 }
 
 static void clearUiObjectPointers() {
   pageLauncher = nullptr;
+  pageFunctions = nullptr;
   pageOperate = nullptr;
   pageDiagnose = nullptr;
   pageNodes = nullptr;
@@ -268,6 +356,7 @@ static void clearUiObjectPointers() {
   pageDirectChat = nullptr;
   pageMessageDiag = nullptr;
   pageGps = nullptr;
+  pageMapCoverage = nullptr;
   pageSystem = nullptr;
   pageSystemInterface = nullptr;
   pageSystemSerial = nullptr;
@@ -281,7 +370,8 @@ static void clearUiObjectPointers() {
   pageSound = nullptr;
   pageBattery = nullptr;
   currentPage = nullptr;
-  previousPage = nullptr;
+  navigationDepth = 0;
+  memset(navigationStack, 0, sizeof(navigationStack));
   statusBar = nullptr;
   navBar = nullptr;
   lblStatus = nullptr;
@@ -291,8 +381,13 @@ static void clearUiObjectPointers() {
   lblStats = nullptr;
   lblHomeLink = nullptr;
   lblHomeMessages = nullptr;
+  lblHomeMessageTitle = nullptr;
+  lblHomeNodes = nullptr;
+  btnNavBack = nullptr;
+  btnNavHome = nullptr;
   lblHomeGps = nullptr;
   lblHomePower = nullptr;
+  lblHomeLinkDetail = lblHomePowerDetail = lblHomeUnread = homePowerBar = homeLinkIcon = nullptr;
   lblTilePublic = nullptr;
   lblTilePrivate = nullptr;
   lblMsgPublic = nullptr;
@@ -314,6 +409,7 @@ static void clearUiObjectPointers() {
   lblMeshHealth = nullptr;
   taPacketInspector = nullptr;
   taTxHistory = nullptr;
+  btnTxRetry = nullptr;
   lblSystemInterface = nullptr;
   lblSystemSerial = nullptr;
   lblSystemRadio = nullptr;
@@ -337,6 +433,13 @@ static void clearUiObjectPointers() {
   lblBatteryStats = nullptr;
   lblGpsStats = nullptr;
   lblMapStats = nullptr;
+  lblMapZoom = btnMapZoomOut = btnMapZoomIn = btnMapLocate = btnMapFollow = lblMapFollow = nullptr;
+  btnMapCoverage = lblMapCoverage = lblMapCoverageSummary = nullptr;
+  memset(lblMapCoverageRows, 0, sizeof(lblMapCoverageRows));
+  mapLayer = lblMapNotice = mapScale = lblMapScale = mapScaleBar = mapScaleEnd = nullptr;
+  mapDragging = mapDragMoved = false;
+  mapCanvasCached = false;
+  ++mapView.revision;
   mapPlot = nullptr;
   mapCanvas = nullptr;
   mapNodeDetailViewActive = false;
@@ -430,10 +533,61 @@ static lv_obj_t* makeSystemTile(lv_obj_t* parent, const char* text, int col, int
   lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
   lv_obj_set_style_text_color(label, lv_color_hex(COLOR_TEXT), 0);
   lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_style_text_font(label, UI_FONT_SMALL, 0);
+  lv_obj_set_style_text_font(label, UI_FONT_DEFAULT, 0);
   lv_obj_center(label);
   lv_obj_move_foreground(btn);
   return btn;
+}
+
+// Home actions use separate title/subtitle labels and fixed, finger-sized bounds.
+static lv_obj_t* makeHomeAction(lv_obj_t* parent, const char* title, const char* detail,
+                               int x, int y, int w, int h, bool primary, lv_event_cb_t cb) {
+  lv_obj_t* button = lv_btn_create(parent);
+  lv_obj_set_size(button, w, h);
+  lv_obj_align(button, LV_ALIGN_TOP_LEFT, x, y);
+  styleDarkObject(button, primary ? COLOR_ACTION : COLOR_PANEL);
+  styleDarkBorder(button, primary ? COLOR_ACTION : COLOR_BORDER);
+  lv_obj_set_style_radius(button, 8, 0);
+  lv_obj_set_style_pad_all(button, 8, 0);
+  lv_obj_set_style_bg_color(button, lv_color_hex(primary ? 0x68FFC0 : 0x24483E), LV_STATE_PRESSED);
+  lv_obj_add_event_cb(button, cb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* heading = lv_label_create(button);
+  lv_obj_set_width(heading, w - 18);
+  lv_label_set_long_mode(heading, LV_LABEL_LONG_DOT);
+  lv_label_set_text(heading, title);
+  lv_obj_set_style_text_font(heading, UI_FONT_READABLE, 0);
+  lv_obj_set_style_text_color(heading, lv_color_hex(primary ? 0x001B12 : COLOR_TEXT), 0);
+  lv_obj_align(heading, LV_ALIGN_TOP_LEFT, 0, -2);
+  lv_obj_t* subtitle = lv_label_create(button);
+  lv_obj_set_width(subtitle, w - 18);
+  lv_label_set_long_mode(subtitle, LV_LABEL_LONG_DOT);
+  lv_label_set_text(subtitle, detail);
+  lv_obj_set_style_text_font(subtitle, UI_FONT_SMALL, 0);
+  lv_obj_set_style_text_color(subtitle, lv_color_hex(primary ? 0x003526 : COLOR_MUTED), 0);
+  lv_obj_align(subtitle, LV_ALIGN_BOTTOM_LEFT, 0, 2);
+  return button;
+}
+
+static lv_obj_t* makeHomeStatus(lv_obj_t* parent, const char* title, int y) {
+  lv_obj_t* panel = makePanel(parent);
+  lv_obj_set_size(panel, 218, 44);
+  lv_obj_align(panel, LV_ALIGN_TOP_LEFT, 6, y);
+  lv_obj_set_style_pad_all(panel, 4, 0);
+  lv_obj_set_style_radius(panel, 8, 0);
+  lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_t* caption = lv_label_create(panel);
+  lv_label_set_text(caption, title);
+  lv_obj_set_style_text_font(caption, UI_FONT_SMALL, 0);
+  lv_obj_set_style_text_color(caption, lv_color_hex(COLOR_MUTED), 0);
+  lv_obj_align(caption, LV_ALIGN_TOP_LEFT, 2, -1);
+  lv_obj_t* value = lv_label_create(panel);
+  lv_obj_set_width(value, 204);
+  lv_label_set_long_mode(value, LV_LABEL_LONG_DOT);
+  lv_label_set_text(value, "Waiting");
+  lv_obj_set_style_text_font(value, UI_FONT_READABLE, 0);
+  lv_obj_set_style_text_color(value, lv_color_hex(COLOR_TEXT), 0);
+  lv_obj_align(value, LV_ALIGN_BOTTOM_LEFT, 2, 1);
+  return value;
 }
 
 static lv_obj_t* makeDashboardLabel(lv_obj_t* parent, int x, int y, int w, int h) {
@@ -482,7 +636,7 @@ static lv_obj_t* makePageTitle(lv_obj_t* parent, const char* text) {
   lv_obj_set_width(title, SCREEN_W - 12);
   lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_ACCENT), 0);
-  lv_obj_set_style_text_font(title, UI_FONT_SMALL, 0);
+  lv_obj_set_style_text_font(title, UI_FONT_DEFAULT, 0);
   lv_obj_align(title, LV_ALIGN_TOP_LEFT, 2, 0);
   return title;
 }
@@ -520,17 +674,13 @@ static void buildNavBar(lv_obj_t* screen) {
   lv_obj_set_style_pad_all(navBar, 4, 0);
   lv_obj_clear_flag(navBar, LV_OBJ_FLAG_SCROLLABLE);
 
-  makeNavButton(navBar, "Back", LV_ALIGN_LEFT_MID, 4, [](lv_event_t*) {
-    if (previousPage && currentPage != pageLauncher) {
-      lv_obj_t* target = previousPage;
-      previousPage = pageLauncher;
-      showPage(target, false);
-    } else {
-      showPage(pageLauncher, false);
-    }
+  btnNavBack = makeNavButton(navBar, "Back", LV_ALIGN_LEFT_MID, 4, [](lv_event_t*) {
+    if (currentPage == pageLauncher) { showPage(pageFunctions); return; }
+    lv_obj_t* target = navigationDepth ? navigationStack[--navigationDepth] : pageLauncher;
+    showPage(target, false);
   });
-  makeNavButton(navBar, "Home", LV_ALIGN_RIGHT_MID, -4, [](lv_event_t*) {
-    previousPage = currentPage;
+  btnNavHome = makeNavButton(navBar, "Home", LV_ALIGN_RIGHT_MID, -4, [](lv_event_t*) {
+    navigationDepth = 0;
     showPage(pageLauncher, false);
   });
 }
@@ -916,6 +1066,9 @@ static void showSelectedNodeOnMap() {
   mapNodeDetailViewActive = selected != nullptr;
   mapCenterMode = selected ? MAP_CENTER_SELECTED_NODE : MAP_CENTER_CURRENT_DEVICE;
   mapFocusSelectedNode = selected && selected->hasPosition;
+  mapView.follow = false;
+  mapView.manual = false;
+  ++mapView.revision;
   mapCanvasCached = false;
   mapRenderPending = true;
   markUiDirty(UI_DIRTY_MAP);
@@ -1191,6 +1344,8 @@ static void buildLandscapeKeyboardScreen() {
   lv_obj_add_event_cb(landscapeKeyboard, landscapeKeyboardEvent, LV_EVENT_CANCEL, nullptr);
 }
 
+#include "HomeUi.inc"
+
 static void buildScreenUi() {
   lv_obj_t* screen = lv_scr_act();
   mainScreen = screen;
@@ -1200,6 +1355,7 @@ static void buildScreenUi() {
   buildStatusBar(screen);
 
   pageLauncher = makePage(screen);
+  pageFunctions = makePage(screen);
   pageOperate = makePage(screen);
   pageDiagnose = makePage(screen);
   pageNodes = makePage(screen);
@@ -1212,6 +1368,7 @@ static void buildScreenUi() {
   pageDirectChat = makePage(screen);
   pageMessageDiag = makePage(screen);
   pageGps = makePage(screen);
+  pageMapCoverage = makePage(screen);
   pageSystem = makePage(screen);
   pageSystemInterface = makePage(screen);
   pageSystemSerial = makePage(screen);
@@ -1228,15 +1385,21 @@ static void buildScreenUi() {
   currentPage = pageLauncher;
   lv_obj_clear_flag(pageLauncher, LV_OBJ_FLAG_HIDDEN);
 
-  makeSystemTile(pageLauncher, "Messages", 0, 0, [](lv_event_t*) { showPage(pageOperate); });
-  makeSystemTile(pageLauncher, "Nodes", 1, 0, [](lv_event_t*) {
+  buildHomeUi();
+
+  makePageTitle(pageFunctions, "Menu");
+  makeHomeAction(pageFunctions, "Messages", "Chat & direct", 6, 24, 106, 62, false,
+                 [](lv_event_t*) { showPage(pageOperate); });
+  makeHomeAction(pageFunctions, "Nodes", "Nearby radios", 118, 24, 106, 62, false, [](lv_event_t*) {
     refreshNodeList(true);
     showPage(pageNodes);
   });
-  makeSystemTile(pageLauncher, "Map", 0, 1, [](lv_event_t*) { showPage(pageGps); });
-  makeSystemTile(pageLauncher, "System", 1, 1, [](lv_event_t*) { showPage(pageSystem); });
-  makeSystemTile(pageLauncher, "TX Log", 0, 2, [](lv_event_t*) { showPage(pageTxHistory); });
-  makeSystemTile(pageLauncher, "Health", 1, 2, [](lv_event_t*) { showPage(pageDiagnose); });
+  makeHomeAction(pageFunctions, "Map", "Location & GPS", 6, 94, 106, 62, false,
+                 [](lv_event_t*) { showPage(pageGps); });
+  makeHomeAction(pageFunctions, "TX Log", "Delivery & retry", 118, 94, 106, 62, false,
+                 [](lv_event_t*) { showPage(pageTxHistory); });
+  makeHomeAction(pageFunctions, "System", "Device settings", 6, 164, 106, 62, false,
+                 [](lv_event_t*) { showPage(pageSystem); });
 
   makePageTitle(pageOperate, "Messages");
   makePageScrollable(pageOperate);
@@ -1320,7 +1483,8 @@ static void buildScreenUi() {
   makePageTitle(pageTxHistory, "TX History");
   taTxHistory = makeReadonlyText(pageTxHistory, 22, 184);
   setReadonlyTextStable(taTxHistory, "No messages sent yet");
-  makeActionButton(pageTxHistory, "Retry Last", 212, [](lv_event_t*) { retryLastTx(); });
+  btnTxRetry = makeActionButton(pageTxHistory, "Retry Last", 212, [](lv_event_t*) { retryLastTx(); });
+  lv_obj_add_state(btnTxRetry, LV_STATE_DISABLED);
 
   lblPublicChatTitle = makePageTitle(pagePublicChat, "Primary Chat");
   lblPublicChannelStats = lv_label_create(pagePublicChat);
@@ -1483,51 +1647,61 @@ static void buildScreenUi() {
   styleBoundedLabel(lblMsgDiagDetail, lv_pct(100), COLOR_TEXT, LV_LABEL_LONG_WRAP);
   lv_obj_align(lblMsgDiagDetail, LV_ALIGN_TOP_LEFT, 2, 292);
 
-  makePageTitle(pageGps, "Map");
-  makePageScrollable(pageGps);
-  lv_obj_t* btnMapHome = lv_btn_create(pageGps);
-  lv_obj_set_size(btnMapHome, 50, 22);
-  lv_obj_align(btnMapHome, LV_ALIGN_TOP_RIGHT, -58, 0);
-  styleDarkObject(btnMapHome, COLOR_PANEL);
-  styleDarkBorder(btnMapHome, 0x2F705F);
-  lv_obj_set_style_radius(btnMapHome, 6, 0);
-  lv_obj_set_style_shadow_width(btnMapHome, 0, 0);
-  lv_obj_add_event_cb(btnMapHome, [](lv_event_t*) {
-    setMapZoomedOut(false);
-  }, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* lblMapHome = lv_label_create(btnMapHome);
-  lv_label_set_text(lblMapHome, "Zoom");
-  lv_obj_set_style_text_color(lblMapHome, lv_color_hex(COLOR_TEXT), 0);
-  lv_obj_center(lblMapHome);
-
-  lv_obj_t* btnMapWide = lv_btn_create(pageGps);
-  lv_obj_set_size(btnMapWide, 50, 22);
-  lv_obj_align(btnMapWide, LV_ALIGN_TOP_RIGHT, -2, 0);
-  styleDarkObject(btnMapWide, COLOR_PANEL);
-  styleDarkBorder(btnMapWide, 0x2F705F);
-  lv_obj_set_style_radius(btnMapWide, 6, 0);
-  lv_obj_set_style_shadow_width(btnMapWide, 0, 0);
-  lv_obj_add_event_cb(btnMapWide, [](lv_event_t*) { setMapZoomedOut(true); }, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* lblMapWide = lv_label_create(btnMapWide);
-  lv_label_set_text(lblMapWide, "Wide");
-  lv_obj_set_style_text_color(lblMapWide, lv_color_hex(COLOR_TEXT), 0);
-  lv_obj_center(lblMapWide);
+  // Fixed layout: dragging belongs to the map, never to a scrolling page.
+  lv_obj_clear_flag(pageGps, LV_OBJ_FLAG_SCROLLABLE);
+  auto mapButton = [](const char* text, int x, int y, int width, lv_event_cb_t callback) {
+    lv_obj_t* button = lv_btn_create(pageGps);
+    lv_obj_set_pos(button, x, y);
+    lv_obj_set_size(button, width, 44);
+    styleDarkObject(button, COLOR_PANEL);
+    styleDarkBorder(button, COLOR_BORDER);
+    lv_obj_set_style_radius(button, 6, 0);
+    lv_obj_set_style_pad_all(button, 2, 0);
+    lv_obj_set_style_border_color(button, lv_color_hex(COLOR_ACCENT), LV_STATE_CHECKED);
+    lv_obj_set_style_bg_opa(button, LV_OPA_50, LV_STATE_DISABLED);
+    lv_obj_add_event_cb(button, callback, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* label = lv_label_create(button);
+    styleBoundedLabel(label, width - 4, COLOR_TEXT);
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_text(label, text);
+    lv_obj_center(label);
+    return button;
+  };
+  btnMapZoomOut = mapButton("-", 0, 0, 64, [](lv_event_t*) { setMapZoom(mapView.zoom - 1); });
+  btnMapZoomIn = mapButton("+", 166, 0, 64, [](lv_event_t*) { setMapZoom(mapView.zoom + 1); });
+  btnMapCoverage = mapButton("Zoom 14\nCoverage", 68, 0, 94, [](lv_event_t*) {
+    showPage(pageMapCoverage);
+    lastMapUiRefreshMs = 0;
+    refreshMapUi();
+  });
+  lblMapZoom = lv_obj_get_child(btnMapCoverage, 0);
+  lv_label_set_long_mode(lblMapZoom, LV_LABEL_LONG_WRAP);
+  btnMapLocate = mapButton("My location", 0, 188, 111, [](lv_event_t*) { setMapFollow(true); });
+  btnMapFollow = mapButton("Follow on", 119, 188, 111, [](lv_event_t*) { setMapFollow(!mapView.follow); });
+  lblMapFollow = lv_obj_get_child(btnMapFollow, 0);
 
   mapPlot = makePanel(pageGps);
   lv_obj_set_size(mapPlot, MAP_PLOT_W, activeMapPlotHeight());
-  lv_obj_align(mapPlot, LV_ALIGN_TOP_MID, 0, 22);
+  lv_obj_align(mapPlot, LV_ALIGN_TOP_MID, 0, 48);
   lv_obj_set_style_bg_color(mapPlot, lv_color_hex(COLOR_INPUT), 0);
   lv_obj_set_style_pad_all(mapPlot, 0, 0);
   lv_obj_clear_flag(mapPlot, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(mapPlot, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK);
+  lv_obj_add_event_cb(mapPlot, mapDragEvent, LV_EVENT_ALL, nullptr);
+  mapLayer = lv_obj_create(mapPlot);
+  lv_obj_remove_style_all(mapLayer);
+  lv_obj_set_pos(mapLayer, 0, 0);
+  lv_obj_set_size(mapLayer, MAP_PLOT_W, MAP_PLOT_H);
+  lv_obj_clear_flag(mapLayer, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
   if (mapCanvasBuf) {
-    mapCanvas = lv_canvas_create(mapPlot);
+    mapCanvas = lv_canvas_create(mapLayer);
     lv_canvas_set_buffer(mapCanvas, mapCanvasBuf, MAP_PLOT_W, MAP_PLOT_H, LV_IMG_CF_TRUE_COLOR);
     lv_canvas_fill_bg(mapCanvas, lv_color_hex(0x07100D), LV_OPA_COVER);
     lv_obj_set_pos(mapCanvas, 0, 0);
     lv_obj_clear_flag(mapCanvas, LV_OBJ_FLAG_CLICKABLE);
   }
   for (size_t i = 0; i < MAP_DOT_COUNT; i++) {
-    mapDots[i] = lv_obj_create(mapPlot);
+    mapDots[i] = lv_obj_create(mapLayer);
     styleDarkObject(mapDots[i], COLOR_ACCENT);
     lv_obj_set_size(mapDots[i], 8, 8);
     lv_obj_set_style_radius(mapDots[i], LV_RADIUS_CIRCLE, 0);
@@ -1537,23 +1711,85 @@ static void buildScreenUi() {
     lv_obj_clear_flag(mapDots[i], LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(mapDots[i], LV_OBJ_FLAG_CLICKABLE);
   }
+  mapScale = lv_obj_create(mapPlot);
+  lv_obj_set_size(mapScale, 90, 29);
+  lv_obj_align(mapScale, LV_ALIGN_BOTTOM_LEFT, 4, -4);
+  styleDarkObject(mapScale, COLOR_BG);
+  lv_obj_set_style_bg_opa(mapScale, LV_OPA_80, 0);
+  lv_obj_set_style_border_width(mapScale, 0, 0);
+  lv_obj_set_style_pad_all(mapScale, 0, 0);
+  lv_obj_set_style_radius(mapScale, 3, 0);
+  lv_obj_clear_flag(mapScale, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+  lblMapScale = lv_label_create(mapScale);
+  styleBoundedLabel(lblMapScale, 82, COLOR_TEXT);
+  lv_obj_set_pos(lblMapScale, 4, 0);
+  mapScaleBar = lv_obj_create(mapScale);
+  lv_obj_remove_style_all(mapScaleBar);
+  lv_obj_set_pos(mapScaleBar, 4, 23);
+  lv_obj_set_size(mapScaleBar, 60, 2);
+  styleDarkObject(mapScaleBar, COLOR_TEXT);
+  mapScaleEnd = lv_obj_create(mapScale);
+  lv_obj_remove_style_all(mapScaleEnd);
+  lv_obj_set_pos(mapScaleEnd, 63, 19);
+  lv_obj_set_size(mapScaleEnd, 1, 6);
+  styleDarkObject(mapScaleEnd, COLOR_TEXT);
+  lv_obj_t* scaleStart = lv_obj_create(mapScale);
+  lv_obj_remove_style_all(scaleStart);
+  lv_obj_set_pos(scaleStart, 4, 19);
+  lv_obj_set_size(scaleStart, 1, 6);
+  styleDarkObject(scaleStart, COLOR_TEXT);
+  for (auto* child : {lblMapScale, mapScaleBar, mapScaleEnd, scaleStart}) lv_obj_clear_flag(child, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(mapScale, LV_OBJ_FLAG_HIDDEN);
+  lblMapNotice = lv_label_create(mapPlot);
+  styleBoundedLabel(lblMapNotice, MAP_PLOT_W - 16, COLOR_TEXT, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_align(lblMapNotice, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_bg_color(lblMapNotice, lv_color_hex(COLOR_BG), 0);
+  lv_obj_set_style_bg_opa(lblMapNotice, LV_OPA_80, 0);
+  lv_label_set_text(lblMapNotice, "Waiting for location");
+  lv_obj_center(lblMapNotice);
+  lv_obj_clear_flag(lblMapNotice, LV_OBJ_FLAG_CLICKABLE);
+  lblMapCoverage = lv_label_create(mapPlot);
+  styleBoundedLabel(lblMapCoverage, MAP_PLOT_W - 8, COLOR_TEXT);
+  lv_obj_set_pos(lblMapCoverage, 3, 2);
+  lv_obj_set_style_bg_color(lblMapCoverage, lv_color_hex(COLOR_BG), 0);
+  lv_obj_set_style_bg_opa(lblMapCoverage, LV_OPA_80, 0);
+  lv_obj_clear_flag(lblMapCoverage, LV_OBJ_FLAG_CLICKABLE);
   lblMapStats = lv_label_create(pageGps);
-  lv_label_set_text(lblMapStats, "Waiting for node positions...");
-  lv_obj_set_style_text_color(lblMapStats, lv_color_hex(COLOR_TEXT), 0);
-  lv_obj_set_width(lblMapStats, SCREEN_W - 16);
-  lv_label_set_long_mode(lblMapStats, LV_LABEL_LONG_WRAP);
-  lv_obj_align(lblMapStats, LV_ALIGN_TOP_LEFT, 6, 164);
+  styleBoundedLabel(lblMapStats, 230, COLOR_MUTED);
+  lv_label_set_text(lblMapStats, "Waiting for location");
+  lv_obj_set_pos(lblMapStats, 0, 236);
+  updateMapControls();
+
+  makePageTitle(pageMapCoverage, "Map coverage");
+  lblMapCoverageSummary = lv_label_create(pageMapCoverage);
+  styleBoundedLabel(lblMapCoverageSummary, 230, COLOR_MUTED, LV_LABEL_LONG_WRAP);
+  lv_obj_set_pos(lblMapCoverageSummary, 0, 24);
+  for (int i = 0; i < MapCoverage::levels; ++i) {
+    lv_obj_t* row = makePanel(pageMapCoverage);
+    lv_obj_set_pos(row, 0, 62 + i * 34);
+    lv_obj_set_size(row, 230, 32);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lblMapCoverageRows[i] = lv_label_create(row);
+    styleBoundedLabel(lblMapCoverageRows[i], 210, COLOR_TEXT);
+    lv_obj_center(lblMapCoverageRows[i]);
+  }
+  lv_obj_t* coverageHint = lv_label_create(pageMapCoverage);
+  styleBoundedLabel(coverageHint, 230, COLOR_MUTED);
+  lv_label_set_text(coverageHint, "Availability at this map center");
+  lv_obj_set_pos(coverageHint, 0, 234);
+  updateMapCoverageUi();
 
   makePageTitle(pageSystem, "System");
   makePageScrollable(pageSystem);
-  makeSystemTile(pageSystem, "Interface", 0, 0, [](lv_event_t*) { showPage(pageSystemInterface); });
-  makeSystemTile(pageSystem, "Serial", 1, 0, [](lv_event_t*) { showPage(pageSystemSerial); });
+  makeSystemTile(pageSystem, "Health", 0, 0, [](lv_event_t*) { showPage(pageDiagnose); });
+  makeSystemTile(pageSystem, "Interface", 1, 0, [](lv_event_t*) { showPage(pageSystemInterface); });
   makeSystemTile(pageSystem, "Radio", 0, 1, [](lv_event_t*) { showPage(pageSystemRadio); });
-  makeSystemTile(pageSystem, "GPS", 1, 1, [](lv_event_t*) { showPage(pageSystemGps); });
-  makeSystemTile(pageSystem, "WiFi", 0, 2, [](lv_event_t*) { showPage(pageWifi); });
-  makeSystemTile(pageSystem, "Display", 1, 2, [](lv_event_t*) { showPage(pageBacklight); });
-  makeSystemTile(pageSystem, "Sound", 0, 3, [](lv_event_t*) { showPage(pageSound); });
-  makeSystemTile(pageSystem, "Battery", 1, 3, [](lv_event_t*) { showPage(pageBattery); });
+  makeSystemTile(pageSystem, "Serial", 1, 1, [](lv_event_t*) { showPage(pageSystemSerial); });
+  makeSystemTile(pageSystem, "Battery", 0, 2, [](lv_event_t*) { showPage(pageBattery); });
+  makeSystemTile(pageSystem, "GPS", 1, 2, [](lv_event_t*) { showPage(pageSystemGps); });
+  makeSystemTile(pageSystem, "WiFi", 0, 3, [](lv_event_t*) { showPage(pageWifi); });
+  makeSystemTile(pageSystem, "Display", 1, 3, [](lv_event_t*) { showPage(pageBacklight); });
+  makeSystemTile(pageSystem, "Sound", 0, 4, [](lv_event_t*) { showPage(pageSound); });
   refreshMessageDiagView();
 
   makePageTitle(pageSystemInterface, "Interface");
@@ -1749,6 +1985,7 @@ static void buildScreenUi() {
   styleBoundedLabel(lblBatteryStats, lv_pct(100), COLOR_TEXT, LV_LABEL_LONG_WRAP);
 
   buildNavBar(screen);
+  showPage(pageLauncher, false);
 
   keyboard = lv_keyboard_create(screen);
   lv_obj_set_size(keyboard, SCREEN_W, 132);

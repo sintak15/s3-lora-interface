@@ -154,6 +154,10 @@ The Heltec is the radio. It sends and receives Meshtastic LoRa traffic.
 The CYD is the screen and user interface. It shows messages, known nodes, GPS
 information, battery status, maps, and diagnostics.
 
+Home provides an at-a-glance dashboard with radio, battery, node/GPS and message
+cards. Tap a card for details or Menu for the launcher. See the
+[home dashboard](docs/HOME_DASHBOARD.md) for the layout and behavior.
+
 The GPS provides location data.
 
 The battery, charger, and booster provide portable power.
@@ -262,6 +266,12 @@ After flashing the CYD:
 
 The web page shows radio stats, events, chat messages, known nodes, battery
 status, SD downloads, and the node map.
+
+The Map page uses the device's SD tiles and bundled viewer, so it works without
+internet access. Drag to explore, use My location to recenter, or Show nodes to
+frame positioned nodes. Maps support zooms 10–14, feet/miles scales and coarser
+fallback where detailed tiles are missing. Refresh maps retries unavailable
+areas. See [offline browser maps](docs/WEB_OFFLINE_MAPS.md) for details.
 
 ## Memory Note
 

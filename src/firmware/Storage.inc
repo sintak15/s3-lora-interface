@@ -215,6 +215,11 @@ static void initSdStorage() {
     Serial.println("[sd] mount skipped: busy");
     return;
   }
+  mapStorageGeneration.fetch_add(1);
+  mapTileCacheResident.store(0);
+  mapCanvasCached = false;
+  mapRenderPending = true;
+  lastMapUiRefreshMs = 0;
   mapTileRootFound = false;
   strlcpy(mapTileRoot, DEFAULT_MAP_TILE_ROOT, sizeof(mapTileRoot));
   Serial.printf("[sd] setPins clk=%d cmd=%d d0=%d d1=%d d2=%d d3=%d oneBit=%s freq=%d\n",
@@ -335,6 +340,11 @@ static uint8_t scoreMapTileRoot(const char* root) {
 
 static void detectMapTileRoot(bool logResult) {
   SdLock lock;
+  mapStorageGeneration.fetch_add(1);
+  mapTileCacheResident.store(0);
+  mapCanvasCached = false;
+  mapRenderPending = true;
+  lastMapUiRefreshMs = 0;
   if (!lock) {
     mapTileRootFound = false;
     strlcpy(mapTileRoot, DEFAULT_MAP_TILE_ROOT, sizeof(mapTileRoot));

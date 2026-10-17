@@ -1,4 +1,5 @@
 config/device_config.local.h
+config/build_identity.generated.h
 build/
 dist/
 __pycache__/

@@ -1,4 +1,34 @@
 // Internal implementation module; included once by the main sketch.
+static int localGpsSatellitesInView() {
+  TinyGPSCustom* value = nullptr;
+  if (gpsGpInView.isValid() && gpsGpInView.age() <= 30000) value = &gpsGpInView;
+  if (gpsGnInView.isValid() && gpsGnInView.age() <= 30000 && (!value || gpsGnInView.age() < value->age())) value = &gpsGnInView;
+  return value ? atoi(value->value()) : -1;
+}
+
+static void appendLocalGpsHealthJson(String& json) {
+  bool usedKnown = localGps.satellites.isValid() && localGps.satellites.age() <= 30000;
+  int inView = localGpsSatellitesInView();
+  json += "\"gpsRxPin\":" + String(GPS_RX_PIN) + ",\"gpsBaud\":" + String(GPS_BAUD) + ",";
+  json += "\"localGpsBytes\":" + String(gpsBytesFromLocal) + ",";
+  json += "\"localGpsByteAgeMs\":" + (gpsBytesFromLocal ? String((uint32_t)(millis() - lastLocalGpsByteMs)) : String("null")) + ",";
+  json += "\"localGpsValidSentences\":" + String(localGps.passedChecksum()) + ",";
+  json += "\"localGpsFailedChecksum\":" + String(localGps.failedChecksum()) + ",";
+  json += "\"localGpsSentences\":" + String(localGps.sentencesWithFix()) + ",";
+  json += "\"localGpsSatsUsed\":" + (usedKnown ? String(localGps.satellites.value()) : String("null")) + ",";
+  json += "\"localGpsSatsInView\":" + (inView >= 0 ? String(inView) : String("null")) + ",";
+  json += "\"localGpsFreshFix\":" + String(localGps.location.isValid() && localGps.location.age() <= 30000 ? "true" : "false") + ",";
+}
+
+static void printLocalGpsDiagnostics() {
+  String report = "{"; appendLocalGpsHealthJson(report);
+  report += "\"heltecPositionConfigKnown\":" + String(heltecConfig.hasPosition ? "true" : "false") + ",";
+  report += "\"heltecGpsMode\":" + String((int)heltecConfig.position.gps_mode) + ",";
+  report += "\"heltecGpsRxPin\":" + String(heltecConfig.position.rx_gpio) + ",\"heltecGpsTxPin\":" + String(heltecConfig.position.tx_gpio) + ",";
+  report += "\"meshPositionMessages\":" + String(positionPackets) + "}";
+  Serial.println(String("[GPS] ") + report);
+}
+
 static void updateLocalGpsStats() {
   if (!localGps.location.isValid()) return;
 

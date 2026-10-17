@@ -2,6 +2,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
+const crypto = require('node:crypto');
+const zlib = require('node:zlib');
 
 const html = fs.readFileSync(path.join(__dirname, '../src/WebUi.h'), 'utf8');
 const script = html.split('<script>')[1].split('</script>')[0];
@@ -13,7 +15,7 @@ function element() {
     value: '', textContent: '', innerHTML: '', dataset: {}, options: [],
     classList: { toggle() {}, contains() { return false; } },
     add(option) { this.options.push(option); }, addEventListener() {},
-    replaceChildren() {},
+    replaceChildren() {}, setAttribute() {},
   };
 }
 
@@ -44,15 +46,28 @@ async function testRendering() {
     wifiMode: 'AP', ip: '192.168.4.1', gpsValid: false,
     heltecConfig: {}, channels: [{ index: 0, name: attack, role: 'PRIMARY', enabled: true }],
     nodes: [], battery: 50, voltage: 3.8,
+    linkHealth: 'stale', lastRadioResponseSec: 95,
+    fuelGaugePresent: true, batteryRuntimeMinutes: 125,
+    txHistory: [{ id: 123, destination: attack, text: attack, status: 'failed', error: attack, ageSec: 20, canRetry: true },
+                { id: attack, destination: 'test', text: 'test', status: 'acknowledged', canRetry: true }],
   };
   context.fetch = async () => ({ ok: true, json: async () => status });
   await vm.runInContext('refresh()', context);
   assert(elements.configRef.innerHTML.includes('&lt;img'));
   assert(elements.channelRef.innerHTML.includes('&lt;img'));
-  for (const id of ['stats', 'firmwareStats', 'storageStats', 'configRef', 'diagStats', 'packetStats', 'channelRef']) {
+  for (const id of ['stats', 'firmwareStats', 'storageStats', 'configRef', 'diagStats', 'packetStats', 'channelRef', 'txHistoryBody']) {
     assert(!elements[id].innerHTML.includes('<img'), `${id} must escape dynamic HTML`);
   }
   assert.equal(elements.appTitle.textContent, attack);
+  assert.equal(elements.radioHealth.textContent, 'Heltec: stale | last valid response: 95s ago');
+  assert(elements.txHistoryBody.innerHTML.includes('retryMessage(123)'));
+  assert(elements.txHistoryBody.innerHTML.includes('deliveryBadge failed'));
+  assert.equal(elements.statusFreshness.textContent, 'Live · updated just now');
+  assert.equal((elements.txHistoryBody.innerHTML.match(/retryMessage/g)||[]).length, 1);
+  assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryRuntimeMinutes:125})', context), '~2h 5m');
+  assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryRuntimeMinutes:-1})', context), 'Learning discharge (10+ min)');
+  assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryCharging:true,batteryRuntimeMinutes:125})', context), 'Charging');
+  assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:false})', context), 'Unavailable (no gauge)');
   assert.equal(vm.runInContext('refreshDelay', context), 1000);
 }
 
@@ -67,6 +82,8 @@ async function testSingleRequestAndRetries() {
   rejectPending(new Error('connection lost'));
   await first;
   assert.equal(elements.ip.textContent, 'Status unavailable: connection lost');
+  assert(elements.radioHealth.textContent.includes('readings may be stale'));
+  assert(elements.statusFreshness.textContent.includes('retrying'));
   assert.equal(vm.runInContext('refreshDelay', context), 2000);
   assert.equal(timers.size, 1, 'one retry must be scheduled after completion');
   context.fetch = async () => ({ ok: false, status: 401 });
@@ -91,9 +108,83 @@ async function testRequestTimeout() {
   assert.equal(timers.size, 1);
 }
 
+async function testRetryRequests() {
+  let calls = 0, finish;
+  context.fetch = async (url, options) => {
+    if (url === '/tx/retry') {
+      calls++;
+      assert.equal(options.method, 'POST');
+      assert.equal(options.body, 'id=123');
+      return new Promise(resolve => { finish = resolve; });
+    }
+    throw new Error('offline');
+  };
+  const first = vm.runInContext('retryMessage(123)', context);
+  await vm.runInContext('retryMessage(123)', context);
+  assert.equal(calls, 1, 'Repeated taps must not send duplicate retries');
+  finish({ok:false,text:async ()=>'Retry unavailable'});
+  await first;
+  assert.equal(elements.txRetryStatus.textContent, 'Retry unavailable');
+  context.fetch = async () => { throw new Error('offline'); };
+  await vm.runInContext('retryMessage(123)', context);
+  assert(elements.txRetryStatus.textContent.includes('result unknown'));
+}
+
+function testOfflineCoverage(){
+  vm.runInContext('renderOfflineCoverage({mapRequestedZoom:14,mapDisplayedZoom:12,mapCoverageChecked:true,mapCoverageAgeSec:2,mapCoverageLevels:[{zoom:12,status:"Ready",available:4,required:4,invalid:0},{zoom:14,status:"Partial",available:1,required:4,invalid:0}]})',context);
+  assert(elements.mapCoverageStats.innerHTML.includes('Displayed zoom'));
+  assert(elements.mapCoverageStats.innerHTML.includes('Ready (4/4)'));
+  assert(elements.mapCoverageStats.innerHTML.includes('Partial (1/4)'));
+  assert(elements.mapCoverageStatus.textContent.includes('touchscreen map center'));
+  vm.runInContext('renderOfflineCoverage({mapCoverageChecked:true,mapCoverageLevels:[{zoom:14,status:"<img src=x>",available:0,required:1,invalid:1}]})',context);
+  assert(!elements.mapCoverageStats.innerHTML.includes('<img'));
+  assert(elements.mapCoverageStats.innerHTML.includes('&lt;img'));
+  vm.runInContext('renderOfflineCoverage({mapCoverageChecked:false,mapDisplayedZoom:null})',context);
+  assert(elements.mapCoverageStatus.textContent.includes('Open Map on the touchscreen'));
+  assert(!elements.mapCoverageStats.innerHTML.includes('Ready'));
+}
+
+function testImperialMapScale(){
+  let options;
+  const fakeMap = {setView(){}};
+  fakeMap.on=()=>{};
+  const layer = {on(){},getContainer(){return {querySelectorAll(){return [];}};}};
+  context.L = context.window.L = {
+    map(){return fakeMap;},
+    tileLayer(){return {addTo(){}};},
+    control:{scale(value){options=value;return {addTo(map){assert.equal(map,fakeMap);}};}},
+    GridLayer:{extend(){return function(){return layer;};}},
+  };
+  vm.runInContext('initRealMap()',context);
+  assert.deepEqual(JSON.parse(JSON.stringify(options)),{imperial:true,metric:false});
+}
+
+function testBundledMapAssets(){
+  const base=path.join(__dirname,'../src/vendor/leaflet');
+  const manifest=JSON.parse(fs.readFileSync(path.join(base,'manifest.json'),'utf8'));
+  const header=fs.readFileSync(path.join(__dirname,'../src/WebMapAssets.h'),'utf8');
+  assert.equal(manifest.version,'1.9.4');
+  for(const [name,hash] of Object.entries(manifest.sha256)){
+    const raw=fs.readFileSync(path.join(base,name));
+    assert.equal(crypto.createHash('sha256').update(raw).digest('hex'),hash,`${name} matches pinned hash`);
+    if(name==='LICENSE')continue;
+    const symbol=name.replace('.','_')+'_gz';
+    const match=header.match(new RegExp(symbol+'\\[\\] PROGMEM = \\{([\\s\\S]*?)\\};'));
+    assert(match,`${name} is bundled`);
+    const zipped=Buffer.from([...match[1].matchAll(/0x([a-f0-9]{2})/g)].map(m=>parseInt(m[1],16)));
+    assert.deepEqual(zlib.gunzipSync(zipped),raw,`${name} flash bundle matches local source`);
+  }
+  assert(!/<(?:script|link)[^>]+(?:src|href)="https?:/.test(html),'Map assets must load locally');
+  assert(!html.includes('tile.openstreetmap.org'),'No online tile dependency');
+}
+
 (async () => {
   await testRendering();
   await testSingleRequestAndRetries();
   await testRequestTimeout();
-  console.log('Web UI regressions passed: escaping, single request, retry/backoff, recovery, timeout.');
+  await testRetryRequests();
+  testOfflineCoverage();
+  testImperialMapScale();
+  testBundledMapAssets();
+  console.log('Web UI regressions passed: escaping, single request, retry/backoff, recovery, timeout, delivery, runtime, retry controls, coverage, imperial scale, bundled map assets.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

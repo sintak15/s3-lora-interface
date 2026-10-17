@@ -88,7 +88,7 @@ static bool usingDefaultWebCredentials() {
 
 static bool setupRouteAllowed() {
   String uri = server.uri();
-  return uri == "/" || uri == "/status" || uri == "/interface";
+  return uri == "/" || uri == "/status" || uri == "/interface" || uri == "/assets/leaflet-1.9.4.js" || uri == "/assets/leaflet-1.9.4.css";
 }
 
 static void saveInterfaceSettings(const String& deviceName, const String& hostname, const String& apSsid, uint8_t apChannel, const String& user, const String& pass) {

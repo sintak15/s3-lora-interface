@@ -19,6 +19,7 @@ $arduinoCli = Join-Path $env:LOCALAPPDATA 'Programs\Arduino IDE\resources\app\li
 $fqbn = 'esp32:esp32:esp32s3:FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,PSRAM=opi,CDCOnBoot=cdc,DebugLevel=info'
 
 & (Join-Path $PSScriptRoot 'check_build_environment.ps1') -ArduinoCli $arduinoCli
+& (Join-Path $PSScriptRoot 'write_build_identity.ps1')
 
 $constants = Get-Content -Raw -LiteralPath $constantsPath
 $match = [regex]::Match($constants, '#define\s+FIRMWARE_VERSION\s+"v(\d+)\.(\d+)\.(\d+)"')
@@ -48,7 +49,7 @@ try {
     Rename-Item -LiteralPath $localConfig -NewName 'device_config.local.h.codexbak'
   }
 
-  & $arduinoCli compile --fqbn $fqbn --build-path $buildPath $repo
+  & $arduinoCli compile --fqbn $fqbn --build-path $buildPath --build-property 'compiler.cpp.extra_flags=-Werror=format' $repo
   if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
   }

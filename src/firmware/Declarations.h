@@ -24,7 +24,11 @@ static void cycleNodeFilter();
 static void clearNodeList();
 static bool sendHeltecNodeDbReset();
 static bool sendHeltecFavoriteNode(uint32_t nodeNum, bool favorite);
+static bool retryTx(uint32_t packetId);
 static bool retryLastTx();
+static const char* txErrorText(const TxRecord& record);
+static void printFirmwareIdentity();
+static String buildFieldReportJson();
 static void refreshNodeDetailFavoriteButton();
 static void refreshTxHistoryView();
 static void refreshNodeList(bool force = false);
@@ -49,6 +53,12 @@ static void ensureWifiScanPage();
 static void detectMapTileRoot(bool logResult = false);
 static void printMapTileRootCandidates();
 static void serviceOneTimeChannelProvision();
+static bool usbTileUploadActive();
+static void serviceUsbTileTimeout();
+static bool handleUsbTileCommand(char* command);
+static bool usbSdExportActive();
+static void serviceUsbSdTimeout();
+static bool handleUsbSdCommand(char* command);
 
 static void markUiDirty(uint32_t flags);
 static bool isUiDirty(uint32_t flags);
@@ -177,8 +187,24 @@ static lv_obj_t* makePage(lv_obj_t* parent);
 static void makePageScrollable(lv_obj_t* page);
 static void buildStatusBar(lv_obj_t* screen);
 static int activeMapPlotHeight();
-static void setMapExpanded(bool expanded);
-static void setMapZoomedOut(bool zoomedOut);
+static void setMapZoom(int zoom, bool save = true);
+static void setMapFollow(bool enabled);
+static void invalidateMapView();
+static void mapDragEvent(lv_event_t* e);
+static void serviceMapNavigationSettings();
+static void updateMapControls();
+static void updateMapScale();
+static bool mapCoverageMatches(double lat, double lon, uint16_t height);
+static MapCoverage::Profile probeMapCoverage(const MapRenderJob& job);
+static void renderCoveredMap(MapRenderJob job, MapRenderResult& result);
+static void updateMapCoverageUi();
+#ifdef FIRMWARE_RUN_TESTS
+static void runMapCoverageTests();
+#endif
+static bool mapDevicePosition(double& lat, double& lon, char* source, size_t sourceSize);
+#ifdef FIRMWARE_RUN_TESTS
+static void runMapNavigationTests();
+#endif
 static void clearUiObjectPointers();
 static lv_obj_t* makeActionButton(lv_obj_t* parent, const char* text, int y, lv_event_cb_t cb);
 static lv_obj_t* makeSmallButton(lv_obj_t* parent, const char* text, int x, int y, int w, lv_event_cb_t cb);
@@ -254,7 +280,9 @@ static bool mapCacheMatchesCenter(double lat,
                                   int* centerPixelX = nullptr,
                                   int* centerPixelY = nullptr);
 static bool mapRenderHasPendingResult();
-static bool assembleMapTilesToBuffer(const MapRenderJob& job, MapRenderResult& result);
+static bool assembleMapTilesToBuffer(const MapRenderJob& job, MapRenderResult& result, bool useTileCache = true);
+static void requestMapBenchmark();
+static void runMapBenchmark(const MapRenderJob& job, MapRenderResult& result);
 static void mapRenderTask(void*);
 static bool requestMapTileRender(double lat,
                                  double lon,
@@ -296,7 +324,7 @@ static void cacheHeltecModuleConfig(const meshtastic_ModuleConfig& moduleConfig)
 static bool isPrivateChannel(uint8_t index);
 static TxRecord* latestTxRecord();
 static void describeTxDestination(const TxRecord& record, char* out, size_t outSize);
-static void recordTxMessage(uint8_t channel, uint32_t to, const char* text, size_t len, bool ok);
+static void recordTxMessage(uint8_t channel, uint32_t to, const char* text, size_t len, bool ok, uint32_t packetId);
 static void markTxEchoSeen(uint8_t channel, uint32_t to, const uint8_t* text, size_t len);
 static const char* txStatusText(const TxRecord& record, uint32_t nowMs);
 static void formatNodeLabel(const NodeRecord& node, char* out, size_t outSize);
@@ -317,7 +345,7 @@ static void formatChatTimestamp(char* out, size_t outSize);
 static void copyChatPreview(char* out, size_t outSize, const char* sender, const uint8_t* text, size_t len);
 static void recordChatActivity(uint8_t channel, uint32_t to, const char* sender, const uint8_t* text, size_t len);
 static void appendChatMessage(uint8_t channel, uint32_t to, const char* sender, const uint8_t* text, size_t len);
-static void writeStreamFrame(const uint8_t* payload, size_t len);
+static bool writeStreamFrame(const uint8_t* payload, size_t len);
 static uint32_t allocateMeshPacketId();
 static uint8_t activeHopLimit();
 static void applyClientPacketDefaults(meshtastic_MeshPacket& packet);
@@ -393,3 +421,6 @@ static void handleFirmwareUpload();
 static void handleFirmwareUpdateDone();
 static bool validateWebNumericArgs();
 static bool sdDownloadPathActive(const char* path);
+#ifdef FIRMWARE_RUN_TESTS
+static void runWebMapTests();
+#endif
