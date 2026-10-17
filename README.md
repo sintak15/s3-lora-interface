@@ -1,285 +1,248 @@
 # Heltec LoRa Interface
 
-Build dependencies, verification commands, source layout, and hardware checks
-are documented in [docs/BUILD.md](docs/BUILD.md).
+A touchscreen and local web interface for a Heltec Meshtastic radio, built on
+an ESP32-S3 CYD. Read messages, check radio and battery status, browse nodes,
+and use offline maps without depending on internet access.
 
-This project turns an ESP32-S3 touch display, often called a CYD, into a
-handheld screen and web interface for a Heltec Meshtastic LoRa device.
+**Current firmware: v0.1.90.** The CYD runs this firmware; the Heltec runs
+Meshtastic and handles the LoRa radio connection.
 
-The CYD shows messages, nodes, GPS/map data, battery information, and radio
-diagnostics. It talks to the Heltec over a serial connection.
+## What it does
 
-## Use Case
+- **Home dashboard:** radio status, battery level, node/GPS status and a message
+  preview. Tap a card for details, or Menu for the launcher.
+- **Messaging:** channel and direct messages, unread counts, delivery states,
+  and retry controls where available.
+- **Offline maps:** SD-backed maps on both the touchscreen and web interface,
+  zooms 10–14, feet/miles scales and coarser fallback when detail is missing.
+- **Map navigation:** drag to explore, pause/follow the device, recenter and
+  inspect actual coverage around the touchscreen map center.
+- **Battery monitoring:** optional MAX17048 fuel-gauge support, charging and
+  low-battery status, and runtime estimates when enough discharge data exists.
+- **Local storage:** chat/event logs, position history, saved location and a
+  cached map image on MicroSD.
+- **USB tools:** upload tiles, copy files to a replacement card and inspect
+  receiver-level GPS diagnostics.
 
-This project is for situations where phones and normal internet service are not
-something you want to depend on. A Meshtastic LoRa radio can pass short messages
-and location updates directly between nearby radios, even when there is no cell
-signal, WiFi, or cloud service available.
+<img src="docs/images/home.png" alt="Touchscreen home dashboard with radio, battery, nodes and messages cards" width="240">
 
-The Heltec board does the radio work. The ESP32-S3 touch display gives that
-radio a small handheld dashboard: you can see incoming messages, nearby nodes,
-GPS position, battery state, radio health, and offline map information without
-digging through a phone app or plugging into a computer.
+The launcher contains Messages, Nodes, Map, TX Log and System. Health is under
+System. See the [home dashboard guide](docs/HOME_DASHBOARD.md) for details.
 
-In plain terms, it is a portable status screen for an off-grid radio network.
-It could be useful for camping, hiking groups, event crews, neighborhood
-emergency planning, field projects, or any small team that wants a simple way to
-see who is nearby and whether messages are moving.
+## Hardware
 
-## Parts List
+The current build uses:
 
-- 2500 mAh 18650 LiPo battery
-- TP4056 LiPo charger module
-- MT3608 5V boost converter
-- Heltec V3.2 Meshtastic LoRa device
-- HOSYUND ESP32-S3 touch display / CYD:
-  <https://www.lcdwiki.com/2.8inch_ESP32-S3_Display>
-- GY-NEO6MV2 GPS module
-- MAX17048 LiPo fuel gauge module
-- Optional MicroSD card for logs, snapshots, and offline map tiles
+| Component | Purpose |
+| --- | --- |
+| [LCDWiki 2.8-inch ESP32-S3 display / CYD](https://www.lcdwiki.com/2.8inch_ESP32-S3_Display) | Touchscreen, web interface and SD storage |
+| Heltec V3.2 running Meshtastic | LoRa radio |
+| GY-NEO6MV2 GPS module | Location input shared by the Heltec and CYD |
+| Single-cell rechargeable battery, 2500 mAh 18650 in this build | Portable power |
+| TP4056 charger and MT3608 5V boost converter | Charging and boosted supply |
+| MAX17048 fuel-gauge breakout, optional | Battery state measurement |
+| FAT32 MicroSD card, optional | Offline maps and persistent logs |
 
-## Quick Reference
+The verified CYD has 16 MiB flash and 8 MiB PSRAM. Pin assignments below are
+specific to this hardware. GPIO numbers are not physical header positions.
 
-This section is for people who already know the hardware terms and just need the
-pinout and configuration.
+## Build and first connection
 
-### Hardware
+1. Install the pinned Arduino dependencies and board configuration from
+   [docs/BUILD.md](docs/BUILD.md). LVGL and TFT_eSPI configuration files are
+   included in the repository.
+2. To customize the device identity and credentials, copy
+   `config/device_config.example.h` to `config/device_config.local.h` and edit
+   that local file. Git ignores it. Without it, the example configuration is used.
+3. Wire and configure the Heltec serial connection as shown below. Enable its
+   GPS and configure the GPS pins if the receiver is installed.
+4. Build the CYD firmware without changing its version:
 
-- ESP32-S3 touch display / CYD
-- Heltec LoRa device running Meshtastic
-- GPS module
-- LiPo battery
-- LiPo charger module
-- 5V boost converter
-- Optional MAX17048 LiPo fuel gauge
-- Optional MicroSD card
+   ```powershell
+   .\tools\build_ota_bin.ps1 -NoVersionBump
+   ```
 
-### Power
+   The binary is written under `dist/`. You can also use Arduino IDE with the
+   board settings documented in the build guide.
+5. Flash the CYD, connect to its Wi-Fi access point, and open
+   **http://192.168.4.1/**. In station mode, use its assigned local-network address.
 
-- LiPo -> LiPo charger
-- LiPo charger output -> 5V boost converter input
-- Boost converter 5V -> Heltec `5V`, CYD `5V`, GPS `VCC`
-- Boost converter GND -> common ground for Heltec, CYD, GPS, and MAX17048
+With the unchanged example configuration, the Wi-Fi network is
+`s3-lora-interface`, the Wi-Fi password is `setup1234`, and the web login is
+`admin` / `setup1234`. Complete the first-run setup and change the password.
+Custom configurations use their configured network name and credentials.
 
-### MAX17048
+The web interface includes messaging, nodes, offline maps, health, settings,
+SD downloads and firmware upload. The map library and stylesheet are bundled
+in firmware, so the web map needs no internet access.
 
-The MAX17048 monitors the raw LiPo cell before the charger/booster.
+## Wiring
 
-- MAX17048 cell positive -> raw LiPo positive
-- MAX17048 cell negative -> raw LiPo ground
-- MAX17048 `SDA` -> CYD `GPIO16`
-- MAX17048 `SCL` -> CYD `GPIO15`
-- MAX17048 `GND` -> common ground
-- MAX17048 `VCC` -> CYD `3V3`, unless your breakout requires something else
-- I2C address: `0x36`
+TX connects to RX: one board's transmit wire goes to the other's receive pin.
+All boards share a common ground.
 
-### CYD To Heltec Serial
+### Power and fuel gauge
 
-- CYD `GPIO14` RX -> Heltec `GPIO39` TX
-- CYD `GPIO21` TX -> Heltec `GPIO38` RX
-- CYD GND -> Heltec GND
+The documented power path is battery → charger output → 5V boost converter.
+The boosted rail supplies the Heltec `5V`, CYD `5V` and GY-NEO6MV2 breakout
+`VCC`. The CYD USB port does not charge this project's battery; charging uses
+the separate charger connection.
 
-Heltec Meshtastic serial module:
+The MAX17048 measures the **raw cell**, before the boost converter:
 
-- Enabled: yes
-- Mode: `PROTO` / `Protobuf`
-- Baud: `115200`
-- RX pin: `38`
-- TX pin: `39`
+| MAX17048 connection | Connect to |
+| --- | --- |
+| Cell positive | Raw battery positive |
+| Cell negative / GND | Common ground |
+| SDA | CYD GPIO16 |
+| SCL | CYD GPIO15 |
+| VCC | CYD 3V3, subject to the breakout's supply requirements |
+
+The gauge uses I²C address `0x36`. Its battery reading does not measure the
+boosted GPS supply rail. Without a gauge, the UI shows an unavailable reading.
+
+### CYD ↔ Heltec serial
+
+| CYD | Heltec |
+| --- | --- |
+| GPIO14 — RX | GPIO39 — TX |
+| GPIO21 — TX | GPIO38 — RX |
+| GND | GND |
+
+In the Meshtastic serial module, set **Enabled**, **PROTO / Protobuf** mode,
+**115200 baud**, **RX pin 38** and **TX pin 39**.
 
 ### GPS
 
-- GPS `TX` -> Heltec `GPIO5` RX
-- GPS `TX` -> CYD `GPIO3` RX
-- GPS `RX` -> Heltec `GPIO4` TX
-- GPS `VCC` -> boosted 5V
-- GPS `GND` -> common ground
+Split the GPS transmit output so both boards can read it:
 
-Heltec Meshtastic GPS pins:
+| GPS module | Connect to |
+| --- | --- |
+| TX | Heltec GPIO5 **and** CYD GPIO3 |
+| RX | Heltec GPIO4 |
+| VCC | Boosted 5V rail for the GY-NEO6MV2 breakout |
+| GND | Common ground |
 
-- GPS RX pin: `5`
-- GPS TX pin: `4`
+Enable GPS in Meshtastic Position settings and set **GPS RX pin 5** and
+**GPS TX pin 4**. The CYD listens on GPIO3 at **9600 baud** and does not drive
+the GPS RX line. The GPS and radio serial connections use different pins and
+baud rates.
 
-### SD Card
+### Built-in MicroSD slot
 
-The LCDWiki ESP32-S3 display uses its built-in MicroSD slot:
+| SD signal | CYD GPIO |
+| --- | --- |
+| CLK | 38 |
+| CMD | 40 |
+| D0 | 39 |
+| D1 | 41 |
+| D2 | 48 |
+| D3 | 47 |
 
-- SD CLK -> CYD `GPIO38`
-- SD CMD -> CYD `GPIO40`
-- SD D0 -> CYD `GPIO39`
-- SD D1 -> CYD `GPIO41`
-- SD D2 -> CYD `GPIO48`
-- SD D3 -> CYD `GPIO47`
+Use the CYD's built-in slot. These are CYD GPIO assignments, separate from
+the similarly numbered Heltec pins.
 
-### Offline Map Tiles
+## Offline maps
 
-Offline map tiles go on the SD card here:
+Place tiles on the SD card using this structure:
 
-`/s3-lora/tiles/{zoom}/{x}/{y}.rgb565`
-
-Supported zoom levels: `10` through `14`.
-
-Each tile is raw 256x256 RGB565 and should be `131072` bytes.
-
-Example helper-script command:
-
-```powershell
-python .\tools\prepare_map_tiles.py `
-  --bbox "-97.80,30.10,-97.60,30.35" `
-  --zooms "10-14" `
-  --output ".\sdcard\s3-lora\tiles" `
-  --url-template "https://your-tile-server.example/{z}/{x}/{y}.png"
+```text
+/s3-lora/tiles/{zoom}/{x}/{y}.rgb565
 ```
 
-Then copy `.\sdcard\s3-lora\tiles` to the SD card as `/s3-lora/tiles`.
+Each tile is **256×256 RGB565, little-endian, exactly 131072 bytes**. Supported
+zoom levels are **10–14**; lower numbers show a wider area. Preparing new maps
+requires a suitable tile source; viewing installed maps is fully offline.
 
-### Web UI
+On the touchscreen, use −/+ to change zoom, drag to explore, and use Follow
+or My location to resume tracking. Coverage reports installed tiles around the
+current center at each level. The requested zoom is retained when a coarser
+view is needed. Availability is checked from files, not inferred from a
+download plan.
 
-1. Flash `s3-lora-interface.ino` to the CYD.
-2. Connect to the CYD WiFi network.
-3. Use the password configured as `INTERFACE_AP_PASS`.
-4. Open `http://192.168.4.1/`.
+The browser uses the same SD tiles. It preserves your pan position during
+status updates and provides My location, Show nodes and Refresh maps controls.
+Its Touchscreen coverage card describes the touchscreen's last checked area;
+the browser map has its own visible-tile status.
 
-The WiFi network name comes from the selected device config, such as `jjs-node`
-or `babs-node`.
+See [touchscreen navigation](docs/MAP_NAVIGATION.md),
+[coverage and fallback](docs/MAP_COVERAGE.md), and
+[offline browser maps](docs/WEB_OFFLINE_MAPS.md).
 
-## Plain-Language Walkthrough
+### Upload tiles over USB
 
-This section explains the same wiring in more everyday terms.
+Install `pyserial`, connect through the **CYD USB port**, and close other serial
+monitors. Replace `COM12` and `H:` with the actual port and card-reader drive.
 
-### What This Device Does
+```powershell
+python -m pip install pyserial
+python tools/upload_tiles_usb.py --port COM12 --tiles H:\s3-lora\tiles
+```
 
-The Heltec is the radio. It sends and receives Meshtastic LoRa traffic.
+The tile folder must contain `z/x/y.rgb565`. Identical tiles are verified and
+skipped; add `--overwrite` to replace different existing tiles. Transfers use
+CRC checks and SD readback verification. Use `--dry-run` to validate local
+paths and sizes without connecting.
 
-The CYD is the screen and user interface. It shows messages, known nodes, GPS
-information, battery status, maps, and diagnostics.
+For large map packs, downloading directly to a card in a USB reader avoids the
+CYD transfer step. The USGS downloader supports resuming and a storage budget,
+with a St. Paul-centered coverage profile. See the
+[map transfer and replacement-card guide](docs/USB_MAP_TRANSFER.md) for tile
+preparation, direct downloads, source attribution and safe stopping/resuming.
 
-Home provides an at-a-glance dashboard with radio, battery, node/GPS and message
-cards. Tap a card for details or Menu for the launcher. See the
-[home dashboard](docs/HOME_DASHBOARD.md) for the layout and behavior.
+### Preserve files when changing cards
 
-The GPS provides location data.
+To copy supporting files while preparing a new map pack separately:
 
-The battery, charger, and booster provide portable power.
+```powershell
+python tools/copy_sd_usb.py --port COM12 --destination H:\ `
+  --manifest build/sd-copy-H.jsonl --progress build/sd-copy-H.json `
+  --exclude-path /s3-lora/tiles
+```
 
-The optional MAX17048 measures the LiPo battery so the screen can show a more
-useful battery percentage.
+This reads the installed card and preserves directory structure on the new
+card. Omit `--exclude-path` to copy existing tiles too. Supporting files can
+include chat history and saved locations. Shut down the CYD before swapping
+cards, and keep the original card until the replacement is working.
 
-### Power Wiring
+## GPS diagnostics
 
-The LiPo battery should not be connected straight to the Heltec or CYD. Instead,
-power flows through a charger board, then through a booster that makes a steady
-5V output.
+Open **System → GPS** to inspect receiver bytes, valid NMEA sentences,
+checksum errors and available satellite counts before a position fix. Unknown
+satellite counts are distinct from zero.
 
-Wire it in this order:
+Over the CYD USB connection, the `gps` command reports the same receiver health
+and the Heltec's reported GPS pin settings. To record an observation:
 
-1. Connect the LiPo battery to the LiPo charger board.
-2. Connect the output of the charger board to the input of the 5V boost
-   converter.
-3. Connect the boost converter's `5V` output to the Heltec `5V` pin.
-4. Connect the boost converter's `5V` output to the CYD `5V` pin.
-5. Connect the boost converter's `5V` output to the GPS `VCC` or `5V` pin.
-6. Connect all grounds together.
+```powershell
+python tools/gps_diagnostics_usb.py --port COM12 --duration 35 --interval 5 `
+  --output build/gps-observation.json
+```
 
-The ground connection is important. The Heltec, CYD, GPS, charger, booster, and
-MAX17048 all need to share the same ground.
+The packet-statistics **GPS / Positions** counter measures mesh position
+messages, including other nodes. It is not a receiver-fix counter.
 
-### Battery Gauge Wiring
+| Observation | Next checks |
+| --- | --- |
+| Receiver bytes stay at zero | GPS power, common ground and GPS TX → CYD GPIO3 |
+| Bytes arrive, but valid NMEA does not increase | Baud rate, output protocol and signal integrity |
+| Valid sentences arrive, but no fix | Outdoor sky visibility, antenna connection/orientation and GPS supply stability |
 
-The MAX17048 watches the LiPo battery directly. It should measure the raw
-battery, not the boosted 5V output.
+The latest recorded observation confirmed valid serial data and the expected
+Heltec pin settings, but did **not** acquire a position fix. See
+[GPS diagnostics and recorded findings](docs/GPS_DIAGNOSTICS.md) for details.
 
-Wire it like this:
+## Memory and development
 
-1. Connect the MAX17048 battery positive pad to the LiPo positive side.
-2. Connect the MAX17048 battery negative pad to LiPo ground.
-3. Connect MAX17048 `SDA` to CYD `GPIO16`.
-4. Connect MAX17048 `SCL` to CYD `GPIO15`.
-5. Connect MAX17048 `GND` to the shared ground.
-6. Connect MAX17048 `VCC` to CYD `3V3`, unless the board you bought says to use
-   a different logic voltage.
+Large UI buffers, logs and the map canvas use ESP32-S3 PSRAM. The optional
+eight-tile cache holds **1 MiB** in PSRAM; display transfer buffers and task
+stacks remain in internal RAM. See the
+[measured cache profile](docs/MAP_CACHE_PROFILE.md) for timings and limits.
 
-After flashing the firmware, the CYD Battery page should show the MAX17048
-status, battery voltage, and percentage.
+Build dependencies, verification commands, source layout and hardware checks
+are documented in [docs/BUILD.md](docs/BUILD.md). Local device configuration,
+generated build identity, binaries, logs and download progress remain outside
+Git under the configured ignore rules.
 
-### CYD To Heltec Wiring
-
-The CYD talks to the Heltec using serial. Serial uses two signal wires: one side
-transmits while the other side receives.
-
-That means TX connects to RX, and RX connects to TX.
-
-Wire it like this:
-
-1. Connect CYD `GPIO14` to Heltec `GPIO39`.
-2. Connect CYD `GPIO21` to Heltec `GPIO38`.
-3. Connect CYD ground to Heltec ground.
-
-Then open the Meshtastic app and set the Heltec serial module:
-
-1. Turn serial on.
-2. Set mode to `PROTO` or `Protobuf`.
-3. Set baud to `115200`.
-4. Set RX pin to `38`.
-5. Set TX pin to `39`.
-
-### GPS Wiring
-
-The GPS sends location text from its `TX` pin. Both the Heltec and the CYD read
-that GPS output.
-
-Wire it like this:
-
-1. Connect GPS `TX` to Heltec `GPIO5`.
-2. Connect GPS `TX` to CYD `GPIO3`.
-3. Connect GPS `RX` to Heltec `GPIO4`.
-4. Connect GPS `VCC` or `5V` to the boosted 5V output.
-5. Connect GPS `GND` to the shared ground.
-
-Then open the Meshtastic app and set the Heltec GPS pins:
-
-1. Set GPS RX pin to `5`.
-2. Set GPS TX pin to `4`.
-
-The CYD reads GPS data directly on `GPIO3` for its GPS screen and map.
-
-### SD Card And Maps
-
-The SD card is optional. The firmware can use it for logs, saved status files,
-position history, and offline map tiles.
-
-Offline maps are made of many small tile files. The firmware looks for them in
-this folder on the SD card:
-
-`/s3-lora/tiles`
-
-Use zoom levels `10` to `14`. Lower numbers show a wider area. Higher numbers
-show more detail.
-
-### Using The Web Page
-
-After flashing the CYD:
-
-1. Look for the WiFi network from the CYD.
-2. Connect using the password configured as `INTERFACE_AP_PASS`.
-3. Open `http://192.168.4.1/` in your browser.
-
-The web page shows radio stats, events, chat messages, known nodes, battery
-status, SD downloads, and the node map.
-
-The Map page uses the device's SD tiles and bundled viewer, so it works without
-internet access. Drag to explore, use My location to recenter, or Show nodes to
-frame positioned nodes. Maps support zooms 10–14, feet/miles scales and coarser
-fallback where detailed tiles are missing. Refresh maps retries unavailable
-areas. See [offline browser maps](docs/WEB_OFFLINE_MAPS.md) for details.
-
-## Memory Note
-
-This project uses ESP32-S3 PSRAM for large UI data, logs, and the map canvas.
-
-The checked-in `config/lv_conf.h`, selected by `build_opt.h`, configures LVGL to
-use PSRAM:
-
-- Set `LV_MEM_CUSTOM` to `1`
-- Use `heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)` for
-  `LV_MEM_CUSTOM_ALLOC`
+The bundled Leaflet viewer retains its license in
+[src/vendor/leaflet/LICENSE](src/vendor/leaflet/LICENSE).
