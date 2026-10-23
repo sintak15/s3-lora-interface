@@ -1,6 +1,6 @@
 // Internal implementation module; included once by the main sketch.
 static ToneStyle clampToneStyle(uint8_t style) {
-  return style < TONE_STYLE_COUNT ? (ToneStyle)style : TONE_STYLE_BWOMP;
+  return style < TONE_STYLE_COUNT ? (ToneStyle)style : TONE_STYLE_SOFT_BOOP;
 }
 
 static const char* toneStyleName(ToneStyle style) {
@@ -18,7 +18,7 @@ static ToneStyle toneStyleForKind(ToneKind kind) {
     case TONE_DIRECT: return toneDirectStyle;
     case TONE_TEST: return toneMessageStyle;
     case TONE_MESSAGE: return toneMessageStyle;
-    default: return TONE_STYLE_BWOMP;
+    default: return TONE_STYLE_SOFT_BOOP;
   }
 }
 
@@ -30,12 +30,6 @@ static const ToneSegment* tonePatternFor(ToneStyle style, size_t& count) {
 
 
 // Unity codec gain plus bounded PCM amplitude gives every volume setting headroom.
-// Keep legacy API values readable, but retire the experimental gain/profiles.
-static uint8_t clampToneBoost(uint8_t) { return 0; }
-static const char* toneBoostName(uint8_t) { return "0 dB"; }
-static uint8_t tonePcmDrivePercent() { return 75; }
-static uint8_t clampToneCodecProfile(uint8_t) { return TONE_CODEC_PROFILE_DRIVER; }
-static const char* toneCodecProfileName(uint8_t) { return "Speaker"; }
 static uint8_t toneCodecVolumeRegister() { return toneVolumePercent ? 0xBF : 0x00; }
 static float toneCodecGainDb() { return toneVolumePercent ? 0.0f : -95.5f; }
 
@@ -119,11 +113,6 @@ static bool beginToneI2s() {
   return toneI2s.begin(I2S_MODE_STD, TONE_SAMPLE_RATE, I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO);
 }
 
-static bool applyToneCodecOutputProfile() {
-  // Legacy clients may still send profile names; playback uses one fixed setup.
-  return toneCodecReady;
-}
-
 static void applyToneVolume() {
   toneVolumePercent = constrain((int)toneVolumePercent, 0, 100);
   toneWorker.volume.store(toneVolumePercent);
@@ -191,10 +180,10 @@ static bool enqueueTone(ToneKind kind, ToneStyle style, bool test, uint8_t volum
   return false;
 }
 
-static void queueTone(ToneKind kind, bool replace) {
-  enqueueTone(kind, toneStyleForKind(kind), replace || kind == TONE_TEST);
+static void queueTone(ToneKind kind) {
+  enqueueTone(kind, toneStyleForKind(kind), kind == TONE_TEST);
 }
-static bool queueToneStyle(ToneStyle style, bool) {
+static bool queueToneStyle(ToneStyle style) {
   return enqueueTone(TONE_TEST, clampToneStyle((uint8_t)style), true);
 }
 static int8_t toneStyleIndexFromText(String value) {
@@ -207,74 +196,25 @@ static int8_t toneStyleIndexFromText(String value) {
     int index = value.toInt();
     return (index >= 0 && index < TONE_STYLE_COUNT) ? (int8_t)index : -1;
   }
-  if (value == "low bell" || value == "bwomp") return TONE_STYLE_BWOMP;
-  if (value == "chime") return TONE_STYLE_CHIME;
-  if (value == "two step" || value == "double") return TONE_STYLE_DOUBLE;
-  if (value == "beacon" || value == "pulse") return TONE_STYLE_PULSE;
-  if (value == "pager" || value == "alert") return TONE_STYLE_ALERT;
-  if (value == "bell" || value == "loud") return TONE_STYLE_LOUD;
-  if (value == "sustain" || value == "carrier" || value == "test") return TONE_STYLE_SUSTAIN;
-  if (value == "test sine" || value == "sine" || value == "raw" || value == "square" || value == "tone") return TONE_STYLE_RAW;
+  if (value == "low bell" || value == "bwomp") return TONE_STYLE_SOFT_BOOP;
+  if (value == "chime") return TONE_STYLE_DOUBLE_BOOP;
+  if (value == "two step" || value == "double") return TONE_STYLE_TWO_NOTE;
+  if (value == "beacon" || value == "pulse") return TONE_STYLE_TRIPLE_BOOP;
+  if (value == "pager" || value == "alert") return TONE_STYLE_GENTLE_ALERT;
+  if (value == "bell" || value == "loud") return TONE_STYLE_RISING_BOOP;
+  if (value == "sustain" || value == "carrier" || value == "test") return TONE_STYLE_LONG_BOOP;
+  if (value == "test sine" || value == "sine" || value == "raw" || value == "square" || value == "tone") return TONE_STYLE_TEST_SINE;
   return -1;
-}
-
-static int8_t toneBoostIndexFromText(String value) {
-  value.trim();
-  value.toLowerCase();
-  if (!value.length()) return -1;
-  if (value == "max") return 5;
-  value.replace("db", "");
-  value.replace("+", "");
-  value.trim();
-  int db = value.toInt();
-  switch (db) {
-    case 0: return 0;
-    case 3: return 1;
-    case 6: return 2;
-    case 9: return 3;
-    case 12: return 4;
-    case 5: return 5;
-    default:
-      return -1;
-  }
-}
-
-static int8_t toneCodecProfileIndexFromText(String value) {
-  value.trim();
-  value.toLowerCase();
-  if (!value.length()) return -1;
-  if (isDigit(value[0])) {
-    int index = value.toInt();
-    return (index >= 0 && index < TONE_CODEC_PROFILE_COUNT) ? (int8_t)index : -1;
-  }
-  value.replace("-", "");
-  value.replace("_", "");
-  value.replace(" ", "");
-  if (value == "driver" || value == "default" || value == "official") return TONE_CODEC_PROFILE_DRIVER;
-  if (value == "refhp" || value == "hp" || value == "speaker" || value == "reference") return TONE_CODEC_PROFILE_REF_HP;
-  if (value == "refline" || value == "line" || value == "lineout") return TONE_CODEC_PROFILE_REF_LINE;
-  if (value == "legacy" || value == "old") return TONE_CODEC_PROFILE_LEGACY;
-  return -1;
-}
-
-static bool parseByteArg(String value, uint8_t& out) {
-  value.trim();
-  if (!value.length()) return false;
-  const char* start = value.c_str();
-  char* end = nullptr;
-  unsigned long parsed = strtoul(start, &end, 0);
-  if (end == start || *end != '\0' || parsed > 0xFF) return false;
-  out = (uint8_t)parsed;
-  return true;
 }
 
 static String buildToneStatusJson() {
   String json = "{";
   json += "\"toneVolume\":" + String(toneVolumePercent) + ",";
-  json += "\"toneBoost\":\"" + String(toneBoostName(toneBoostLevel)) + "\",";
-  json += "\"toneDrive\":" + String(tonePcmDrivePercent()) + ",";
-  json += "\"toneCodecProfile\":\"" + String(toneCodecProfileName(toneCodecProfile)) + "\",";
-  json += "\"toneCodecProfileIndex\":" + String(clampToneCodecProfile(toneCodecProfile)) + ",";
+  // Fixed values preserve the retired boost/profile status fields for clients.
+  json += "\"toneBoost\":\"0 dB\",";
+  json += "\"toneDrive\":" + String(TONE_PCM_DRIVE_PERCENT) + ",";
+  json += "\"toneCodecProfile\":\"Speaker\",";
+  json += "\"toneCodecProfileIndex\":0,";
   json += "\"toneMessage\":\"" + String(toneStyleName(toneMessageStyle)) + "\",";
   json += "\"toneDirect\":\"" + String(toneStyleName(toneDirectStyle)) + "\",";
   json += "\"toneCodecReg\":" + String(toneCodecVolumeRegister()) + ",";
@@ -398,10 +338,10 @@ static bool playToneRequest(const ToneRequest& request) {
     for (uint32_t position = 0; position < total;) {
       if (toneRequestCancelled(request.epoch)) return false;
       const uint32_t length = min<uint32_t>(TONE_FRAMES_PER_SERVICE, total - position);
-      const float amplitude = 24576.0f * min<uint8_t>(toneWorker.volume.load(), request.volumeLimit) / 100.0f;
+      const float amplitude = TONE_PCM_PEAK * min<uint8_t>(toneWorker.volume.load(), request.volumeLimit) / 100.0f;
       for (uint32_t i = 0; i < length; ++i) {
         uint32_t index = position + i;
-        float envelope = NotificationSound::envelope(index, total, TONE_SAMPLE_RATE, request.style == TONE_STYLE_RAW);
+        float envelope = NotificationSound::envelope(index, total, TONE_SAMPLE_RATE, request.style == TONE_STYLE_TEST_SINE);
         int16_t sample = segment.frequency ? (int16_t)(sinf(phase) * amplitude * envelope) : 0;
         frames[i * 2] = frames[i * 2 + 1] = sample;
         phase += phaseStep;
@@ -435,7 +375,7 @@ static void toneAudioTask(void*) {
     ToneRequest request;
     if (xQueueReceive(toneRequestQueue, &request, pdMS_TO_TICKS(20)) != pdTRUE) continue;
     if (!toneRequestCancelled(request.epoch)) {
-      toneWorker.active.store(true); toneWorker.kind.store(request.kind); toneWorker.style.store(request.style);
+      toneWorker.active.store(true);
       toneWorker.startedMs.store(millis()); toneWorker.ampWanted.store(true);
       uint32_t waitStarted = millis();
       while (!toneWorker.ampEnabled.load() && !toneRequestCancelled(request.epoch) && millis() - waitStarted < 500)
@@ -450,7 +390,7 @@ static void toneAudioTask(void*) {
         toneWorker.ampWanted.store(false); toneWorker.dropped.fetch_add(1);
       }
       finishedMs = millis();
-      toneWorker.active.store(false); toneWorker.kind.store(TONE_NONE);
+      toneWorker.active.store(false);
     } else {
       toneWorker.dropped.fetch_add(1);
     }
@@ -460,8 +400,6 @@ static void toneAudioTask(void*) {
 
 static void serviceToneAudio() {
   toneActive = toneWorker.active.load();
-  activeToneKind = (ToneKind)toneWorker.kind.load();
-  activeToneStyle = (ToneStyle)toneWorker.style.load();
   pendingToneKind = toneWorker.jobs.load() > (toneActive ? 1U : 0U) ? (ToneKind)toneWorker.nextKind.load() : TONE_NONE;
   lastToneMs = toneWorker.startedMs.load();
   toneWriteCalls = toneWorker.writeCalls.load(); toneBytesWritten = toneWorker.bytesWritten.load();

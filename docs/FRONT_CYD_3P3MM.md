@@ -1,7 +1,7 @@
 # Measured CYD front revision
 
-STL: `enclosure-v4-front-cyd-3p3mm.stl` in the project root.
-Source: `enclosure_v4_front_cyd33.scad`.
+STL: `hardware/enclosure/enclosure-v4-front-cyd-3p3mm.stl` in `hardware/enclosure/`.
+Source: `hardware/enclosure/enclosure_v4_front_cyd33.scad`.
 
 - CYD posts: **3.3 mm above the retained 2.4 mm inside floor**, so the PCB
   seats 5.7 mm from the exterior front. This lowers it by 2.9 mm.
@@ -28,8 +28,8 @@ ghosts retain the old conservative envelope and do not certify glass clearance.
 
 ## Matching base
 
-Use `enclosure-v4-base-cyd-3p3mm.stl`, generated from
-`enclosure_v4_base_cyd33.scad`. It retains the 104 × 124 mm rear shell,
+Use `hardware/enclosure/enclosure-v4-base-cyd-3p3mm.stl`, generated from
+`hardware/enclosure/enclosure_v4_base_cyd33.scad`. It retains the 104 × 124 mm rear shell,
 34 mm shell depth plus 1.8 mm alignment lip, and production seats for the
 single battery holder, intact power assembly, MAX breakout and speaker.
 Case depth remains 50 mm when assembled; case screws remain M3 × 40 mm.

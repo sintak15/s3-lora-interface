@@ -4,7 +4,7 @@ A touchscreen and local web interface for a Heltec Meshtastic radio, built on
 an ESP32-S3 CYD. Read messages, check radio and battery status, browse nodes,
 and use offline maps without depending on internet access.
 
-**Current firmware: v0.1.91.** The CYD runs this firmware; the Heltec runs
+**Current firmware: v0.1.94.** The CYD runs this firmware; the Heltec runs
 Meshtastic and handles the LoRa radio connection.
 
 ## Pin mapping — quick reference
@@ -41,7 +41,7 @@ These built-in CYD connections are already routed on the board:
 | Audio data | **8** ESP32 → codec playback input; **6** codec → ESP32 recording output |
 | Audio control | Amplifier enable **1**, active low; codec I²C address `0x18` |
 
-Firmware v0.1.93 uses GPIO8 for playback, matching the
+Playback uses GPIO8, matching the
 [board schematic](https://www.lcdwiki.com/res/ES3C28P/2.8inch_ESP32-S3_Display_Schematic.pdf).
 Connect the speaker to the CYD's dedicated speaker port; these GPIO assignments
 describe internal board wiring. See [notification audio](docs/AUDIO.md).
@@ -90,7 +90,7 @@ specific to this hardware. GPIO numbers are not physical header positions.
 
 ## Enclosure
 
-[V4 OpenSCAD enclosure](enclosure_v4.scad) uses measured component envelopes,
+[V4 OpenSCAD enclosure](hardware/enclosure/enclosure_v4.scad) uses measured component envelopes,
 the single-battery holder, intact power assembly and oval speaker. It provides
 visible CYD and Heltec screens, module mounts and separate charging/USB access.
 Printed antenna and speaker screw retainers provide mounting without foam.
@@ -100,11 +100,14 @@ case. The [V3 prototype](docs/ENCLOSURE.md) remains available separately.
 
 Latest fit revisions (earlier STL iterations are retained for reference):
 
-- [Current face: tapered GPS supports and 1.8 mm CYD pilots](enclosure-v4-front-gps-tapered-rims.stl).
-- [Current base plus two Heltec brackets on one 180 mm plate](enclosure-v4-latest-base-and-heltec-brackets.stl).
-- [Current base alone: MAX screw posts and open battery area](enclosure-v4-base-max-screw-posts.stl).
-- [Matching antenna brackets](enclosure-v4-antenna-rails-repair.stl).
-- [Speaker retaining frame](enclosure-v4-speaker-frame.stl).
+Enclosure sources, printable files and fit coupons are grouped under
+[`hardware/enclosure/`](hardware/enclosure/README.md).
+
+- [Current face: tapered GPS supports and 1.8 mm CYD pilots](hardware/enclosure/enclosure-v4-front-gps-tapered-rims.stl).
+- [Current base plus two Heltec brackets on one 180 mm plate](hardware/enclosure/enclosure-v4-latest-base-and-heltec-brackets.stl).
+- [Current base alone: MAX screw posts and open battery area](hardware/enclosure/enclosure-v4-base-max-screw-posts.stl).
+- [Matching antenna brackets](hardware/enclosure/enclosure-v4-antenna-rails-repair.stl).
+- [Speaker retaining frame](hardware/enclosure/enclosure-v4-speaker-frame.stl).
 
 Print at 100% scale in millimetres, keeping the supplied bed orientation.
 See the [latest face notes](docs/GPS_TAPERED_RIMS.md) and
@@ -321,6 +324,10 @@ Build dependencies, verification commands, source layout and hardware checks
 are documented in [docs/BUILD.md](docs/BUILD.md). Local device configuration,
 generated build identity, binaries, logs and download progress remain outside
 Git under the configured ignore rules.
+
+See the [documentation index](docs/README.md) for current guides and historical
+reviews, and [contribution conventions](CONTRIBUTING.md) for naming, file
+placement and verification before committing.
 
 The bundled Leaflet viewer retains its license in
 [src/vendor/leaflet/LICENSE](src/vendor/leaflet/LICENSE).

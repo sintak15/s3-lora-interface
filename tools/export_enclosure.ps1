@@ -8,7 +8,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$source = Join-Path $projectRoot "enclosure_v$Version.scad"
+$source = Join-Path $projectRoot "hardware/enclosure/enclosure_v$Version.scad"
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $projectRoot "build/enclosure-v$Version" }
 if (-not $OpenScad) {
     $command = Get-Command openscad.com -ErrorAction SilentlyContinue

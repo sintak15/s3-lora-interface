@@ -221,17 +221,6 @@ static void showPage(lv_obj_t* target, bool remember) {
   }
 }
 
-static void setMapNearbyMode(bool enabled) {
-  mapNearbyMode = enabled;
-  mapFocusSelectedNode = false;
-  mapNodeDetailViewActive = false;
-  mapCenterMode = MAP_CENTER_CURRENT_DEVICE;
-  mapView.resume();
-  mapRenderPending = true;
-  lastMapUiRefreshMs = 0;
-  refreshMapUi();
-}
-
 static int activeMapPlotHeight() {
   return MAP_PLOT_H_NORMAL;
 }
@@ -425,7 +414,6 @@ static void clearUiObjectPointers() {
   lblBacklight = nullptr;
   sliderToneVolume = nullptr;
   lblToneVolume = nullptr;
-  dropdownToneBoost = nullptr;
   dropdownToneMessage = nullptr;
   dropdownToneDirect = nullptr;
   swReadableText = nullptr;
@@ -568,28 +556,6 @@ static lv_obj_t* makeHomeAction(lv_obj_t* parent, const char* title, const char*
   return button;
 }
 
-static lv_obj_t* makeHomeStatus(lv_obj_t* parent, const char* title, int y) {
-  lv_obj_t* panel = makePanel(parent);
-  lv_obj_set_size(panel, 218, 44);
-  lv_obj_align(panel, LV_ALIGN_TOP_LEFT, 6, y);
-  lv_obj_set_style_pad_all(panel, 4, 0);
-  lv_obj_set_style_radius(panel, 8, 0);
-  lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_t* caption = lv_label_create(panel);
-  lv_label_set_text(caption, title);
-  lv_obj_set_style_text_font(caption, UI_FONT_SMALL, 0);
-  lv_obj_set_style_text_color(caption, lv_color_hex(COLOR_MUTED), 0);
-  lv_obj_align(caption, LV_ALIGN_TOP_LEFT, 2, -1);
-  lv_obj_t* value = lv_label_create(panel);
-  lv_obj_set_width(value, 204);
-  lv_label_set_long_mode(value, LV_LABEL_LONG_DOT);
-  lv_label_set_text(value, "Waiting");
-  lv_obj_set_style_text_font(value, UI_FONT_READABLE, 0);
-  lv_obj_set_style_text_color(value, lv_color_hex(COLOR_TEXT), 0);
-  lv_obj_align(value, LV_ALIGN_BOTTOM_LEFT, 2, 1);
-  return value;
-}
-
 static lv_obj_t* makeDashboardLabel(lv_obj_t* parent, int x, int y, int w, int h) {
   lv_obj_t* panel = makePanel(parent);
   lv_obj_set_size(panel, w, h);
@@ -602,32 +568,6 @@ static lv_obj_t* makeDashboardLabel(lv_obj_t* parent, int x, int y, int w, int h
   lv_obj_set_style_text_color(label, lv_color_hex(COLOR_TEXT), 0);
   lv_obj_align(label, LV_ALIGN_LEFT_MID, 0, 0);
   return label;
-}
-
-static lv_obj_t* makeDashboardAction(lv_obj_t* parent, const char* text, int col, int row, lv_event_cb_t cb) {
-  const int w = 108;
-  const int h = 34;
-  const int x = 6 + col * 114;
-  const int y = 158 + row * 38;
-  lv_obj_t* btn = lv_btn_create(parent);
-  lv_obj_set_size(btn, w, h);
-  lv_obj_align(btn, LV_ALIGN_TOP_LEFT, x, y);
-  styleDarkObject(btn, col == 0 && row == 0 ? COLOR_ACTION : COLOR_PANEL, col == 0 && row == 0 ? 0x001B12 : COLOR_TEXT);
-  styleDarkBorder(btn, 0x2F705F);
-  lv_obj_set_style_radius(btn, 6, 0);
-  lv_obj_set_style_shadow_width(btn, 0, 0);
-  lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* label = lv_label_create(btn);
-  lv_label_set_text(label, text);
-  lv_obj_set_width(label, w - 10);
-  lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
-  lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_style_text_font(label, UI_FONT_SMALL, 0);
-  lv_obj_set_style_text_color(label, lv_color_hex(col == 0 && row == 0 ? 0x001B12 : COLOR_TEXT), 0);
-  lv_obj_center(label);
-  lv_obj_move_foreground(btn);
-  return btn;
 }
 
 static lv_obj_t* makePageTitle(lv_obj_t* parent, const char* text) {
@@ -796,13 +736,6 @@ static const char* nodeStatusLabel(const NodeRecord& node, uint32_t nowMs) {
   if (nodeAgeSeconds(node, nowMs) > 900) return "STALE";
   if (node.snr < -10.0f) return "WEAK";
   return "ACTIVE";
-}
-
-static bool hasFavoriteNodes() {
-  for (size_t i = 0; i < nodeCount; i++) {
-    if (nodes[i].isFavorite) return true;
-  }
-  return false;
 }
 
 static uint32_t nodeRowBg(const NodeRecord& node, uint32_t nowMs) {
@@ -1955,10 +1888,10 @@ static void buildScreenUi() {
   lv_obj_set_style_radius(dropdownToneDirect, 6, 0);
   lv_obj_add_event_cb(dropdownToneDirect, toneDirectDropdownEvent, LV_EVENT_VALUE_CHANGED, nullptr);
   makeSmallButton(soundPanel, "Test Msg", 8, 248, 106, [](lv_event_t*) {
-    queueToneStyle(toneMessageStyle, true);
+    queueToneStyle(toneMessageStyle);
   });
   makeSmallButton(soundPanel, "Test DM", 126, 248, 106, [](lv_event_t*) {
-    queueToneStyle(toneDirectStyle, true);
+    queueToneStyle(toneDirectStyle);
   });
   updateToneVolumeLabel();
 

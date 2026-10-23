@@ -1,7 +1,7 @@
 # Latest face with tighter CYD pilots
 
-Full face: `enclosure-v4-front-cyd-m25.stl`.
-Small single-post test: `enclosure-v4-cyd-m25-test.stl`.
+Full face: `hardware/enclosure/enclosure-v4-front-cyd-m25.stl`.
+Small single-post test: `hardware/enclosure/enclosure-v4-cyd-m25-test.stl`.
 
 The CYD pilots are reduced from **2.5 to 2.0 mm diameter** for M2.5 screw
 engagement. Only the four CYD pilot diameters change. The posts remain

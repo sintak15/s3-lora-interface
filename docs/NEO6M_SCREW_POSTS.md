@@ -1,7 +1,7 @@
 # NEO-6M screw-post face
 
-STL: `enclosure-v4-front-neo6m-screw-posts.stl`.
-Source: `enclosure_v4_front_neo6m_screws.scad`.
+STL: `hardware/enclosure/enclosure-v4-front-neo6m-screw-posts.stl`.
+Source: `hardware/enclosure/enclosure_v4_front_neo6m_screws.scad`.
 
 The user confirmed that the board's four holes match the existing four
 support centres. Those centres and the Z=18 mm PCB seating height are retained.

@@ -1,10 +1,13 @@
 param(
   [string] $ArduinoCli = '',
-  [string] $Node = 'node'
+  [string] $Node = 'node',
+  [string] $Python = 'python'
 )
 
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+& $Python (Join-Path $repo 'tools/check_repo.py')
+if ($LASTEXITCODE -ne 0) { throw 'Repository consistency checks failed.' }
 if (-not $ArduinoCli) {
   $command = Get-Command arduino-cli -ErrorAction SilentlyContinue
   if ($command) { $ArduinoCli = $command.Source }

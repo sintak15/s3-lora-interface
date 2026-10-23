@@ -1,8 +1,8 @@
 # GPS fit and post-strength revision from the new photographs
 
-Full face: `enclosure-v4-front-gps-repair.stl`.
-Matching antenna rails: `enclosure-v4-antenna-rails-repair.stl`.
-Small first-print test: `enclosure-v4-gps-repair-coupon.stl`.
+Full face: `hardware/enclosure/enclosure-v4-front-gps-repair.stl`.
+Matching antenna rails: `hardware/enclosure/enclosure-v4-antenna-rails-repair.stl`.
+Small first-print test: `hardware/enclosure/enclosure-v4-gps-repair-coupon.stl`.
 
 - Heltec bracket screw-post tops are restored to **20.1 mm** from the exterior
   face. PCB support height and LCD position are unchanged.

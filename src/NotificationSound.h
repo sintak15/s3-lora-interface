@@ -4,15 +4,15 @@
 
 // Keep the stored style IDs and legacy API aliases stable across updates.
 enum ToneStyle : uint8_t {
-  TONE_STYLE_BWOMP = 0,
-  TONE_STYLE_CHIME = 1,
-  TONE_STYLE_DOUBLE = 2,
-  TONE_STYLE_PULSE = 3,
-  TONE_STYLE_ALERT = 4,
-  TONE_STYLE_LOUD = 5,
-  TONE_STYLE_SUSTAIN = 6,
-  TONE_STYLE_RAW = 7,
-  TONE_STYLE_POP = 8,
+  TONE_STYLE_SOFT_BOOP = 0,
+  TONE_STYLE_DOUBLE_BOOP = 1,
+  TONE_STYLE_TWO_NOTE = 2,
+  TONE_STYLE_TRIPLE_BOOP = 3,
+  TONE_STYLE_GENTLE_ALERT = 4,
+  TONE_STYLE_RISING_BOOP = 5,
+  TONE_STYLE_LONG_BOOP = 6,
+  TONE_STYLE_TEST_SINE = 7,
+  TONE_STYLE_BUBBLE_POP = 8,
   TONE_STYLE_DOUBLE_POP = 9,
   TONE_STYLE_COUNT = 10
 };
@@ -26,15 +26,15 @@ struct ToneSegment {
 namespace NotificationSound {
 // Boops use fixed pitches; pops make one very short upward sweep. Both have
 // rounded edges and preserve the amplifier settling silence before playback.
-static constexpr ToneSegment soft[] = {{0,120}, {660,140}, {0,100}};
+static constexpr ToneSegment softBoop[] = {{0,120}, {660,140}, {0,100}};
 static constexpr ToneSegment doubleBoop[] = {{0,120}, {660,95}, {0,75}, {660,95}, {0,100}};
 static constexpr ToneSegment twoNote[] = {{0,120}, {660,120}, {0,60}, {880,140}, {0,100}};
-static constexpr ToneSegment triple[] = {{0,120}, {740,80}, {0,65}, {740,80}, {0,65}, {740,80}, {0,100}};
-static constexpr ToneSegment gentle[] = {{0,120}, {880,90}, {0,70}, {660,150}, {0,100}};
-static constexpr ToneSegment rising[] = {{0,120}, {523,90}, {0,35}, {659,90}, {0,35}, {784,150}, {0,100}};
+static constexpr ToneSegment tripleBoop[] = {{0,120}, {740,80}, {0,65}, {740,80}, {0,65}, {740,80}, {0,100}};
+static constexpr ToneSegment gentleAlert[] = {{0,120}, {880,90}, {0,70}, {660,150}, {0,100}};
+static constexpr ToneSegment risingBoop[] = {{0,120}, {523,90}, {0,35}, {659,90}, {0,35}, {784,150}, {0,100}};
 static constexpr ToneSegment longBoop[] = {{0,120}, {587,320}, {0,100}};
-static constexpr ToneSegment diagnostic[] = {{0,120}, {1000,300}, {0,100}};
-static constexpr ToneSegment pop[] = {{0,120}, {600,32,1200}, {0,100}};
+static constexpr ToneSegment testSine[] = {{0,120}, {1000,300}, {0,100}};
+static constexpr ToneSegment bubblePop[] = {{0,120}, {600,32,1200}, {0,100}};
 static constexpr ToneSegment doublePop[] = {{0,120}, {600,32,1200}, {0,90}, {600,32,1200}, {0,100}};
 
 struct Preset {
@@ -43,15 +43,15 @@ struct Preset {
   size_t count;
 };
 static constexpr Preset presets[] = {
-  {"Soft Boop", soft, sizeof(soft)/sizeof(soft[0])},
+  {"Soft Boop", softBoop, sizeof(softBoop)/sizeof(softBoop[0])},
   {"Double Boop", doubleBoop, sizeof(doubleBoop)/sizeof(doubleBoop[0])},
   {"Two Note", twoNote, sizeof(twoNote)/sizeof(twoNote[0])},
-  {"Triple Boop", triple, sizeof(triple)/sizeof(triple[0])},
-  {"Gentle Alert", gentle, sizeof(gentle)/sizeof(gentle[0])},
-  {"Rising Boop", rising, sizeof(rising)/sizeof(rising[0])},
+  {"Triple Boop", tripleBoop, sizeof(tripleBoop)/sizeof(tripleBoop[0])},
+  {"Gentle Alert", gentleAlert, sizeof(gentleAlert)/sizeof(gentleAlert[0])},
+  {"Rising Boop", risingBoop, sizeof(risingBoop)/sizeof(risingBoop[0])},
   {"Long Boop", longBoop, sizeof(longBoop)/sizeof(longBoop[0])},
-  {"Test Sine", diagnostic, sizeof(diagnostic)/sizeof(diagnostic[0])},
-  {"Bubble Pop", pop, sizeof(pop)/sizeof(pop[0])},
+  {"Test Sine", testSine, sizeof(testSine)/sizeof(testSine[0])},
+  {"Bubble Pop", bubblePop, sizeof(bubblePop)/sizeof(bubblePop[0])},
   {"Double Pop", doublePop, sizeof(doublePop)/sizeof(doublePop[0])}
 };
 static_assert(sizeof(presets)/sizeof(presets[0]) == TONE_STYLE_COUNT, "Every saved style needs a preset");
@@ -65,7 +65,7 @@ constexpr float smoothStep(float value) {
 }
 
 // Smooth onset followed by a gentle decay, rather than a sustained beep with
-// abrupt ends. The explicit diagnostic sine retains its flat measurement body.
+// abrupt ends. The diagnostic sine retains its flat measurement body.
 constexpr float envelope(uint32_t index, uint32_t total, uint32_t sampleRate, bool testSine) {
   if (total < 3 || index >= total || sampleRate < 100) return 0;
   uint32_t ramp = testSine ? sampleRate / 50 : sampleRate / 80;

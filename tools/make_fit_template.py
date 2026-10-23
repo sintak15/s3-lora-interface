@@ -4,7 +4,8 @@ import re
 import html
 
 ROOT = Path(__file__).resolve().parents[1]
-source = (ROOT / 'enclosure_v4.scad').read_text()
+ENCLOSURE_ROOT = ROOT / "hardware" / "enclosure"
+source = (ENCLOSURE_ROOT / 'enclosure_v4.scad').read_text()
 
 def value(name):
     raw = re.search(r'^' + re.escape(name) + r'\s*=\s*([^;]+);', source, re.M)[1]

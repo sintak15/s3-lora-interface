@@ -1,7 +1,7 @@
 # Faster V4 base
 
-Use `enclosure-v4-base-fast.stl`, from `enclosure_v4_base_fast.scad`.
-It matches `enclosure-v4-front-cyd-3p3mm.stl` with the same 104 × 124 mm
+Use `hardware/enclosure/enclosure-v4-base-fast.stl`, from `hardware/enclosure/enclosure_v4_base_fast.scad`.
+It matches `hardware/enclosure/enclosure-v4-front-cyd-3p3mm.stl` with the same 104 × 124 mm
 footprint, 35.8 mm print height including lip and 50 mm assembled case depth.
 
 The broad floor is internally pocketed from 2.4 to 1.6 mm. Full original

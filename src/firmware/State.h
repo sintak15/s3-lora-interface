@@ -165,14 +165,6 @@ enum ToneKind : uint8_t {
   TONE_TEST
 };
 
-enum ToneCodecProfile : uint8_t {
-  TONE_CODEC_PROFILE_DRIVER,
-  TONE_CODEC_PROFILE_REF_HP,
-  TONE_CODEC_PROFILE_REF_LINE,
-  TONE_CODEC_PROFILE_LEGACY,
-  TONE_CODEC_PROFILE_COUNT
-};
-
 struct GpsStats {
   bool valid = false;
   bool hasSats = false;
@@ -548,19 +540,17 @@ static bool backlightPwmReady = false;
 static bool readableTextMode = false;
 static constexpr uint32_t TONE_SAMPLE_RATE = 16000;
 static constexpr uint16_t TONE_FRAMES_PER_SERVICE = 256;
+static constexpr uint8_t TONE_PCM_DRIVE_PERCENT = 75;
+static constexpr float TONE_PCM_PEAK = 32768.0f * TONE_PCM_DRIVE_PERCENT / 100.0f;
 static I2SClass toneI2s;
 static bool toneI2sReady = false;
 static bool toneCodecReady = false;
 static bool toneSpeakerEnabled = false;
 static bool toneActive = false;
 static constexpr uint32_t TONE_SPEAKER_HOLD_MS = 650;
-static ToneKind activeToneKind = TONE_NONE;
 static ToneKind pendingToneKind = TONE_NONE;
-static ToneStyle activeToneStyle = TONE_STYLE_BWOMP;
-static ToneStyle toneMessageStyle = TONE_STYLE_BWOMP;
-static ToneStyle toneDirectStyle = TONE_STYLE_DOUBLE;
-static uint8_t toneBoostLevel = 0;
-static uint8_t toneCodecProfile = TONE_CODEC_PROFILE_DRIVER;
+static ToneStyle toneMessageStyle = TONE_STYLE_SOFT_BOOP;
+static ToneStyle toneDirectStyle = TONE_STYLE_TWO_NOTE;
 static uint8_t toneVolumePercent = 50;
 static uint32_t lastToneMs = 0;
 static uint32_t toneCodecInitFailures = 0;
@@ -581,7 +571,7 @@ struct ToneRequest {
 // on the main loop; recovery waits for the task's explicit pause acknowledgement.
 struct ToneWorkerState {
   std::atomic<bool> pauseRequested{false}, paused{false}, active{false}, ampWanted{false}, ampEnabled{false};
-  std::atomic<uint8_t> volume{50}, kind{TONE_NONE}, style{TONE_STYLE_BWOMP}, nextKind{TONE_NONE};
+  std::atomic<uint8_t> volume{50}, nextKind{TONE_NONE};
   std::atomic<uint32_t> epoch{0}, jobs{0}, dropped{0}, startedMs{0};
   std::atomic<uint32_t> writeCalls{0}, bytesWritten{0}, shortWrites{0}, failures{0};
   std::atomic<uint32_t> lastRequested{0}, lastWritten{0};
@@ -706,7 +696,6 @@ static lv_obj_t* sliderBacklight = nullptr;
 static lv_obj_t* lblBacklight = nullptr;
 static lv_obj_t* sliderToneVolume = nullptr;
 static lv_obj_t* lblToneVolume = nullptr;
-static lv_obj_t* dropdownToneBoost = nullptr;
 static lv_obj_t* dropdownToneMessage = nullptr;
 static lv_obj_t* dropdownToneDirect = nullptr;
 static lv_obj_t* swReadableText = nullptr;

@@ -6,7 +6,7 @@ import argparse
 from layout_enclosure_plate import read_triangles, bounds, validate
 
 ROOT = Path(__file__).resolve().parents[1]
-PARTS = ROOT / 'fit-coupons'
+PARTS = ROOT / 'hardware' / 'enclosure' / 'fit-coupons'
 OUT = PARTS / 'labeled'
 LABELS = {'cyd_mounts':'CYD HOLES', 'cyd_usb':'CYD USB', 'heltec':'HELTEC',
           'heltec_clamp':'CLAMP', 'power':'POWER', 'battery':'BATTERY', 'max':'MAX'}

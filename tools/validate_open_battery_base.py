@@ -6,6 +6,7 @@ from pathlib import Path
 from layout_enclosure_plate import read_triangles, bounds, validate
 
 ROOT = Path(__file__).resolve().parents[1]
+ENCLOSURE_ROOT = ROOT / "hardware" / "enclosure"
 
 def clip(poly, axis, edge, greater):
     result = []
@@ -21,7 +22,7 @@ def clip(poly, axis, edge, greater):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('path', nargs='?', type=Path, default=ROOT/'enclosure-v4-base-open-battery.stl')
+    parser.add_argument('path', nargs='?', type=Path, default=ENCLOSURE_ROOT / 'enclosure-v4-base-open-battery.stl')
     path = parser.parse_args().path
     triangles = read_triangles(path)
     bodies = validate(triangles,1)

@@ -60,7 +60,7 @@ No production dimensions or STLs were changed during this photo review.
 
 ## Earlier-face comparison requested by user
 
-The earliest enclosure source available here is `enclosure_v2.scad`.
+The earliest enclosure source available here is `hardware/enclosure/enclosure_v2.scad`.
 V2 used a 1.0 mm front floor and 3.0 mm CYD bosses starting on that floor:
 the CYD support plane was **4.0 mm from the exterior face**, compared with
 **8.6 mm in V3/V4**. This is a 4.6 mm increase toward the rear. Of that,

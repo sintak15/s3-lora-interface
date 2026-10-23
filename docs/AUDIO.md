@@ -130,7 +130,7 @@ The boop/pop production build compiled successfully and was flashed over COM12
 with esptool hash verification. USB readback confirmed v0.1.94, ready codec/I2S
 and playback worker, preserved 40% volume, message slot 4 (Gentle Alert), and
 direct slot 5 (Rising Boop). No sound was played automatically during this
-installation; the new presets have not yet received a listening confirmation.
+installation. The user subsequently reported that the update was working well.
 Browser regression checks passed, including saved-selection preview and busy/
 network handling. Compile-time sound checks passed for stable saved IDs, short
 durations, bounded pitches and smooth envelope endpoints/transitions.

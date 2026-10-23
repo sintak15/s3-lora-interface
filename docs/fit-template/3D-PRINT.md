@@ -1,7 +1,8 @@
 # V4 3D printed fit trays
 
-Print `enclosure-v4-fit-front.stl` and `enclosure-v4-fit-rear.stl` from the
-project root separately, flat as supplied, at 100% scale in millimetres.
+Print `hardware/enclosure/enclosure-v4-fit-front.stl` and
+`hardware/enclosure/enclosure-v4-fit-rear.stl` separately, flat as supplied,
+at 100% scale in millimetres.
 Each footprint is 104 × 124 mm and fits a 180 × 180 mm bed.
 Use the same material and slicer tolerances intended for the final case.
 Start with 0.2 mm layers and 3 perimeters. Inspect the raised mounts,
@@ -26,4 +27,4 @@ connector openings and the alignment lip; they do not verify closed-case
 clearance, cable routing, SMA/switch placement or the power USB opening.
 
 Regenerate using OpenSCAD with `part="fit_front"` or `part="fit_back"` in
-`enclosure_v4.scad`.
+`hardware/enclosure/enclosure_v4.scad`.

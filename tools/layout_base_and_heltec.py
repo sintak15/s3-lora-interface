@@ -5,6 +5,7 @@ from pathlib import Path
 from layout_enclosure_plate import read_triangles,bounds,validate
 
 ROOT=Path(__file__).resolve().parents[1]
+ENCLOSURE_ROOT = ROOT / "hardware" / "enclosure"
 
 def main():
     combined=[]
@@ -12,7 +13,7 @@ def main():
     volume_before=0
     for name,x,y,count in [('enclosure-v4-base-max-screw-posts',8,8,1),
                             ('enclosure-v4-heltec-clamps',120,8,2)]:
-        original=read_triangles(ROOT/(name+'.stl'))
+        original=read_triangles(ENCLOSURE_ROOT/(name+'.stl'))
         volume_before+=sum(b['volume_mm3'] for b in validate(original,count))
         lo,_=bounds(original)
         moved=[tuple((v[0]-lo[0]+x,v[1]-lo[1]+y,v[2]-lo[2]) for v in t) for t in original]
@@ -25,7 +26,7 @@ def main():
         combined.extend(moved)
     bodies=validate(combined,3)
     assert math.isclose(sum(b['volume_mm3'] for b in bodies),volume_before,abs_tol=.01)
-    path=ROOT/'enclosure-v4-latest-base-and-heltec-brackets.stl'
+    path=ENCLOSURE_ROOT / 'enclosure-v4-latest-base-and-heltec-brackets.stl'
     with path.open('w',encoding='ascii',newline='\n') as out:
         out.write('solid latest_base_and_two_heltec_brackets\n')
         for t in combined:

@@ -1,9 +1,9 @@
 # Reinforced zip-tie anchors
 
-Latest base: `enclosure-v4-base-heavy-ties.stl`.
-Matching face: `enclosure-v4-front-heavy-ties.stl`.
-Sources: `enclosure_v4_base_heavy_ties.scad` and
-`enclosure_v4_front_heavy_ties.scad`.
+Latest base: `hardware/enclosure/enclosure-v4-base-heavy-ties.stl`.
+Matching face: `hardware/enclosure/enclosure-v4-front-heavy-ties.stl`.
+Sources: `hardware/enclosure/enclosure_v4_base_heavy_ties.scad` and
+`hardware/enclosure/enclosure_v4_front_heavy_ties.scad`.
 
 Every printed strap anchor is reinforced: the four power-board anchors,
 two MAX anchors in the base, and four GPS receiver anchors in the face.
@@ -39,7 +39,7 @@ The GPS antenna stays 25 × 25 × 7.5 mm. The surrounding posts and ledges
 move outward 0.5 mm per side; the carrier bearing overlap is reduced from
 1.2 to 0.7 mm per side. The two antenna rails sit farther apart, but each
 separate rail's own screw pattern is unchanged. The optional fresh export is
-`enclosure-v4-gps-rails-clearance.stl`; existing separate rails can be reused.
+`hardware/enclosure/enclosure-v4-gps-rails-clearance.stl`; existing separate rails can be reused.
 The ceramic-to-front air gap and support height are unchanged. Check that
 the actual backing PCB can safely bear on the 0.7 mm ledges before tightening;
 retention must not load the ceramic. No physical fit test has been performed.

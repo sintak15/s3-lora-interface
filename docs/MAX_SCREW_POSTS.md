@@ -1,7 +1,7 @@
 # MAX module screw-post base
 
-STL: `enclosure-v4-base-max-screw-posts.stl`.
-Source: `enclosure_v4_base_max_screws.scad`.
+STL: `hardware/enclosure/enclosure-v4-base-max-screw-posts.stl`.
+Source: `hardware/enclosure/enclosure_v4_base_max_screws.scad`.
 
 The user confirmed that the module holes match the four existing support
 centres. Those centres are retained. The PCB seat stays **4.4 mm from the

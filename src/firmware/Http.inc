@@ -219,10 +219,10 @@ static void appendInterfaceStatusJson(String& json, const String& wifiIp, const 
   json += "\"wifiStations\":" + String((wifiEnabled && wifiApMode) ? WiFi.softAPgetStationNum() : 0) + ",";
   json += "\"wifiToggles\":" + String(wifiToggleCount) + ",";
   json += "\"toneVolume\":" + String(toneVolumePercent) + ",";
-  json += "\"toneBoost\":\"" + String(toneBoostName(toneBoostLevel)) + "\",";
-  json += "\"toneDrive\":" + String(tonePcmDrivePercent()) + ",";
-  json += "\"toneCodecProfile\":\"" + String(toneCodecProfileName(toneCodecProfile)) + "\",";
-  json += "\"toneCodecProfileIndex\":" + String(clampToneCodecProfile(toneCodecProfile)) + ",";
+  json += "\"toneBoost\":\"0 dB\",";
+  json += "\"toneDrive\":" + String(TONE_PCM_DRIVE_PERCENT) + ",";
+  json += "\"toneCodecProfile\":\"Speaker\",";
+  json += "\"toneCodecProfileIndex\":0,";
   json += "\"toneMessage\":\"" + String(toneStyleName(toneMessageStyle)) + "\",";
   json += "\"toneDirect\":\"" + String(toneStyleName(toneDirectStyle)) + "\",";
   json += "\"toneCodecReg\":" + String(toneCodecVolumeRegister()) + ",";
@@ -874,21 +874,8 @@ static void handleToneTest() {
     toneVolumePercent = formU8("volume");
     prefs.putUChar("toneVol", toneVolumePercent);
   }
-  if (server.hasArg("boost")) {
-    int8_t boost = toneBoostIndexFromText(server.arg("boost"));
-    if (boost >= 0) {
-      toneBoostLevel = clampToneBoost((uint8_t)boost);
-      prefs.putUChar("toneBoost", toneBoostLevel);
-    }
-  }
-  if (server.hasArg("profile")) {
-    int8_t profile = toneCodecProfileIndexFromText(server.arg("profile"));
-    if (profile >= 0) {
-      toneCodecProfile = clampToneCodecProfile((uint8_t)profile);
-      prefs.putUChar("toneProfile", toneCodecProfile);
-      applyToneCodecOutputProfile();
-    }
-  }
+  // Accept legacy boost/profile arguments without restoring retired gain modes
+  // or writing unchanged compatibility values to NVS on each preview request.
   if (server.hasArg("message")) {
     int8_t style = toneStyleIndexFromText(server.arg("message"));
     if (style >= 0) {
@@ -913,7 +900,7 @@ static void handleToneTest() {
     int8_t requestedStyle = toneStyleIndexFromText(server.arg("style"));
     if (requestedStyle >= 0) styleToPlay = clampToneStyle((uint8_t)requestedStyle);
   }
-  bool accepted = queueToneStyle(styleToPlay, true);
+  bool accepted = queueToneStyle(styleToPlay);
   server.send(accepted ? 202 : 409, "application/json", buildToneStatusJson());
 }
 

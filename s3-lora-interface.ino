@@ -94,17 +94,14 @@ void setup() {
   readableTextMode = prefs.getBool("readableText", false);
   nodeListViewMode = prefs.getBool("nodeCompact", true) ? NODE_LIST_VIEW_COMPACT : NODE_LIST_VIEW_DETAILED;
   toneVolumePercent = constrain((int)prefs.getUChar("toneVol", 50), 0, 100);
-  toneBoostLevel = 0;
-  toneCodecProfile = clampToneCodecProfile(prefs.getUChar("toneProfile", TONE_CODEC_PROFILE_DRIVER));
-  toneMessageStyle = clampToneStyle(prefs.getUChar("toneMsg", (uint8_t)TONE_STYLE_LOUD));
-  toneDirectStyle = clampToneStyle(prefs.getUChar("toneDir", (uint8_t)TONE_STYLE_LOUD));
+  toneMessageStyle = clampToneStyle(prefs.getUChar("toneMsg", (uint8_t)TONE_STYLE_RISING_BOOP));
+  toneDirectStyle = clampToneStyle(prefs.getUChar("toneDir", (uint8_t)TONE_STYLE_RISING_BOOP));
   if (!prefs.getBool("toneCleanV93", false)) {
     // Retire the old forced Max gain without overwriting quieter preferences.
     toneVolumePercent = min<uint8_t>(toneVolumePercent, 50);
-    toneCodecProfile = TONE_CODEC_PROFILE_DRIVER;
     prefs.putUChar("toneVol", toneVolumePercent);
-    prefs.putUChar("toneBoost", toneBoostLevel);
-    prefs.putUChar("toneProfile", toneCodecProfile);
+    prefs.putUChar("toneBoost", 0);
+    prefs.putUChar("toneProfile", 0);
     prefs.putBool("toneCleanV93", true);
   }
 #if ONE_TIME_CHANNEL_PROVISION

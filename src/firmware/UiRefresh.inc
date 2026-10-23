@@ -3,13 +3,6 @@ static const char* linkHealthText() {
   return FieldStatus::linkState(radioResponseSeen, lastRadioResponseMs, millis());
 }
 
-static const char* shortLinkHealthText() {
-  if (!radioResponseSeen) return "Heltec waiting";
-  uint32_t age = millis() - lastRadioResponseMs;
-  if (age >= 90000) return "Heltec stale";
-  return age >= 45000 ? "Heltec quiet" : "Heltec OK";
-}
-
 static uint32_t loraStatusColor() {
   if (!radioResponseSeen || millis() - lastRadioResponseMs >= 90000) return 0xFF5A5F;
   return millis() - lastRadioResponseMs >= 45000 ? 0xFFD166 : COLOR_ACTION;
@@ -1080,7 +1073,7 @@ static void serviceUsbSerialCommands() {
         requestToneRecovery(true);
         Serial.println("[audio] recovery requested");
       } else if (strcmp(command, "audio-test") == 0) {
-        bool accepted = enqueueTone(TONE_TEST, TONE_STYLE_RAW, true, 25);
+        bool accepted = enqueueTone(TONE_TEST, TONE_STYLE_TEST_SINE, true, 25);
         Serial.println(accepted ? "[audio] short sine queued (25% maximum)" : "[audio] test unavailable: busy, muted or recovering");
       } else if (strcmp(command, "tiles") == 0 || strcmp(command, "maps") == 0) {
         printSdTileSummary();

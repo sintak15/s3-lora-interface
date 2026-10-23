@@ -1,2 +1,27 @@
+* text=auto
+.gitattributes text eol=lf
+.gitignore text eol=lf
+.editorconfig text eol=lf
+*.ino text eol=lf
+*.h text eol=lf
+*.c text eol=lf
+*.cpp text eol=lf
+*.inc text eol=lf
+*.py text eol=lf
+*.ps1 text eol=lf
+*.js text eol=lf
+*.css text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.html text eol=lf
+*.scad text eol=lf
+*.svg text eol=lf
+*.stl binary
+*.png binary
+*.ttf binary
+
 # Preserve the exact vendored runtime bytes used by the dependency hash check.
 src/nanopb/* -text -whitespace
+src/meshtastic/** -text -whitespace
+src/vendor/** -text -whitespace
+src/fonts/** -text -whitespace

@@ -5,9 +5,10 @@
 namespace NotificationSoundTests {
 using namespace NotificationSound;
 
-static_assert(TONE_STYLE_BWOMP == 0 && TONE_STYLE_CHIME == 1 && TONE_STYLE_DOUBLE == 2 &&
-              TONE_STYLE_PULSE == 3 && TONE_STYLE_ALERT == 4 && TONE_STYLE_LOUD == 5 &&
-              TONE_STYLE_SUSTAIN == 6 && TONE_STYLE_RAW == 7, "Preserve saved style IDs");
+static_assert(TONE_STYLE_SOFT_BOOP == 0 && TONE_STYLE_DOUBLE_BOOP == 1 && TONE_STYLE_TWO_NOTE == 2 &&
+              TONE_STYLE_TRIPLE_BOOP == 3 && TONE_STYLE_GENTLE_ALERT == 4 && TONE_STYLE_RISING_BOOP == 5 &&
+              TONE_STYLE_LONG_BOOP == 6 && TONE_STYLE_TEST_SINE == 7 &&
+              TONE_STYLE_BUBBLE_POP == 8 && TONE_STYLE_DOUBLE_POP == 9, "Preserve saved style IDs");
 
 constexpr bool boundedNotifications() {
   for (uint8_t style = 0; style < TONE_STYLE_COUNT; ++style) {

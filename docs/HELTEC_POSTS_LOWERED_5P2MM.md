@@ -1,7 +1,7 @@
 # Heltec bracket screw posts lowered by 5.2 mm
 
-STL: `enclosure-v4-front-posts-lowered-5p2mm.stl`.
-Source: `enclosure_v4_front_posts_lower52.scad`.
+STL: `hardware/enclosure/enclosure-v4-front-posts-lowered-5p2mm.stl`.
+Source: `hardware/enclosure/enclosure_v4_front_posts_lower52.scad`.
 
 The four reinforced Heltec bracket screw posts now end at **Z=14.9 mm**
 instead of 20.1 mm, measured from the exterior front face. Their diameter,

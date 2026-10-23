@@ -1,8 +1,8 @@
 # Antenna shifted toward the right wall for pins-down NEO-6M mounting
 
-Full face: `enclosure-v4-front-gps-pins-down.stl`.
-Small first-print test section: `enclosure-v4-gps-pins-down-coupon.stl`.
-Source: `enclosure_v4_front_gps_pins_down.scad`.
+Full face: `hardware/enclosure/enclosure-v4-front-gps-pins-down.stl`.
+Small first-print test section: `hardware/enclosure/enclosure-v4-gps-pins-down-coupon.stl`.
+Source: `hardware/enclosure/enclosure_v4_front_gps_pins_down.scad`.
 
 Right is **+X looking into the face while its exterior rests on the build
 plate**, as the user specified. The antenna, its bearing ledges and its four
@@ -17,7 +17,7 @@ leave thin slivers. Spines stop short of the mating lip and are relieved around
 the upper-right case pillar. The upper relief taper changes slightly to join
 the bearing faces without cutting into the screw openings.
 
-The existing **GPS repair antenna rails** (`enclosure-v4-antenna-rails-repair.stl`)
+The existing **GPS repair antenna rails** (`hardware/enclosure/enclosure-v4-antenna-rails-repair.stl`)
 can be reused: ledges and posts shift by the same amount, so the individual
 rails' local geometry and screw pattern do not change. Use the repair rails,
 not the older, shorter rails from before the antenna-post widening.

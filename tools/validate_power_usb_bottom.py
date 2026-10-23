@@ -6,10 +6,11 @@ from layout_enclosure_plate import read_triangles
 from validate_open_battery_base import clip
 
 ROOT = Path(__file__).resolve().parents[1]
+ENCLOSURE_ROOT = ROOT / "hardware" / "enclosure"
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('path',nargs='?',type=Path,default=ROOT/'enclosure-v4-base-power-usb-bottom.stl')
+    parser.add_argument('path',nargs='?',type=Path,default=ENCLOSURE_ROOT / 'enclosure-v4-base-power-usb-bottom.stl')
     path=parser.parse_args().path
     triangles=read_triangles(path)
     def outer_wall_area(y0,y1):

@@ -1,8 +1,8 @@
 # Support-saving GPS rims and tighter CYD pilots
 
-Full face: `enclosure-v4-front-gps-tapered-rims.stl`.
-GPS test section: `enclosure-v4-gps-tapered-rims-coupon.stl`.
-CYD screw-fit test: `enclosure-v4-cyd-tight-test.stl`.
+Full face: `hardware/enclosure/enclosure-v4-front-gps-tapered-rims.stl`.
+GPS test section: `hardware/enclosure/enclosure-v4-gps-tapered-rims-coupon.stl`.
+CYD screw-fit test: `hardware/enclosure/enclosure-v4-cyd-tight-test.stl`.
 
 The blue-marked undersides now transition at **45 degrees**, instead of having
 flat undersides that require supports. The transition begins at Z=11.6, giving

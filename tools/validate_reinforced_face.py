@@ -5,9 +5,10 @@ from pathlib import Path
 from layout_enclosure_plate import read_triangles,bounds,validate
 
 ROOT=Path(__file__).resolve().parents[1]
+ENCLOSURE_ROOT = ROOT / "hardware" / "enclosure"
 
 def main():
-    path=ROOT/'enclosure-v4-front-heavy-ties.stl'
+    path=ENCLOSURE_ROOT / 'enclosure-v4-front-heavy-ties.stl'
     triangles=read_triangles(path)
     bodies=validate(triangles,1)
     vertices=set(v for t in triangles for v in t)
@@ -28,7 +29,7 @@ def main():
         for y in (5,119):
             assert circle(x,y,1.7,0)>40
             assert circle(x,y,1.7,16)>40
-    rails=validate(read_triangles(ROOT/'enclosure-v4-gps-rails-clearance.stl'),2)
+    rails=validate(read_triangles(ENCLOSURE_ROOT / 'enclosure-v4-gps-rails-clearance.stl'),2)
     lo,hi=bounds(triangles)
     report=dict(size_mm=[hi[i]-lo[i] for i in range(3)],bodies=bodies,
                 cyd_post_height_above_floor_mm=3.3,heltec_post_diameter_mm=7.2,

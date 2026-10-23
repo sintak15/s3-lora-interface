@@ -1,7 +1,7 @@
 # Base with an open battery-holder area
 
-Use `enclosure-v4-base-open-battery.stl`, from
-`enclosure_v4_base_open_battery.scad`. It matches the existing measured-CYD
+Use `hardware/enclosure/enclosure-v4-base-open-battery.stl`, from
+`hardware/enclosure/enclosure_v4_base_open_battery.scad`. It matches the existing measured-CYD
 front and retains face-entry M3 × 25 mm case screws and blind base pilots.
 
 There is a **48 × 80 mm flat, unobstructed floor area** for taping in a single

@@ -5,3 +5,9 @@ dist/
 __pycache__/
 *.pyc
 PXL_*.jpg
+/debug.log
+/.venv/
+.pytest_cache/
+.DS_Store
+Thumbs.db
+config/device_config.local.h.*

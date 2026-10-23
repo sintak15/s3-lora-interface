@@ -66,5 +66,5 @@ The rear coupons deliberately do **not** check full component length, straps,
 connector locations or closed-case clearance. The Heltec station checks one
 cross-section, not the whole board. No coupon checks the combined case layout.
 
-Open `enclosure_v4_coupons.scad` and choose `coupon`, or supply
+Open `hardware/enclosure/enclosure_v4_coupons.scad` and choose `coupon`, or supply
 `coupon="NAME"` as an OpenSCAD `-D` definition.

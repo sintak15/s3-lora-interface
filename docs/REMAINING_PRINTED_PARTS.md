@@ -1,6 +1,6 @@
 # Remaining printed retainers
 
-Load `enclosure-v4-remaining-parts.stl` to print all five pieces together.
+Load `hardware/enclosure/enclosure-v4-remaining-parts.stl` to print all five pieces together.
 These match the 3.3 mm-post CYD front and the face-screw/open-battery base.
 No printed battery inserts are needed for the taped holder area.
 
@@ -22,12 +22,12 @@ right. All are flat in their intended print orientation. Use millimetres,
 100% scale, 0.2 mm layers, 3 walls and supports OFF. Do not rotate onto edges.
 Print-time and physical retention are not verified by the mesh checks.
 
-Individual exports are also in the project root:
-`enclosure-v4-heltec-clamps.stl`, `enclosure-v4-gps-rails.stl`,
-`enclosure-v4-speaker-frame.stl`.
+Individual exports are also in `hardware/enclosure/`:
+`hardware/enclosure/enclosure-v4-heltec-clamps.stl`, `hardware/enclosure/enclosure-v4-gps-rails.stl`,
+`hardware/enclosure/enclosure-v4-speaker-frame.stl`.
 
 The lightweight front's GPS receiver itself uses two narrow zip ties rather
 than keeper tabs. The power assembly uses two ties and the MAX breakout one.
 These straps and the battery-holder tape are not printed components.
 
-Regenerate from `enclosure_v4_remaining_parts.scad`, selecting `retainer_part`.
+Regenerate from `hardware/enclosure/enclosure_v4_remaining_parts.scad`, selecting `retainer_part`.

@@ -1,9 +1,9 @@
 # V3 OpenSCAD enclosure
 
-[Open the parametric model](../enclosure_v3.scad). V3 is a **mechanical prototype**;
+[Open the parametric model](../hardware/enclosure/enclosure_v3.scad). V3 is a **mechanical prototype**;
 manufacturer drawings establish the two main boards, but the installed small
 modules, wiring and battery have not been measured. Print the fit coupon before
-committing to the full case. [V2](../enclosure_v2.scad) remains unchanged.
+committing to the full case. [V2](../hardware/enclosure/enclosure_v2.scad) remains unchanged.
 
 ![V3 exploded assembly](images/enclosure-v3-exploded.png)
 
@@ -87,7 +87,7 @@ The placement is a mechanical starting point, not a demonstrated GPS or RF fix.
 
 ## OpenSCAD controls and exports
 
-Open `enclosure_v3.scad` in OpenSCAD 2021.01 or later. Select `part`:
+Open `hardware/enclosure/enclosure_v3.scad` in OpenSCAD 2021.01 or later. Select `part`:
 
 | Value | Output |
 | --- | --- |

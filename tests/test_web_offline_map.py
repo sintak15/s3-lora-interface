@@ -2,7 +2,6 @@
 import json
 from pathlib import Path
 import struct
-from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
 HTML = (ROOT / 'src/WebUi.h').read_text(encoding='utf-8').split('R"HTML(')[1].split(')HTML"')[0]
@@ -13,6 +12,8 @@ STATUS = dict(title='Offline map test', myNode='!00000001', myNodeName='Field no
               offlineMapCenter=dict(lat=44.9537, lon=-93.09))
 
 def main():
+    from playwright.sync_api import sync_playwright
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         for width in (390, 1280):

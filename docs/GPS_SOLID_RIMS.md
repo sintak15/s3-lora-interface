@@ -1,7 +1,7 @@
 # Filled NEO-6M post rims
 
-Full face: `enclosure-v4-front-gps-solid-rims.stl`.
-Small test: `enclosure-v4-gps-solid-rims-coupon.stl`.
+Full face: `hardware/enclosure/enclosure-v4-front-gps-solid-rims.stl`.
+Small test: `hardware/enclosure/enclosure-v4-gps-solid-rims-coupon.stl`.
 
 The two screenshot-marked recesses beside the NEO-6M screw holes are filled.
 The receiver posts have full 6 mm outside-diameter caps from Z=13.6 to their

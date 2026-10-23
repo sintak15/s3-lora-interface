@@ -1,7 +1,7 @@
 # Base with case screws inserted through the face
 
-Print `enclosure-v4-base-face-screws.stl`. Source:
-`enclosure_v4_base_face_screws.scad`. This retains the faster base's lightened
+Print `hardware/enclosure/enclosure-v4-base-face-screws.stl`. Source:
+`hardware/enclosure/enclosure_v4_base_face_screws.scad`. This retains the faster base's lightened
 floor/walls, component seats and matching lip for the existing printed face.
 
 The four 8 mm-diameter corner posts now have **2.6 mm pilot holes, 12 mm deep**,

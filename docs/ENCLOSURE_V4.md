@@ -1,6 +1,6 @@
 # V4 enclosure — measured parts, single battery
 
-[OpenSCAD source](../enclosure_v4.scad). This revision uses your component
+[OpenSCAD source](../hardware/enclosure/enclosure_v4.scad). This revision uses your component
 measurements and photograph, including the confirmed **70 mm** power board and
 the final **76.4 × 22.6 × 20.9 mm single-battery holder**. V3 remains available
 separately in the repository.
@@ -114,7 +114,7 @@ the feet and do not force a screw that bottoms out.
 
 ## Export and print
 
-Open `enclosure_v4.scad` in OpenSCAD 2021.01 or later. `part` supports `front`,
+Open `hardware/enclosure/enclosure_v4.scad` in OpenSCAD 2021.01 or later. `part` supports `front`,
 `back`, `clamps`, `antenna_retainers`, `speaker_retainer`, `fit_coupon`,
 `assembled`, `exploded`, `print_layout` and
 preview-only `components`. Hardware ghosts appear in F5 Preview and are excluded
@@ -164,7 +164,7 @@ surface area, volume and closed edges; it does not move or resize parts.
 
 ## Single job on a 180 × 180 mm bed
 
-The direct STL `enclosure-v4-all-parts-180mm.stl` contains all **seven assembly
+The direct STL `hardware/enclosure/enclosure-v4-all-parts-180mm.stl` contains all **seven assembly
 pieces**: both shells, two Heltec clamp bars, two GPS antenna rails and the
 speaker frame. The optional fit coupon is separate. This layout preserves
 the measured dimensions at 100% scale. Both shells stand on their lower edges
@@ -185,7 +185,7 @@ The export helper also generates this STL under `build/enclosure-v4/`.
 To regenerate only the layout from existing part exports:
 
 ```powershell
-python tools/layout_enclosure_plate.py --output enclosure-v4-all-parts-180mm.stl
+python tools/layout_enclosure_plate.py --output hardware/enclosure/enclosure-v4-all-parts-180mm.stl
 ```
 
 The layout tool checks closed edges, winding, positive volume, seven separate

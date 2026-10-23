@@ -7,7 +7,7 @@ from pathlib import Path
 from layout_enclosure_plate import read_triangles, bounds, validate
 
 ROOT = Path(__file__).resolve().parents[1]
-PARTS = ROOT / 'fit-coupons'
+PARTS = ROOT / 'hardware' / 'enclosure' / 'fit-coupons'
 LAYOUT = [
     ('cyd_mounts', 8, 8),
     ('cyd_usb', 64, 8),

@@ -1,8 +1,8 @@
 # Charging USB at the bottom-wall end
 
-Use `enclosure-v4-base-power-usb-bottom.stl`. This supersedes the open-battery
+Use `hardware/enclosure/enclosure-v4-base-power-usb-bottom.stl`. This supersedes the open-battery
 base when the power assembly's charging connector is at the end nearest the
-CYD/Heltec USB wall. Source: `enclosure_v4_base_power_usb_bottom.scad`.
+CYD/Heltec USB wall. Source: `hardware/enclosure/enclosure_v4_base_power_usb_bottom.scad`.
 
 The opening stays on the same side wall. Its centre moves from assembly Y=65
 to **Y=27 mm**, measured from the outer bottom wall, using the existing

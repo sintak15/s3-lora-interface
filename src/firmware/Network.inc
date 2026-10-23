@@ -246,59 +246,6 @@ static void renderWifiScanResults(int16_t status) {
   WiFi.scanDelete();
 }
 
-static void renderIdfWifiScanResults(uint16_t count) {
-  if (!listWifiScan) return;
-  lv_obj_clean(listWifiScan);
-  wifiScanResultCount = min((size_t)count, WIFI_SCAN_MAX_RESULTS);
-  if (wifiScanResultCount == 0) {
-    if (lblWifiScanStatus) lv_label_set_text(lblWifiScanStatus, "No networks found");
-    return;
-  }
-
-  wifi_ap_record_t records[WIFI_SCAN_MAX_RESULTS] = {};
-  uint16_t readCount = (uint16_t)wifiScanResultCount;
-  esp_err_t err = esp_wifi_scan_get_ap_records(&readCount, records);
-  if (err != ESP_OK) {
-    if (lblWifiScanStatus) lv_label_set_text(lblWifiScanStatus, "Scan read failed");
-    Serial.printf("[wifi] scan read failed err=%d\n", (int)err);
-    return;
-  }
-
-  wifiScanResultCount = readCount;
-  if (lblWifiScanStatus) {
-    char statusText[48];
-    snprintf(statusText, sizeof(statusText), "%u network%s", (unsigned)wifiScanResultCount, wifiScanResultCount == 1 ? "" : "s");
-    lv_label_set_text(lblWifiScanStatus, statusText);
-  }
-
-  for (size_t i = 0; i < wifiScanResultCount; i++) {
-    strlcpy(wifiScanSsids[i], (const char*)records[i].ssid, sizeof(wifiScanSsids[i]));
-    wifiScanRssi[i] = records[i].rssi;
-    lv_obj_t* btn = lv_btn_create(listWifiScan);
-    lv_obj_set_size(btn, lv_pct(100), 42);
-    styleDarkObject(btn, COLOR_PANEL);
-    styleDarkBorder(btn, 0x2F705F);
-    lv_obj_t* label = lv_label_create(btn);
-    char itemText[64];
-    snprintf(itemText, sizeof(itemText), "%s  %ld dBm", wifiScanSsids[i], (long)wifiScanRssi[i]);
-    lv_label_set_text(label, itemText);
-    styleBoundedLabel(label, SCREEN_W - 36, COLOR_TEXT);
-    lv_obj_center(label);
-    lv_obj_add_event_cb(btn, [](lv_event_t* e) {
-      size_t index = (size_t)lv_event_get_user_data(e);
-      if (index >= wifiScanResultCount) return;
-      ensureWifiLocalPage();
-      if (taWifiSsid) lv_textarea_set_text(taWifiSsid, wifiScanSsids[index]);
-      setWifiApMode(false);
-      showPage(pageWifiLocal);
-      if (taWifiPass) {
-        lv_textarea_set_text(taWifiPass, "");
-        lv_event_send(taWifiPass, LV_EVENT_FOCUSED, nullptr);
-      }
-    }, LV_EVENT_CLICKED, (void*)i);
-  }
-}
-
 static void renderStoredWifiScanResults(int16_t status) {
   if (!listWifiScan) return;
   lv_obj_clean(listWifiScan);

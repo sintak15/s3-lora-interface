@@ -1,8 +1,8 @@
 # Flat antenna between lowered ledges and level brackets
 
-Full face: `enclosure-v4-front-antenna-ledges-lower.stl`.
-Small test: `enclosure-v4-antenna-ledges-coupon.stl`.
-Source: `enclosure_v4_front_antenna_ledges_lower.scad`.
+Full face: `hardware/enclosure/enclosure-v4-front-antenna-ledges-lower.stl`.
+Small test: `hardware/enclosure/enclosure-v4-antenna-ledges-coupon.stl`.
+Source: `hardware/enclosure/enclosure_v4_front_antenna_ledges_lower.scad`.
 
 The user confirmed the **whole antenna is 7.5 mm thick** and will sit flat on
 the square support ledges. The square ledges are therefore lowered by **7.5 mm**,
