@@ -4,7 +4,7 @@ A touchscreen and local web interface for a Heltec Meshtastic radio, built on
 an ESP32-S3 CYD. Read messages, check radio and battery status, browse nodes,
 and use offline maps without depending on internet access.
 
-**Current firmware: v0.1.90.** The CYD runs this firmware; the Heltec runs
+**Current firmware: v0.1.91.** The CYD runs this firmware; the Heltec runs
 Meshtastic and handles the LoRa radio connection.
 
 ## What it does
@@ -137,13 +137,13 @@ In the Meshtastic serial module, set **Enabled**, **PROTO / Protobuf** mode,
 
 ### GPS
 
-Split GPS TX to both receivers. Reserve GPS RX for the CYD alone so future
-firmware can configure the receiver while the Heltec only listens:
+Split GPS TX to both receivers. Only the CYD drives GPS RX to configure the
+receiver while the Heltec only listens:
 
 | GPS module | Connect to |
 | --- | --- |
 | TX | Heltec GPIO5 **and** CYD GPIO3 |
-| RX | Reserved for CYD UART TX; GPIO assignment and firmware support pending |
+| RX | CYD GPIO2 (GPS TX) |
 | VCC | Boosted 5V rail for the GY-NEO6MV2 breakout |
 | GND | Common ground |
 
@@ -152,15 +152,17 @@ Enable GPS in Meshtastic Position settings and set **GPS RX pin 5**.
 outputs to the GPS RX wire. An existing Heltec TX-pin setting does not change
 this receive-only physical wiring.
 
-The CYD currently listens on GPIO3 at **9600 baud**, with `GPS_TX_PIN = -1`.
-This documentation change does not enable transmit commands or select a CYD
-TX GPIO. Until that GPIO is selected and firmware support is added, leave GPS
-RX unconnected and insulate any reserved wire end. Both boards can continue
-receiving the existing GPS stream. Use compatible 3.3 V UART signals and common
+The CYD receives on GPIO3 and transmits on **GPIO2**, at **9600 baud**.
+GPIO2 is the unused expansion IO alongside GPIO3/14/21; see the
+[LCDWiki board manual](https://www.lcdwiki.com/res/ES3C28P/2.8inch_IPS_ESP32-S3_ES3C28P_ES3N28P_User_Manual.pdf).
+Boot sends no GPS configuration commands. USB `gps rate` queries the receiver;
+`gps rate 1`, `gps rate 2` and `gps rate 5` request measurement rates with
+acknowledgement and readback reporting. Prefer 1 Hz for the shared 9600-baud
+stream; higher rates may exceed its NMEA bandwidth. Use compatible 3.3 V UART signals and common
 ground; the breakout's boosted 5V power input is separate from UART logic.
 The GPS and radio serial connections use different pins and baud rates.
 See [GPS wiring and control ownership](docs/GPS_DIAGNOSTICS.md#gps-wiring-and-control-ownership)
-for the planned control path.
+for commands, verification and control ownership.
 
 ### Built-in MicroSD slot
 

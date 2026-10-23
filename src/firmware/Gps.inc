@@ -1,4 +1,54 @@
 // Internal implementation module; included once by the main sketch.
+static GpsUbx::Decoder gpsUbx;
+static uint32_t gpsUbxByteMs=0, gpsCommandMs=0, gpsUbxReplies=0;
+static bool gpsCommandPending=false, gpsRateKnown=false;
+static uint16_t gpsRateMs=0;
+static const char* gpsControlState="idle";
+
+static bool sendGpsRatePacket(unsigned hz) {
+  if (GPS_TX_PIN < 0) return false;
+  const auto packet=GpsUbx::ratePacket(hz);
+  return packet.size && SerialGPS.write(packet.bytes,packet.size)==packet.size;
+}
+
+static bool handleGpsControlCommand(const char* command) {
+  if (strcmp(command,"gps rate")!=0 && strncmp(command,"gps rate ",9)!=0) return false;
+  if (gpsCommandPending) { Serial.println("[GPS] rate command pending; wait for ACK or timeout"); return true; }
+  unsigned hz=0;
+  if (strcmp(command,"gps rate")==0) hz=0;
+  else if(strcmp(command,"gps rate 1")==0) hz=1;
+  else if(strcmp(command,"gps rate 2")==0) hz=2;
+  else if(strcmp(command,"gps rate 5")==0) hz=5;
+  else { Serial.println("[GPS] usage: gps rate [1|2|5]"); return true; }
+  if(!sendGpsRatePacket(hz)) { Serial.println("[GPS] UART TX unavailable or write failed"); return true; }
+  gpsRateKnown=false;
+  gpsCommandMs=millis(); gpsCommandPending=true;
+  gpsControlState=hz ? "awaiting-ack" : "awaiting-rate";
+  Serial.printf("[GPS] CFG-RATE %s sent; awaiting receiver response\n",hz ? "set" : "poll");
+  if(hz>1) Serial.println("[GPS] shared stream remains 9600 baud; higher rates can exceed NMEA bandwidth");
+  return true;
+}
+
+static void serviceGpsUbxReply() {
+  ++gpsUbxReplies;
+  if(gpsUbx.cls==6 && gpsUbx.id==8 && gpsUbx.length==6) {
+    gpsRateMs=(uint16_t)gpsUbx.payload[0] | ((uint16_t)gpsUbx.payload[1]<<8);
+    gpsRateKnown=true;
+    if(gpsCommandPending && strcmp(gpsControlState,"awaiting-rate")==0) {
+      gpsCommandPending=false; gpsControlState="rate-received";
+    }
+    Serial.printf("[GPS] receiver measurement period %u ms\n",(unsigned)gpsRateMs);
+  } else if(gpsCommandPending && strcmp(gpsControlState,"awaiting-ack")==0 &&
+            gpsUbx.cls==5 && gpsUbx.length==2 && gpsUbx.payload[0]==6 && gpsUbx.payload[1]==8 &&
+            (gpsUbx.id==0 || gpsUbx.id==1)) {
+    if(gpsUbx.id==0) { gpsCommandPending=false; gpsControlState="rejected"; }
+    else if(sendGpsRatePacket(0)) {
+      gpsControlState="awaiting-rate"; gpsCommandMs=millis();
+    } else { gpsCommandPending=false; gpsControlState="acknowledged-poll-failed"; }
+    Serial.printf("[GPS] CFG-RATE %s\n",gpsUbx.id ? "acknowledged; querying receiver rate" : "rejected");
+  }
+}
+
 static int localGpsSatellitesInView() {
   TinyGPSCustom* value = nullptr;
   if (gpsGpInView.isValid() && gpsGpInView.age() <= 30000) value = &gpsGpInView;
@@ -10,6 +60,9 @@ static void appendLocalGpsHealthJson(String& json) {
   bool usedKnown = localGps.satellites.isValid() && localGps.satellites.age() <= 30000;
   int inView = localGpsSatellitesInView();
   json += "\"gpsRxPin\":" + String(GPS_RX_PIN) + ",\"gpsBaud\":" + String(GPS_BAUD) + ",";
+  json += "\"gpsTxPin\":" + String(GPS_TX_PIN) + ",\"gpsControlState\":\"" + gpsControlState + "\",";
+  json += "\"gpsMeasurementPeriodMs\":" + (gpsRateKnown ? String(gpsRateMs) : String("null")) + ",";
+  json += "\"gpsUbxReplies\":" + String(gpsUbxReplies) + ",\"gpsUbxChecksumErrors\":" + String(gpsUbx.bad) + ",";
   json += "\"localGpsBytes\":" + String(gpsBytesFromLocal) + ",";
   json += "\"localGpsByteAgeMs\":" + (gpsBytesFromLocal ? String((uint32_t)(millis() - lastLocalGpsByteMs)) : String("null")) + ",";
   json += "\"localGpsValidSentences\":" + String(localGps.passedChecksum()) + ",";
@@ -87,10 +140,20 @@ static void updateLocalGpsStats() {
 }
 
 static void pollLocalGps() {
+  const uint32_t now=millis();
+  if(gpsUbx.state && (uint32_t)(now-gpsUbxByteMs)>250) gpsUbx.reset();
+  if(gpsCommandPending && (uint32_t)(now-gpsCommandMs)>2000) {
+    gpsCommandPending=false; gpsControlState="timeout";
+    Serial.println("[GPS] receiver response timeout; check CYD GPIO2 -> GPS RX");
+  }
   while (SerialGPS.available()) {
     char c = (char)SerialGPS.read();
     gpsBytesFromLocal++;
     lastLocalGpsByteMs = millis();
+    bool binary=gpsUbx.consume((uint8_t)c);
+    gpsUbxByteMs=millis();
+    if(gpsUbx.ready) serviceGpsUbxReply();
+    if(binary) continue;
     if (localGps.encode(c) && localGps.location.isUpdated()) {
       updateLocalGpsStats();
     }

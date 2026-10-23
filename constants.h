@@ -6,7 +6,7 @@
 #include "config/device_config.example.h"
 #endif
 
-#define FIRMWARE_VERSION "v0.1.90"
+#define FIRMWARE_VERSION "v0.1.91"
 
 #ifndef DEVICE_NAME
 #define DEVICE_NAME "s3-lora-interface"
@@ -22,10 +22,10 @@
 #define LORA_TX_PIN 21
 #define LORA_BAUD 115200
 
-// Optional split GPS TX input on the CYD expansion header.
-// Wire GPS TX to GPIO3 and share ground with the GPS power source.
+// Shared GPS output -> CYD GPIO3 and Heltec GPIO5; only CYD drives GPS RX.
+// CYD GPIO2 -> GPS RX. Leave Heltec GPIO4 disconnected from GPS RX.
 #define GPS_RX_PIN 3
-#define GPS_TX_PIN -1
+#define GPS_TX_PIN 2
 #define GPS_BAUD 9600
 
 // 2.8 inch ESP32-S3 ILI9341 display and capacitive touch.

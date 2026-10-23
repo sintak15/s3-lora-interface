@@ -1065,7 +1065,8 @@ static void serviceUsbSerialCommands() {
         runUiSmokeTests();
       } else
 #endif
-      if (strcmp(command, "gps") == 0) {
+      if (handleGpsControlCommand(command)) {
+      } else if (strcmp(command, "gps") == 0) {
         printLocalGpsDiagnostics();
       } else if (strcmp(command, "mapbench") == 0) {
         requestMapBenchmark();

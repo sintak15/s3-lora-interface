@@ -39,6 +39,7 @@
 #include "src/MapNavigation.h"
 #include "src/MapCoverage.h"
 #include "src/BuildIdentity.h"
+#include "src/GpsUbx.h"
 
 #ifdef FIRMWARE_RUN_TESTS
 #include "src/tests/ReliabilityTests.h"
@@ -47,6 +48,7 @@
 #include "src/tests/TileUploadTests.h"
 #include "src/tests/MapNavigationTests.h"
 #include "src/tests/MapCoverageTests.h"
+#include "src/tests/GpsUbxTests.h"
 #endif
 
 #include "src/firmware/State.h"

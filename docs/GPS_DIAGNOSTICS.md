@@ -1,4 +1,4 @@
-# GPS receiver diagnostics (v0.1.90)
+# GPS receiver diagnostics and control (v0.1.91)
 
 USB command `gps` reports the CYD receiver's raw byte count, last-byte age,
 checksum-valid NMEA sentences, checksum failures, fix-bearing sentences,
@@ -25,22 +25,21 @@ does not change Heltec settings or GPS module configuration.
 ## GPS wiring and control ownership
 
 The intended wiring is one GPS output feeding two listeners, with only the
-CYD allowed to send GPS configuration commands in a future firmware update:
+CYD allowed to send GPS configuration commands:
 
 ```text
 NEO-6M TX ----+---- CYD GPIO3 (GPS RX)
              +---- Heltec GPIO5 (GPS RX)
 
-NEO-6M RX ---------- CYD GPS TX (future; GPIO not assigned)
+NEO-6M RX ---------- CYD GPIO2 (GPS TX)
 Heltec GPIO4 ------- disconnected from GPS RX
 All grounds -------- common
 ```
 
-**Current firmware remains receive-only:** `GPS_TX_PIN` is `-1`, the baud rate
-is 9600, and no CYD UBX command/configuration support is introduced by this
-documentation update. Leave NEO-6M RX unconnected until a CYD TX GPIO is chosen
-and transmit support is implemented; insulate any reserved wire end.
-Both boards can receive position data without that return connection.
+**Current firmware uses GPIO2 for GPS TX and GPIO3 for GPS RX at 9600 baud.**
+GPIO2 is on the expansion connector; GPIO14/21 remain the radio UART.
+Both boards still receive GPS data if the return wire is missing, but commands
+will time out. Startup sends no GPS configuration commands.
 
 Do not connect Heltec TX and CYD TX together. Disconnect the old Heltec
 GPIO4-to-GPS-RX wire when adopting this layout. Meshtastic may still report its
@@ -48,10 +47,45 @@ configured TX pin; the report does not prove a physical TX wire is connected.
 GPS RX GPIO5 remains the Heltec's receive connection. Use 3.3 V-compatible
 UART logic, independently of the breakout's 5V power connection.
 
-The future CYD control path would allow update-rate, output-message and serial
-configuration. Any baud or message changes must remain compatible with both
-listeners. Merely adding TX does not improve fix accuracy or acquisition.
-The `gps` diagnostic command still observes the stream without sending commands.
+### USB control commands
+
+| Command | Action |
+| --- | --- |
+| `gps` | Print diagnostics without transmitting to the receiver |
+| `gps rate` | Poll receiver measurement/navigation-rate settings |
+| `gps rate 1` | Request 1000 ms measurement period (1 Hz) |
+| `gps rate 2` | Request 500 ms measurement period (2 Hz) |
+| `gps rate 5` | Request 200 ms measurement period (5 Hz) |
+
+Commands use UBX-CFG-RATE with navigation rate 1 and GPS-time alignment,
+following the [u-blox 6 protocol specification, section 31.17](https://content.u-blox.com/sites/default/files/products/documents/u-blox6_ReceiverDescrProtSpec_%28GPS.G6-SW-10018%29_Public.pdf).
+The CYD waits up to 2 seconds for ACK/NAK, then queries the rate after ACK.
+The reported measurement period comes from a receiver reply, not the request.
+Polls also time out after 2 seconds. Additional commands are rejected while
+one is pending; invalid rates send nothing. Higher rates can exceed the shared
+9600-baud NMEA bandwidth; start with 1 Hz.
+
+`gps` and health JSON add `gpsTxPin`, `gpsControlState`,
+`gpsMeasurementPeriodMs`, `gpsUbxReplies` and `gpsUbxChecksumErrors`. A null
+period means no valid rate reply since the last command. UBX frames are
+checksum checked and kept out of NMEA parsing; truncated frames reset after
+a 250 ms receive gap. Payload lengths are capped at 256 bytes, retaining only
+6 bytes. The error counter also includes rejected oversize UBX headers.
+
+No baud changes, NMEA-message configuration or flash/EEPROM saves are sent.
+Changes apply to the receiver's current configuration; retention depends on
+its power/backup state. Adding TX alone does not improve GPS accuracy.
+
+### Wiring verification
+
+1. Disconnect Heltec GPIO4 from GPS RX before connecting CYD GPIO2.
+2. Connect GPS TX to both receive pins, with common ground and compatible logic.
+3. Run `gps` and confirm bytes and valid NMEA sentences continue increasing.
+4. Run `gps rate` and check the returned measurement period. A timeout with
+   working NMEA suggests the new transmit wire or disabled UBX input.
+5. Optionally run `gps rate 1` and check ACK followed by 1000 ms readback.
+
+Compilation and protocol tests do not verify the physical wiring or receiver.
 
 ## Connected-device observation (2026-10-17)
 

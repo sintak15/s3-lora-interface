@@ -299,7 +299,8 @@ in 28.8 seconds, but had no position fix; the Heltec reported the expected
 GPIO5/GPIO4 GPS configuration.
 
 That is the historical observation's configuration. The current documented
-wiring shares GPS TX with CYD GPIO3 and Heltec GPIO5, and reserves GPS RX for
-future CYD-only control; Heltec GPIO4 is disconnected from GPS RX. Firmware
-is unchanged (`GPS_TX_PIN = -1`), with no CYD transmit GPIO assigned yet.
+wiring shares GPS TX with CYD GPIO3 and Heltec GPIO5. In v0.1.91, GPS RX connects
+to CYD GPIO2 for CYD-only control; Heltec GPIO4 is disconnected from GPS RX.
+USB `gps rate` polls UBX-CFG-RATE and `gps rate 1|2|5` requests a new rate
+with ACK/NAK and readback reporting. Boot sends no configuration commands.
 See [GPS wiring and control ownership](GPS_DIAGNOSTICS.md#gps-wiring-and-control-ownership).
