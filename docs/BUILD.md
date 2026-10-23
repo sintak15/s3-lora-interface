@@ -297,3 +297,9 @@ available satellite counts before a fix. The UART receive buffer is 4096 bytes.
 The connected receiver delivered 70 valid sentences with zero checksum errors
 in 28.8 seconds, but had no position fix; the Heltec reported the expected
 GPIO5/GPIO4 GPS configuration.
+
+That is the historical observation's configuration. The current documented
+wiring shares GPS TX with CYD GPIO3 and Heltec GPIO5, and reserves GPS RX for
+future CYD-only control; Heltec GPIO4 is disconnected from GPS RX. Firmware
+is unchanged (`GPS_TX_PIN = -1`), with no CYD transmit GPIO assigned yet.
+See [GPS wiring and control ownership](GPS_DIAGNOSTICS.md#gps-wiring-and-control-ownership).

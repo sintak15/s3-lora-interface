@@ -137,19 +137,30 @@ In the Meshtastic serial module, set **Enabled**, **PROTO / Protobuf** mode,
 
 ### GPS
 
-Split the GPS transmit output so both boards can read it:
+Split GPS TX to both receivers. Reserve GPS RX for the CYD alone so future
+firmware can configure the receiver while the Heltec only listens:
 
 | GPS module | Connect to |
 | --- | --- |
 | TX | Heltec GPIO5 **and** CYD GPIO3 |
-| RX | Heltec GPIO4 |
+| RX | Reserved for CYD UART TX; GPIO assignment and firmware support pending |
 | VCC | Boosted 5V rail for the GY-NEO6MV2 breakout |
 | GND | Common ground |
 
-Enable GPS in Meshtastic Position settings and set **GPS RX pin 5** and
-**GPS TX pin 4**. The CYD listens on GPIO3 at **9600 baud** and does not drive
-the GPS RX line. The GPS and radio serial connections use different pins and
-baud rates.
+Enable GPS in Meshtastic Position settings and set **GPS RX pin 5**.
+**Leave Heltec GPIO4 disconnected from GPS RX**; never tie both boards' TX
+outputs to the GPS RX wire. An existing Heltec TX-pin setting does not change
+this receive-only physical wiring.
+
+The CYD currently listens on GPIO3 at **9600 baud**, with `GPS_TX_PIN = -1`.
+This documentation change does not enable transmit commands or select a CYD
+TX GPIO. Until that GPIO is selected and firmware support is added, leave GPS
+RX unconnected and insulate any reserved wire end. Both boards can continue
+receiving the existing GPS stream. Use compatible 3.3 V UART signals and common
+ground; the breakout's boosted 5V power input is separate from UART logic.
+The GPS and radio serial connections use different pins and baud rates.
+See [GPS wiring and control ownership](docs/GPS_DIAGNOSTICS.md#gps-wiring-and-control-ownership)
+for the planned control path.
 
 ### Built-in MicroSD slot
 
