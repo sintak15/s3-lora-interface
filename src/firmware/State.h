@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include "../NotificationSound.h"
 
 // Shared runtime state; included once by the main sketch.
 LV_FONT_DECLARE(comic_neue_12);
@@ -164,30 +165,12 @@ enum ToneKind : uint8_t {
   TONE_TEST
 };
 
-enum ToneStyle : uint8_t {
-  TONE_STYLE_BWOMP,
-  TONE_STYLE_CHIME,
-  TONE_STYLE_DOUBLE,
-  TONE_STYLE_PULSE,
-  TONE_STYLE_ALERT,
-  TONE_STYLE_LOUD,
-  TONE_STYLE_SUSTAIN,
-  TONE_STYLE_RAW,
-  TONE_STYLE_COUNT
-};
-
 enum ToneCodecProfile : uint8_t {
   TONE_CODEC_PROFILE_DRIVER,
   TONE_CODEC_PROFILE_REF_HP,
   TONE_CODEC_PROFILE_REF_LINE,
   TONE_CODEC_PROFILE_LEGACY,
   TONE_CODEC_PROFILE_COUNT
-};
-
-struct ToneSegment {
-  uint16_t frequency;
-  uint16_t durationMs;
-  uint16_t endFrequency = 0;
 };
 
 struct GpsStats {

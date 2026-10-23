@@ -52,8 +52,8 @@ describe internal board wiring. See [notification audio](docs/AUDIO.md).
   preview. Tap a card for details, or Menu for the launcher.
 - **Messaging:** channel and direct messages, unread counts, delivery states,
   and retry controls where available.
-- **Notification audio:** separate message/direct tones, clean volume control,
-  dedicated playback and automatic audio fault recovery.
+- **Notification audio:** soft boops and bubble pops with separate message/direct
+  selections, clean volume control, dedicated playback and automatic fault recovery.
 - **Offline maps:** SD-backed maps on both the touchscreen and web interface,
   zooms 10–14, feet/miles scales and coarser fallback when detail is missing.
 - **Map navigation:** drag to explore, pause/follow the device, recenter and

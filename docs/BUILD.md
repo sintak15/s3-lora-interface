@@ -37,6 +37,10 @@ Notification audio in v0.1.93 uses GPIO8 to feed the ES8311 DAC, unity codec
 gain and a dedicated PCM task. The Sound page and web test respect saved volume.
 USB `audio` reads playback/codec status; `audio-recover` requests a bounded
 reinitialization without playing a sound. See [notification audio](AUDIO.md).
+Version v0.1.94 replaces the misleading bell/chime choices with short, rounded
+boops, adds bubble pops and makes the browser test follow the saved message
+selection. Compile-time checks cover notification duration, preserved style IDs
+and bounded envelopes.
 
 The board configuration is:
 

@@ -49,6 +49,7 @@
 #include "src/tests/MapNavigationTests.h"
 #include "src/tests/MapCoverageTests.h"
 #include "src/tests/GpsUbxTests.h"
+#include "src/tests/NotificationSoundTests.h"
 #endif
 
 #include "src/firmware/State.h"

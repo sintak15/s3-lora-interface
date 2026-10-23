@@ -137,6 +137,28 @@ async function testRetryRequests() {
   assert(elements.txRetryStatus.textContent.includes('result unknown'));
 }
 
+async function testSavedMessageTone(){
+  const requests=[];
+  context.fetch=async (url,options)=>{
+    requests.push({url,options});
+    return {ok:true,status:202,json:async()=>({toneMessage:'Gentle Alert',toneVolume:40})};
+  };
+  await vm.runInContext('testTone()',context);
+  assert.equal(requests.length,1);
+  assert.equal(requests[0].url,'/tone/test');
+  assert.equal(requests[0].options.method,'POST');
+  const args=new URLSearchParams(requests[0].options.body);
+  assert(!args.has('style'),'Preview must use the saved message selection instead of forcing Chime');
+  assert(!args.has('volume'),'Preview must preserve the saved volume');
+  assert.equal(elements.toneStatus.textContent,'Queued message tone: Gentle Alert at 40%');
+  context.fetch=async()=>({ok:false,status:409});
+  await vm.runInContext('testTone()',context);
+  assert(elements.toneStatus.textContent.includes('busy, muted, or recovering'));
+  context.fetch=async()=>{throw new Error('offline');};
+  await vm.runInContext('testTone()',context);
+  assert.equal(elements.toneStatus.textContent,'Device unavailable');
+}
+
 function testOfflineCoverage(){
   vm.runInContext('renderOfflineCoverage({mapRequestedZoom:14,mapDisplayedZoom:12,mapCoverageChecked:true,mapCoverageAgeSec:2,mapCoverageLevels:[{zoom:12,status:"Ready",available:4,required:4,invalid:0},{zoom:14,status:"Partial",available:1,required:4,invalid:0}]})',context);
   assert(elements.mapCoverageStats.innerHTML.includes('Displayed zoom'));
@@ -190,8 +212,9 @@ function testBundledMapAssets(){
   await testSingleRequestAndRetries();
   await testRequestTimeout();
   await testRetryRequests();
+  await testSavedMessageTone();
   testOfflineCoverage();
   testImperialMapScale();
   testBundledMapAssets();
-  console.log('Web UI regressions passed: escaping, single request, retry/backoff, recovery, timeout, delivery, runtime, retry controls, coverage, imperial scale, bundled map assets.');
+  console.log('Web UI regressions passed: escaping, single request, retry/backoff, recovery, timeout, delivery, runtime, retry controls, sound preview, coverage, imperial scale, bundled map assets.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

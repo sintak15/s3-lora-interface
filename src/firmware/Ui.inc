@@ -1933,7 +1933,7 @@ static void buildScreenUi() {
   styleBoundedLabel(lblMessageTone, lv_pct(100), COLOR_MUTED, LV_LABEL_LONG_WRAP);
   lv_obj_align(lblMessageTone, LV_ALIGN_TOP_LEFT, 2, 110);
   dropdownToneMessage = lv_dropdown_create(soundPanel);
-  lv_dropdown_set_options(dropdownToneMessage, TONE_STYLE_OPTIONS);
+  setToneDropdownOptions(dropdownToneMessage);
   lv_dropdown_set_selected(dropdownToneMessage, (uint16_t)toneMessageStyle);
   lv_obj_set_size(dropdownToneMessage, SCREEN_W - 42, 34);
   lv_obj_align(dropdownToneMessage, LV_ALIGN_TOP_MID, 0, 130);
@@ -1946,7 +1946,7 @@ static void buildScreenUi() {
   styleBoundedLabel(lblDirectTone, lv_pct(100), COLOR_MUTED, LV_LABEL_LONG_WRAP);
   lv_obj_align(lblDirectTone, LV_ALIGN_TOP_LEFT, 2, 174);
   dropdownToneDirect = lv_dropdown_create(soundPanel);
-  lv_dropdown_set_options(dropdownToneDirect, TONE_STYLE_OPTIONS);
+  setToneDropdownOptions(dropdownToneDirect);
   lv_dropdown_set_selected(dropdownToneDirect, (uint16_t)toneDirectStyle);
   lv_obj_set_size(dropdownToneDirect, SCREEN_W - 42, 34);
   lv_obj_align(dropdownToneDirect, LV_ALIGN_TOP_MID, 0, 194);

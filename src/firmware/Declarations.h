@@ -138,6 +138,7 @@ static const char* toneBoostName(uint8_t level);
 static uint8_t tonePcmDrivePercent();
 static ToneStyle clampToneStyle(uint8_t style);
 static const char* toneStyleName(ToneStyle style);
+static void setToneDropdownOptions(lv_obj_t* dropdown);
 static ToneStyle toneStyleForKind(ToneKind kind);
 static const ToneSegment* tonePatternFor(ToneStyle style, size_t& count);
 static uint8_t toneCodecVolumeRegister();

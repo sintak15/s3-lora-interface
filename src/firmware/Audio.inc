@@ -1,48 +1,16 @@
 // Internal implementation module; included once by the main sketch.
-static const char TONE_STYLE_OPTIONS[] = "Low Bell\nChime\nTwo Step\nBeacon\nPager\nBell\nSustain\nTest Sine";
-
-static const ToneSegment TONE_PATTERN_BWOMP[] = {
-  {0, 120}, {980, 220, 780}, {0, 80}, {620, 420, 480}, {0, 180}
-};
-static const ToneSegment TONE_PATTERN_CHIME[] = {
-  {0, 120}, {880, 300, 1047}, {0, 90}, {1175, 420, 880}, {0, 190}
-};
-static const ToneSegment TONE_PATTERN_DOUBLE[] = {
-  {0, 120}, {784, 280, 880}, {0, 120}, {988, 360, 880}, {0, 200}
-};
-static const ToneSegment TONE_PATTERN_PULSE[] = {
-  {0, 120}, {740, 220}, {0, 100}, {740, 220}, {0, 100}, {988, 300}, {0, 200}
-};
-static const ToneSegment TONE_PATTERN_ALERT[] = {
-  {0, 120}, {1047, 320}, {0, 90}, {1047, 320}, {0, 90}, {784, 480, 659}, {0, 220}
-};
-static const ToneSegment TONE_PATTERN_LOUD[] = {
-  {0, 130}, {880, 360, 1047}, {0, 100}, {1175, 460, 988}, {0, 100}, {988, 520, 784}, {0, 240}
-};
-static const ToneSegment TONE_PATTERN_SUSTAIN[] = {
-  {0, 160}, {520, 2600}, {0, 850}
-};
-static const ToneSegment TONE_PATTERN_RAW[] = {
-  {0, 120}, {1000, 300}, {0, 100}
-};
-
 static ToneStyle clampToneStyle(uint8_t style) {
   return style < TONE_STYLE_COUNT ? (ToneStyle)style : TONE_STYLE_BWOMP;
 }
 
 static const char* toneStyleName(ToneStyle style) {
-  switch (style) {
-    case TONE_STYLE_CHIME: return "Chime";
-    case TONE_STYLE_DOUBLE: return "Two Step";
-    case TONE_STYLE_PULSE: return "Beacon";
-    case TONE_STYLE_ALERT: return "Pager";
-    case TONE_STYLE_LOUD: return "Bell";
-    case TONE_STYLE_SUSTAIN: return "Sustain";
-    case TONE_STYLE_RAW: return "Test Sine";
-    case TONE_STYLE_BWOMP:
-    default:
-      return "Low Bell";
-  }
+  return NotificationSound::preset(style).name;
+}
+
+static void setToneDropdownOptions(lv_obj_t* dropdown) {
+  lv_dropdown_clear_options(dropdown);
+  for (uint8_t style = 0; style < TONE_STYLE_COUNT; ++style)
+    lv_dropdown_add_option(dropdown, toneStyleName((ToneStyle)style), LV_DROPDOWN_POS_LAST);
 }
 
 static ToneStyle toneStyleForKind(ToneKind kind) {
@@ -55,33 +23,9 @@ static ToneStyle toneStyleForKind(ToneKind kind) {
 }
 
 static const ToneSegment* tonePatternFor(ToneStyle style, size_t& count) {
-  switch (style) {
-    case TONE_STYLE_CHIME:
-      count = sizeof(TONE_PATTERN_CHIME) / sizeof(TONE_PATTERN_CHIME[0]);
-      return TONE_PATTERN_CHIME;
-    case TONE_STYLE_DOUBLE:
-      count = sizeof(TONE_PATTERN_DOUBLE) / sizeof(TONE_PATTERN_DOUBLE[0]);
-      return TONE_PATTERN_DOUBLE;
-    case TONE_STYLE_PULSE:
-      count = sizeof(TONE_PATTERN_PULSE) / sizeof(TONE_PATTERN_PULSE[0]);
-      return TONE_PATTERN_PULSE;
-    case TONE_STYLE_ALERT:
-      count = sizeof(TONE_PATTERN_ALERT) / sizeof(TONE_PATTERN_ALERT[0]);
-      return TONE_PATTERN_ALERT;
-    case TONE_STYLE_LOUD:
-      count = sizeof(TONE_PATTERN_LOUD) / sizeof(TONE_PATTERN_LOUD[0]);
-      return TONE_PATTERN_LOUD;
-    case TONE_STYLE_SUSTAIN:
-      count = sizeof(TONE_PATTERN_SUSTAIN) / sizeof(TONE_PATTERN_SUSTAIN[0]);
-      return TONE_PATTERN_SUSTAIN;
-    case TONE_STYLE_RAW:
-      count = sizeof(TONE_PATTERN_RAW) / sizeof(TONE_PATTERN_RAW[0]);
-      return TONE_PATTERN_RAW;
-    case TONE_STYLE_BWOMP:
-    default:
-      count = sizeof(TONE_PATTERN_BWOMP) / sizeof(TONE_PATTERN_BWOMP[0]);
-      return TONE_PATTERN_BWOMP;
-  }
+  const auto& preset = NotificationSound::preset(style);
+  count = preset.count;
+  return preset.segments;
 }
 
 
@@ -257,6 +201,8 @@ static int8_t toneStyleIndexFromText(String value) {
   value.trim();
   value.toLowerCase();
   if (!value.length()) return -1;
+  for (uint8_t style = 0; style < TONE_STYLE_COUNT; ++style)
+    if (value.equalsIgnoreCase(toneStyleName((ToneStyle)style))) return (int8_t)style;
   if (isDigit(value[0])) {
     int index = value.toInt();
     return (index >= 0 && index < TONE_STYLE_COUNT) ? (int8_t)index : -1;
@@ -445,22 +391,21 @@ static bool playToneRequest(const ToneRequest& request) {
   for (size_t segmentIndex = 0; segmentIndex < count; ++segmentIndex) {
     const ToneSegment& segment = pattern[segmentIndex];
     const uint32_t total = max<uint32_t>(1, (uint32_t)segment.durationMs * TONE_SAMPLE_RATE / 1000);
-    const uint32_t ramp = max<uint32_t>(1, min<uint32_t>(TONE_SAMPLE_RATE / 50, total / 3));
+    float phaseStep = 6.28318530718f * segment.frequency / TONE_SAMPLE_RATE;
+    const float endFrequency = segment.endFrequency ? segment.endFrequency : segment.frequency;
+    const float phaseStepDelta = total > 1 ?
+        6.28318530718f * (endFrequency - segment.frequency) / (TONE_SAMPLE_RATE * (total - 1)) : 0;
     for (uint32_t position = 0; position < total;) {
       if (toneRequestCancelled(request.epoch)) return false;
       const uint32_t length = min<uint32_t>(TONE_FRAMES_PER_SERVICE, total - position);
       const float amplitude = 24576.0f * min<uint8_t>(toneWorker.volume.load(), request.volumeLimit) / 100.0f;
       for (uint32_t i = 0; i < length; ++i) {
         uint32_t index = position + i;
-        float envelope = min(1.0f, (float)index / ramp);
-        envelope = min(envelope, (float)(total - 1 - index) / ramp);
-        envelope = envelope * envelope * (3.0f - 2.0f * envelope);
+        float envelope = NotificationSound::envelope(index, total, TONE_SAMPLE_RATE, request.style == TONE_STYLE_RAW);
         int16_t sample = segment.frequency ? (int16_t)(sinf(phase) * amplitude * envelope) : 0;
         frames[i * 2] = frames[i * 2 + 1] = sample;
-        float progress = total > 1 ? (float)index / (total - 1) : 1;
-        float end = segment.endFrequency ? segment.endFrequency : segment.frequency;
-        float frequency = segment.frequency + (end - segment.frequency) * progress;
-        phase += 6.28318530718f * frequency / TONE_SAMPLE_RATE;
+        phase += phaseStep;
+        phaseStep += phaseStepDelta;
         if (phase >= 6.28318530718f) phase -= 6.28318530718f;
       }
       if (!writeToneBlock(frames, length * 2 * sizeof(int16_t), request.epoch)) return false;

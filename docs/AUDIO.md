@@ -1,4 +1,4 @@
-# Notification audio (v0.1.93)
+# Notification audio (v0.1.94)
 
 The speaker connects to the CYD's dedicated speaker port. No speaker-wire
 changes are required. Internal playback is ESP32 GPIO8 to ES8311 DSDIN, then
@@ -17,13 +17,41 @@ same fixed playback configuration.
 
 The first v0.1.93 boot migrates old gain settings and limits the saved volume
 to 50%, preserving quieter or muted settings. Later volume changes are saved
-normally. Tone selections are preserved. All tones use sine waves with smooth
-20 ms attack/release envelopes. The former Raw selection is now Test Sine: a
-short 1 kHz tone with silence before/after, rather than a three-second square wave.
+normally. Tone selections are preserved.
+
+In v0.1.94, notifications offer both short, rounded sine-wave boops and bubble
+pops. Boops have fixed pitches, a smooth 12.5 ms onset and a gentle decay to
+silence. Pops sweep continuously from 600 to 1200 Hz over 32 ms, with rounded
+onsets/endings instead of abrupt square-wave switching. Their onset is limited
+to one third of the short note. Neither type uses bell overtones. The whole
+notification, including settling/trailing silence and the DMA flush, lasts less
+than 750 ms. Test Sine remains a separate diagnostic choice with a steady 1 kHz
+body and smooth 20 ms endpoints.
+
+Dropdown labels and playback now come from the same preset catalog:
+
+| Sound | What it plays | Previous label / saved ID |
+| --- | --- | --- |
+| Soft Boop | One soft 140 ms note | Low Bell / 0 |
+| Double Boop | Two short notes at the same pitch | Chime / 1 |
+| Two Note | Two notes, low then high | Two Step / 2 |
+| Triple Boop | Three quick notes at the same pitch | Beacon / 3 |
+| Gentle Alert | Two notes, high then low | Pager / 4 |
+| Rising Boop | Three short notes stepping upward | Bell / 5 |
+| Long Boop | One rounded 320 ms note | Sustain / 6 |
+| Test Sine | A steady 300 ms diagnostic tone | Test Sine (formerly Raw) / 7 |
+| Bubble Pop | One quick upward-sweeping 32 ms pop | New / 8 |
+| Double Pop | Two quick upward-sweeping pops | New / 9 |
+
+Saved IDs, selected slots and volume are preserved; older API names remain
+accepted as aliases. Notification choices change their sound as described above.
 
 Touchscreen test buttons respect saved volume and do not interrupt an active
 tone. Rapid repeated test presses are ignored while a sound is outstanding.
-The web test also uses saved volume; it no longer forces 100%, Max and Raw.
+The browser button is explicitly labeled Test Message Tone and previews the
+saved message selection at saved volume. It previously forced Chime regardless
+of the selection; that override is removed. Confirmation names the queued sound
+and volume. Neither test changes the user's selections or volume.
 Muted, busy or recovering requests return HTTP 409; accepted requests return
 HTTP 202. Normal notifications have a bounded queue of two outstanding sounds,
 including the current one. Direct notifications take priority in the pending
@@ -95,6 +123,23 @@ Local artifact: `dist/s3-lora-interface-current-v0.1.93-20261023.bin`
 The pre-flash boot/settings backup is
 `build/pre-v0.1.93-flash-metadata.bin`; the diagnostic capture is
 `build/v0.1.93-audio-diagnostic.json`. Generated artifacts remain ignored by Git.
+
+## v0.1.94 installation — October 23, 2026
+
+The boop/pop production build compiled successfully and was flashed over COM12
+with esptool hash verification. USB readback confirmed v0.1.94, ready codec/I2S
+and playback worker, preserved 40% volume, message slot 4 (Gentle Alert), and
+direct slot 5 (Rising Boop). No sound was played automatically during this
+installation; the new presets have not yet received a listening confirmation.
+Browser regression checks passed, including saved-selection preview and busy/
+network handling. Compile-time sound checks passed for stable saved IDs, short
+durations, bounded pitches and smooth envelope endpoints/transitions.
+
+Artifact: `dist/s3-lora-interface-current-v0.1.94-20261023.bin`
+(1,845,152 bytes), SHA256
+`27e2245ec3481c44c382979d1760a9778d66f2ce68528445581e7c80b2c773fa`.
+Settings backup: `build/pre-v0.1.94-flash-metadata.bin`.
+Readback: `build/v0.1.94-sound-options-status.json`.
 
 References: [LCDWiki schematic](https://www.lcdwiki.com/res/ES3C28P/2.8inch_ESP32-S3_Display_Schematic.pdf),
 [ES8311 datasheet](https://www.lcdwiki.com/res/PublicFile/ES8311_DS.pdf), and
