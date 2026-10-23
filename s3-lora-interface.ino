@@ -92,46 +92,32 @@ void setup() {
   wifiApMode = prefs.getBool("wifiApMode", true);
   readableTextMode = prefs.getBool("readableText", false);
   nodeListViewMode = prefs.getBool("nodeCompact", true) ? NODE_LIST_VIEW_COMPACT : NODE_LIST_VIEW_DETAILED;
-  toneVolumePercent = constrain((int)prefs.getUChar("toneVol", 75), 0, 100);
-  toneBoostLevel = clampToneBoost(prefs.getUChar("toneBoost", 2));
+  toneVolumePercent = constrain((int)prefs.getUChar("toneVol", 50), 0, 100);
+  toneBoostLevel = 0;
   toneCodecProfile = clampToneCodecProfile(prefs.getUChar("toneProfile", TONE_CODEC_PROFILE_DRIVER));
   toneMessageStyle = clampToneStyle(prefs.getUChar("toneMsg", (uint8_t)TONE_STYLE_LOUD));
   toneDirectStyle = clampToneStyle(prefs.getUChar("toneDir", (uint8_t)TONE_STYLE_LOUD));
-  if (!prefs.getBool("toneLoudV60", false)) {
-    if (toneMessageStyle == TONE_STYLE_BWOMP) toneMessageStyle = TONE_STYLE_LOUD;
-    if (toneDirectStyle == TONE_STYLE_DOUBLE) toneDirectStyle = TONE_STYLE_LOUD;
-    prefs.putUChar("toneMsg", (uint8_t)toneMessageStyle);
-    prefs.putUChar("toneDir", (uint8_t)toneDirectStyle);
-    prefs.putBool("toneLoudV60", true);
-  }
-  if (!prefs.getBool("toneGainV64", false)) {
-    toneVolumePercent = 100;
-    toneBoostLevel = 5;
-    toneMessageStyle = TONE_STYLE_LOUD;
-    toneDirectStyle = TONE_STYLE_LOUD;
-    prefs.putUChar("toneVol", toneVolumePercent);
-    prefs.putUChar("toneBoost", toneBoostLevel);
-    prefs.putUChar("toneMsg", (uint8_t)toneMessageStyle);
-    prefs.putUChar("toneDir", (uint8_t)toneDirectStyle);
-    prefs.putBool("toneGainV64", true);
-  }
-  if (!prefs.getBool("tonePathV68", false)) {
-    toneVolumePercent = 100;
-    toneBoostLevel = 5;
+  if (!prefs.getBool("toneCleanV93", false)) {
+    // Retire the old forced Max gain without overwriting quieter preferences.
+    toneVolumePercent = min<uint8_t>(toneVolumePercent, 50);
     toneCodecProfile = TONE_CODEC_PROFILE_DRIVER;
     prefs.putUChar("toneVol", toneVolumePercent);
     prefs.putUChar("toneBoost", toneBoostLevel);
     prefs.putUChar("toneProfile", toneCodecProfile);
-    prefs.putBool("tonePathV68", true);
+    prefs.putBool("toneCleanV93", true);
   }
 #if ONE_TIME_CHANNEL_PROVISION
   channelProvisionDone = prefs.getBool(CHANNEL_PROVISION_PREF_KEY, false);
   channelProvisionStep = 0;
   nextChannelProvisionMs = millis() + CHANNEL_PROVISION_BOOT_DELAY_MS;
 #endif
-  localBattery.calibrationOffsetTenths = prefs.getShort("batTrim10", 0);
-  localBattery.calibrationOffsetTenths = constrain(localBattery.calibrationOffsetTenths, -120, 120);
-  localBattery.calibrationOffsetMv = 0;
+  // Retire the voltage-derived percentage trim; the fuel gauge owns SOC.
+  if (prefs.isKey("batTrim10")) prefs.remove("batTrim10");
+  localBattery.savedDischargeRate = prefs.getFloat("batRateV1", 0);
+  if (!FieldStatus::RuntimeEstimate::validRate(localBattery.savedDischargeRate)) localBattery.savedDischargeRate = 0;
+  batteryRuntime.restore(localBattery.savedDischargeRate);
+  localBattery.runtimeSaveAttempted = localBattery.savedDischargeRate > 0;
+  localBattery.lastRuntimeSaveMs = millis();
   loadInterfaceSettings();
   applyFontMode();
   Serial.println("[boot] init screen");

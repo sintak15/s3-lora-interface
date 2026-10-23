@@ -65,7 +65,14 @@ async function testRendering() {
   assert.equal(elements.statusFreshness.textContent, 'Live · updated just now');
   assert.equal((elements.txHistoryBody.innerHTML.match(/retryMessage/g)||[]).length, 1);
   assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryRuntimeMinutes:125})', context), '~2h 5m');
-  assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryRuntimeMinutes:-1})', context), 'Learning discharge (10+ min)');
+  assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryRuntimeMinutes:-1})', context), 'Estimating remaining time');
+  assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryRuntimeMinutes:128,batteryRuntimeBasis:"previous"})', context), '~2h 10m · previous use');
+  assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryRuntimeMinutes:59,batteryRuntimeBasis:"gauge"})', context), '~1h 0m · gauge trend');
+  assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryRuntimeMinutes:2,batteryRuntimeBasis:"current"})', context), '~0h 5m · current use');
+  assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryRuntimeMinutes:0,batteryRuntimeBasis:"current"})', context), '~0h 0m · current use');
+  assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryRuntimeMinutes:NaN})', context), 'Estimating remaining time');
+  assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryRuntimeMinutes:Infinity})', context), 'Estimating remaining time');
+  assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryRuntimeMinutes:125,batteryRuntimeBasis:"<img>"})', context), '~2h 5m');
   assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryCharging:true,batteryRuntimeMinutes:125})', context), 'Charging');
   assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:false})', context), 'Unavailable (no gauge)');
   assert.equal(vm.runInContext('refreshDelay', context), 1000);

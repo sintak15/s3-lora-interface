@@ -70,12 +70,12 @@ static void appendBatteryStatusJson(String& json) {
   json += "\"fuelGauge\":\"" + String(localBattery.gaugePresent ? "MAX17048" : "none") + "\",";
   json += "\"fuelGaugePresent\":" + String(localBattery.gaugePresent ? "true" : "false") + ",";
   json += "\"fuelGaugeSoc\":" + String(localBattery.gaugeSoc, 1) + ",";
-  json += "\"fuelGaugeCorrectedSoc\":" + String(localBattery.correctedGaugeSoc, 1) + ",";
-  json += "\"fuelGaugeCorrectedPercent\":" + String(localBattery.correctedGaugePercent) + ",";
+  // Legacy correction fields now mirror the gauge; no software SOC trim applies.
+  json += "\"fuelGaugeCorrectedSoc\":" + String(localBattery.gaugeSoc, 1) + ",";
+  json += "\"fuelGaugeCorrectedPercent\":" + String(localBattery.gaugePercent) + ",";
   json += "\"fuelGaugeSocReliable\":" + String(localBattery.gaugeSocReliable ? "true" : "false") + ",";
   json += "\"fuelGaugeRawSoc\":\"0x" + String(localBattery.rawGaugeSoc, HEX) + "\",";
-  json += "\"fuelGaugeQuickStartSent\":" + String(localBattery.quickStartSent ? "true" : "false") + ",";
-  json += "\"voltageBatteryEstimate\":" + String(localBattery.voltagePercent) + ",";
+  json += "\"fuelGaugeQuickStartSent\":false,";
   json += "\"fuelGaugeVersion\":\"0x" + String(localBattery.gaugeVersion, HEX) + "\",";
   json += "\"senseVoltage\":" + String(localBattery.filteredPackMv / 1000.0f, 2) + ",";
   json += "\"rawSenseVoltage\":" + String(localBattery.rawPackMv / 1000.0f, 2) + ",";
@@ -105,12 +105,14 @@ static void appendBatteryStatusJson(String& json) {
     }
   }
   json += "\"batteryRuntimeMinutes\":" + String(batteryRuntime.minutes()) + ",";
+  json += "\"batteryRuntimeBasis\":\"" + String(batteryRuntime.basis()) + "\",";
+  json += "\"batteryLearnedDischargePercentHr\":" + String(batteryRuntime.learnedPercentPerHour(), 2) + ",";
+  json += "\"batterySavedDischargePercentHr\":" + String(localBattery.savedDischargeRate, 2) + ",";
   json += "\"batteryDischargePercentHr\":" + String(batteryRuntime.percentPerHour(), 2) + ",";
   json += "\"batteryTrendWindowSec\":" + String(trendWindowSec) + ",";
-  json += "\"batteryCalibrationOffsetPercent\":" + String(localBattery.calibrationOffsetTenths / 10.0f, 1) + ",";
-  json += "\"batteryCalibrationOffsetMv\":" + String(localBattery.calibrationOffsetMv) + ",";
+  json += "\"batteryCalibrationOffsetPercent\":0,";
+  json += "\"batteryCalibrationOffsetMv\":0,";
   json += "\"batteryLearnedVoltage\":" + String(localBattery.learnedBatteryMv / 1000.0f, 2) + ",";
-  json += "\"batteryStableSamples\":" + String(localBattery.stableSampleCount) + ",";
 }
 
 static void appendSdStatusJson(String& json) {
@@ -225,8 +227,8 @@ static void appendInterfaceStatusJson(String& json, const String& wifiIp, const 
   json += "\"toneDirect\":\"" + String(toneStyleName(toneDirectStyle)) + "\",";
   json += "\"toneCodecReg\":" + String(toneCodecVolumeRegister()) + ",";
   json += "\"toneCodecGainDb\":" + String(toneCodecGainDb(), 1) + ",";
-  json += "\"toneAudioReady\":" + String(toneI2sReady ? "true" : "false") + ",";
-  json += "\"toneCodecReady\":" + String(toneCodecReady ? "true" : "false") + ",";
+  json += "\"toneAudioReady\":" + String(toneI2sReady && toneTaskHandle && !toneWorker.pauseRequested.load() ? "true" : "false") + ",";
+  json += "\"toneCodecReady\":" + String(toneCodecReady && !toneWorker.pauseRequested.load() ? "true" : "false") + ",";
   json += "\"toneActive\":" + String(toneActive ? "true" : "false") + ",";
   json += "\"toneLastMs\":" + String(lastToneMs) + ",";
   json += "\"tonePending\":" + String((int)pendingToneKind) + ",";
@@ -272,6 +274,10 @@ static void appendInterfaceStatusJson(String& json, const String& wifiIp, const 
   json += "\"toneShortWrites\":" + String(toneShortWrites) + ",";
   json += "\"toneWriteFailures\":" + String(toneWriteFailures) + ",";
   json += "\"toneLastI2sError\":" + String(toneLastI2sError) + ",";
+  json += "\"toneDataPin\":" + String(CYD_AUDIO_DOUT_PIN) + ",";
+  json += "\"toneRecoveries\":" + String(toneRecoveries) + ",";
+  json += "\"toneDropped\":" + String(toneWorker.dropped.load()) + ",";
+  json += "\"toneRecovering\":" + String(toneWorker.pauseRequested.load() ? "true" : "false") + ",";
 }
 
 static void appendMapStatusJson(String& json) {
@@ -591,6 +597,7 @@ static String buildFieldReportJson() {
   json += "\"heartbeats\":" + String(heartbeatCount) + ",\"apiResyncs\":" + String(apiResyncCount) + ",";
   appendLocalGpsHealthJson(json);
   appendBatteryStatusJson(json);
+  json += "\"audio\":" + buildToneStatusJson() + ",";
   appendSdStatusJson(json);
   appendTileCacheStatusJson(json);
   json += "\"internalFreeKb\":" + String(heapCapKb(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)) + ",";
@@ -906,31 +913,13 @@ static void handleToneTest() {
     int8_t requestedStyle = toneStyleIndexFromText(server.arg("style"));
     if (requestedStyle >= 0) styleToPlay = clampToneStyle((uint8_t)requestedStyle);
   }
-  queueToneStyle(styleToPlay, true);
-  server.send(200, "application/json", buildToneStatusJson());
+  bool accepted = queueToneStyle(styleToPlay, true);
+  server.send(accepted ? 202 : 409, "application/json", buildToneStatusJson());
 }
 
 static void handleToneCodecWrite() {
   if (!requireWebAuth()) return;
-  if (!toneCodecReady) {
-    server.send(503, "text/plain", "codec not ready");
-    return;
-  }
-  if (!server.hasArg("reg") || !server.hasArg("value")) {
-    server.send(400, "text/plain", "missing reg or value");
-    return;
-  }
-
-  uint8_t reg = 0;
-  uint8_t value = 0;
-  if (!parseByteArg(server.arg("reg"), reg) || !parseByteArg(server.arg("value"), value)) {
-    server.send(400, "text/plain", "reg and value must be 0-255 or hex like 0x37");
-    return;
-  }
-
-  bool ok = toneCodecWrite(reg, value);
-  if (ok) server.send(200, "application/json", buildToneStatusJson());
-  else server.send(500, "text/plain", "codec write failed");
+  server.send(410, "text/plain", "Direct codec writes are disabled. Use the sound volume and tone controls.");
 }
 
 static bool webBoolArg(const String& value) {

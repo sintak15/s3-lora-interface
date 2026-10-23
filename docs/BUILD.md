@@ -33,6 +33,11 @@ through `LV_CONF_PATH` in `build_opt.h`. It enables RGB565, PSRAM allocation,
 and the fonts used by the UI. There is no need to edit a shared Arduino library
 configuration. TFT_eSPI uses the checked-in `tft_setup.h`.
 
+Notification audio in v0.1.93 uses GPIO8 to feed the ES8311 DAC, unity codec
+gain and a dedicated PCM task. The Sound page and web test respect saved volume.
+USB `audio` reads playback/codec status; `audio-recover` requests a bounded
+reinitialization without playing a sound. See [notification audio](AUDIO.md).
+
 The board configuration is:
 
 ```text
@@ -80,11 +85,13 @@ Use the scripts to refresh this identity before building after source changes.
   **stale** at 90 seconds. Heartbeats run every 30 seconds. This measures the local
   serial connection, independently of how busy the LoRa mesh is; quiet/stale
   does not prove a wiring failure.
-- Battery runtime appears on the Battery screen and web dashboard/diagnostics.
-  It uses raw MAX17048 SOC decline over a rolling 10–15 minute window, requiring
-  at least a 0.5 percentage-point drop. Charging, invalid/noisy readings, rising
-  SOC and long sampling gaps reset learning. Estimates depend on future load
-  resembling the observed load and do not establish actual remaining capacity.
+- Battery percentage comes from MAX17048 SOC without a voltage-derived trim.
+  Runtime uses a persisted discharge rate with fresh SOC at startup, then blends
+  consistent gauge-rate readings and measured SOC decline as evidence arrives.
+  Charging and unreliable readings pause estimation without erasing the learned
+  rate. The UI identifies previous use, gauge trend and current use, with time
+  rounded to five minutes. See [battery statistics](BATTERY_STATS.md) for learning,
+  persistence, charging inference and measurement limitations.
 - At USB **115200 baud**, send `version` followed by a newline for firmware,
   full source commit, modified-source flag, build date/time and active partition.
   Send `diagnostics` for a single-line JSON health report among the usual logs.

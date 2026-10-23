@@ -41,9 +41,10 @@ These built-in CYD connections are already routed on the board:
 | Audio data | **8** ESP32 → codec playback input; **6** codec → ESP32 recording output |
 | Audio control | Amplifier enable **1**, active low; codec I²C address `0x18` |
 
-**Audio firmware discrepancy:** v0.1.91 currently selects GPIO6 for playback;
-the [board schematic](https://www.lcdwiki.com/res/ES3C28P/2.8inch_ESP32-S3_Display_Schematic.pdf)
-requires GPIO8. This remains an outstanding firmware correction.
+Firmware v0.1.93 uses GPIO8 for playback, matching the
+[board schematic](https://www.lcdwiki.com/res/ES3C28P/2.8inch_ESP32-S3_Display_Schematic.pdf).
+Connect the speaker to the CYD's dedicated speaker port; these GPIO assignments
+describe internal board wiring. See [notification audio](docs/AUDIO.md).
 
 ## What it does
 
@@ -51,16 +52,19 @@ requires GPIO8. This remains an outstanding firmware correction.
   preview. Tap a card for details, or Menu for the launcher.
 - **Messaging:** channel and direct messages, unread counts, delivery states,
   and retry controls where available.
+- **Notification audio:** separate message/direct tones, clean volume control,
+  dedicated playback and automatic audio fault recovery.
 - **Offline maps:** SD-backed maps on both the touchscreen and web interface,
   zooms 10–14, feet/miles scales and coarser fallback when detail is missing.
 - **Map navigation:** drag to explore, pause/follow the device, recenter and
   inspect actual coverage around the touchscreen map center.
 - **Battery monitoring:** optional MAX17048 fuel-gauge support, charging and
-  low-battery status, and runtime estimates when enough discharge data exists.
+  low-battery status, and runtime estimates with discharge learning retained
+  across restarts. See [battery statistics](docs/BATTERY_STATS.md).
 - **Local storage:** chat/event logs, position history, saved location and a
   cached map image on MicroSD.
 - **USB tools:** upload tiles, copy files to a replacement card and inspect
-  receiver-level GPS diagnostics.
+  receiver-level GPS and audio diagnostics.
 
 <img src="docs/images/home.png" alt="Touchscreen home dashboard with radio, battery, nodes and messages cards" width="240">
 

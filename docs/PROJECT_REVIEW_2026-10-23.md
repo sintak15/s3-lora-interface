@@ -1,5 +1,9 @@
 Project review, 2026-10-23
 
+Status update: the GPIO6 playback finding below was corrected in v0.1.93.
+The original review is preserved as a snapshot of v0.1.91. See
+[notification audio](AUDIO.md) for the current signal path, gain and recovery.
+
 Reviewed CYD firmware v0.1.91 at commit `78e8c524a2767ab473efe79343d7ea49bd2978e4`, its wiring instructions, configuration handlers, GPS control/parser, radio telemetry, SD position persistence, browser UI, and build/regression checks. This is a review report; application source has not been changed. The unrelated, previously untracked deployment script was excluded.
 
 The shared GPS UART plan is internally consistent. Two high-priority defects need attention: saving GPS settings clears the Heltec's pin assignments, and the default CYD speaker data-output pin disagrees with the official schematic. Seven further issues concern configuration preservation, status accuracy, and error handling. P1 means fix before relying on the affected function; P2 means a reproducible functional or reliability issue with a narrower trigger.

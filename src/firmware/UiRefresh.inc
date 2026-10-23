@@ -24,8 +24,14 @@ static void printFirmwareIdentity() {
 static void formatBatteryRuntime(char* out, size_t size) {
   if (!localBattery.gaugePresent) strlcpy(out, "unavailable (no gauge)", size);
   else if (localBattery.charging) strlcpy(out, "charging", size);
-  else if (batteryRuntime.minutes() < 0) strlcpy(out, "learning discharge (10+ min)", size);
-  else snprintf(out, size, "~%ldh %ldm", (long)(batteryRuntime.minutes() / 60), (long)(batteryRuntime.minutes() % 60));
+  else if (batteryRuntime.minutes() < 0) strlcpy(out, "estimating...", size);
+  else {
+    int32_t minutes = FieldStatus::roundedRuntimeMinutes(batteryRuntime.minutes());
+    const char* basis = batteryRuntime.basis();
+    const char* label = strcmp(basis, "previous") == 0 ? "prior use" :
+                        strcmp(basis, "gauge") == 0 ? "gauge trend" : "current use";
+    snprintf(out, size, "~%ldh %ldm (%s)", (long)(minutes / 60), (long)(minutes % 60), label);
+  }
 }
 
 static bool gpsSatsPresent() {
@@ -89,9 +95,7 @@ static void refreshDashboardLabels() {
       else if (localBattery.charging) strlcpy(line, "Charging", sizeof(line));
       else if (localBattery.batteryCritical) strlcpy(line, "Charge soon", sizeof(line));
       else if (localBattery.batteryLow) strlcpy(line, "Battery low", sizeof(line));
-      else if (batteryRuntime.minutes() >= 60) snprintf(line, sizeof(line), "~%ldh %ldm left", (long)(batteryRuntime.minutes() / 60), (long)(batteryRuntime.minutes() % 60));
-      else if (batteryRuntime.minutes() >= 0) snprintf(line, sizeof(line), "~%ldm left", (long)batteryRuntime.minutes());
-      else strlcpy(line, "On battery", sizeof(line));
+      else formatBatteryRuntime(line, sizeof(line));
       lv_label_set_text(lblHomePowerDetail, line);
     }
     if (homePowerBar) {
@@ -552,6 +556,7 @@ static void refreshScreenUi() {
   if (dropdownToneMessage || dropdownToneDirect) {
     updateToneDropdowns();
   }
+  if (currentPage == pageSound) updateToneVolumeLabel();
 
   if (currentPage == pageBacklight && lblBacklight) {
     char backlightText[96];
@@ -584,18 +589,16 @@ static void refreshScreenUi() {
                "Alert: %s\n"
                "Displayed source: %s\n"
                "Gauge SOC: %.1f%%  raw 0x%04X\n"
-               "MAX corrected: %d%%  trim %.1f%%\n"
                "Pack filtered: %.3f V\n"
                "Pack raw: %.3f V\n"
-               "Code voltage estimate: %d%%\n"
                "Voltage filter: %s  rejected %lu\n"
                "Voltage low/critical: %s/%s\n"
                "Charge rate: %.1f%%/hr\n"
                "Last change: %ld mV\n"
                "Voltage trend: %.1f mV/min\n"
                "Charging: %s\n"
-               "Learning samples: %u\n"
-               "Quick-start: %s\n"
+               "Discharge: %.1f%%/hr\n"
+               "Saved discharge: %.1f%%/hr\n"
                "Updated: %lu s ago\n\n"
                "Power path\n"
                "LiPo > charger > booster > 5V pins\n\n"
@@ -610,11 +613,8 @@ static void refreshScreenUi() {
                localBattery.percentSource,
                localBattery.gaugeSoc,
                localBattery.rawGaugeSoc,
-               localBattery.correctedGaugePercent,
-               localBattery.calibrationOffsetTenths / 10.0f,
                localBattery.batteryMv / 1000.0f,
                localBattery.rawPackMv / 1000.0f,
-               localBattery.voltagePercent,
                localBattery.voltageUnstable ? "settling" : "stable",
                (unsigned long)localBattery.voltageRejectedSamples,
                localBattery.voltageLowSustained ? "yes" : "no",
@@ -623,8 +623,8 @@ static void refreshScreenUi() {
                (long)localBattery.instantDeltaMv,
                localBattery.deltaMvPerMinTenths / 10.0f,
                localBattery.charging ? "yes" : "no",
-               localBattery.stableSampleCount,
-               localBattery.quickStartSent ? "sent" : "not needed",
+               batteryRuntime.percentPerHour(),
+               localBattery.savedDischargeRate,
                (unsigned long)gaugeAge,
                (unsigned long)(millis() / 1000),
                (unsigned long)(ESP.getFreeHeap() / 1024),
@@ -1074,6 +1074,14 @@ static void serviceUsbSerialCommands() {
         printFirmwareIdentity();
       } else if (strcmp(command, "diagnostics") == 0) {
         Serial.println(buildFieldReportJson());
+      } else if (strcmp(command, "audio") == 0 || strcmp(command, "tone-status") == 0) {
+        Serial.println(String("[audio] ") + buildToneStatusJson());
+      } else if (strcmp(command, "audio-recover") == 0) {
+        requestToneRecovery(true);
+        Serial.println("[audio] recovery requested");
+      } else if (strcmp(command, "audio-test") == 0) {
+        bool accepted = enqueueTone(TONE_TEST, TONE_STYLE_RAW, true, 25);
+        Serial.println(accepted ? "[audio] short sine queued (25% maximum)" : "[audio] test unavailable: busy, muted or recovering");
       } else if (strcmp(command, "tiles") == 0 || strcmp(command, "maps") == 0) {
         printSdTileSummary();
       } else if (strcmp(command, "tilesfast") == 0) {
@@ -1099,7 +1107,7 @@ static void serviceUsbSerialCommands() {
                       (unsigned long)sdAppendDropped);
       } else if (commandLen > 0) {
         Serial.printf("[serial] unknown command: %s\n", command);
-        Serial.println("[serial] commands: version, diagnostics, mapbench, sd, tiles, tilesfast, tileroots, tile-hello");
+        Serial.println("[serial] commands: version, diagnostics, audio, audio-test, audio-recover, mapbench, sd, tiles, tilesfast, tileroots, tile-hello");
       }
       commandLen = 0;
       command[0] = '\0';

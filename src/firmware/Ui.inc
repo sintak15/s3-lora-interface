@@ -1913,10 +1913,10 @@ static void buildScreenUi() {
   makePageTitle(pageSound, "Sound");
   makePageScrollable(pageSound);
   lv_obj_t* soundPanel = makePanel(pageSound);
-  lv_obj_set_size(soundPanel, SCREEN_W - 12, 356);
+  lv_obj_set_size(soundPanel, SCREEN_W - 12, 292);
   lv_obj_align(soundPanel, LV_ALIGN_TOP_MID, 0, 30);
   lblToneVolume = lv_label_create(soundPanel);
-  lv_label_set_text(lblToneVolume, "Volume: 75%  Boost: +6 dB\nCodec: not ready\nMsg: Bell  DM: Bell");
+  lv_label_set_text(lblToneVolume, "Volume: 50%  Starting audio\nMsg: Bell  DM: Bell");
   styleBoundedLabel(lblToneVolume, lv_pct(100), COLOR_TEXT, LV_LABEL_LONG_WRAP);
   lv_obj_align(lblToneVolume, LV_ALIGN_TOP_LEFT, 2, 4);
   sliderToneVolume = lv_slider_create(soundPanel);
@@ -1928,28 +1928,15 @@ static void buildScreenUi() {
   lv_obj_set_style_bg_color(sliderToneVolume, lv_color_hex(COLOR_ACTION), LV_PART_INDICATOR);
   lv_obj_set_style_bg_color(sliderToneVolume, lv_color_hex(COLOR_TEXT), LV_PART_KNOB);
   lv_obj_add_event_cb(sliderToneVolume, toneVolumeSliderEvent, LV_EVENT_VALUE_CHANGED, nullptr);
-  lv_obj_t* lblBoost = lv_label_create(soundPanel);
-  lv_label_set_text(lblBoost, "Output boost");
-  styleBoundedLabel(lblBoost, lv_pct(100), COLOR_MUTED, LV_LABEL_LONG_WRAP);
-  lv_obj_align(lblBoost, LV_ALIGN_TOP_LEFT, 2, 110);
-  dropdownToneBoost = lv_dropdown_create(soundPanel);
-  lv_dropdown_set_options(dropdownToneBoost, TONE_BOOST_OPTIONS);
-  lv_dropdown_set_selected(dropdownToneBoost, (uint16_t)toneBoostLevel);
-  lv_obj_set_size(dropdownToneBoost, SCREEN_W - 42, 34);
-  lv_obj_align(dropdownToneBoost, LV_ALIGN_TOP_MID, 0, 130);
-  styleDarkObject(dropdownToneBoost, COLOR_INPUT, COLOR_TEXT);
-  styleDarkBorder(dropdownToneBoost, 0x2F705F);
-  lv_obj_set_style_radius(dropdownToneBoost, 6, 0);
-  lv_obj_add_event_cb(dropdownToneBoost, toneBoostDropdownEvent, LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_t* lblMessageTone = lv_label_create(soundPanel);
   lv_label_set_text(lblMessageTone, "Message tone");
   styleBoundedLabel(lblMessageTone, lv_pct(100), COLOR_MUTED, LV_LABEL_LONG_WRAP);
-  lv_obj_align(lblMessageTone, LV_ALIGN_TOP_LEFT, 2, 174);
+  lv_obj_align(lblMessageTone, LV_ALIGN_TOP_LEFT, 2, 110);
   dropdownToneMessage = lv_dropdown_create(soundPanel);
   lv_dropdown_set_options(dropdownToneMessage, TONE_STYLE_OPTIONS);
   lv_dropdown_set_selected(dropdownToneMessage, (uint16_t)toneMessageStyle);
   lv_obj_set_size(dropdownToneMessage, SCREEN_W - 42, 34);
-  lv_obj_align(dropdownToneMessage, LV_ALIGN_TOP_MID, 0, 194);
+  lv_obj_align(dropdownToneMessage, LV_ALIGN_TOP_MID, 0, 130);
   styleDarkObject(dropdownToneMessage, COLOR_INPUT, COLOR_TEXT);
   styleDarkBorder(dropdownToneMessage, 0x2F705F);
   lv_obj_set_style_radius(dropdownToneMessage, 6, 0);
@@ -1957,20 +1944,20 @@ static void buildScreenUi() {
   lv_obj_t* lblDirectTone = lv_label_create(soundPanel);
   lv_label_set_text(lblDirectTone, "Direct tone");
   styleBoundedLabel(lblDirectTone, lv_pct(100), COLOR_MUTED, LV_LABEL_LONG_WRAP);
-  lv_obj_align(lblDirectTone, LV_ALIGN_TOP_LEFT, 2, 238);
+  lv_obj_align(lblDirectTone, LV_ALIGN_TOP_LEFT, 2, 174);
   dropdownToneDirect = lv_dropdown_create(soundPanel);
   lv_dropdown_set_options(dropdownToneDirect, TONE_STYLE_OPTIONS);
   lv_dropdown_set_selected(dropdownToneDirect, (uint16_t)toneDirectStyle);
   lv_obj_set_size(dropdownToneDirect, SCREEN_W - 42, 34);
-  lv_obj_align(dropdownToneDirect, LV_ALIGN_TOP_MID, 0, 258);
+  lv_obj_align(dropdownToneDirect, LV_ALIGN_TOP_MID, 0, 194);
   styleDarkObject(dropdownToneDirect, COLOR_INPUT, COLOR_TEXT);
   styleDarkBorder(dropdownToneDirect, 0x2F705F);
   lv_obj_set_style_radius(dropdownToneDirect, 6, 0);
   lv_obj_add_event_cb(dropdownToneDirect, toneDirectDropdownEvent, LV_EVENT_VALUE_CHANGED, nullptr);
-  makeSmallButton(soundPanel, "Test Msg", 8, 312, 106, [](lv_event_t*) {
+  makeSmallButton(soundPanel, "Test Msg", 8, 248, 106, [](lv_event_t*) {
     queueToneStyle(toneMessageStyle, true);
   });
-  makeSmallButton(soundPanel, "Test DM", 126, 312, 106, [](lv_event_t*) {
+  makeSmallButton(soundPanel, "Test DM", 126, 248, 106, [](lv_event_t*) {
     queueToneStyle(toneDirectStyle, true);
   });
   updateToneVolumeLabel();

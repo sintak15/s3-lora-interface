@@ -1,6 +1,5 @@
 // Internal implementation module; included once by the main sketch.
-static const char TONE_STYLE_OPTIONS[] = "Low Bell\nChime\nTwo Step\nBeacon\nPager\nBell\nSustain\nRaw";
-static const char TONE_BOOST_OPTIONS[] = "0 dB\n+3 dB\n+6 dB\n+9 dB\n+12 dB\nMax";
+static const char TONE_STYLE_OPTIONS[] = "Low Bell\nChime\nTwo Step\nBeacon\nPager\nBell\nSustain\nTest Sine";
 
 static const ToneSegment TONE_PATTERN_BWOMP[] = {
   {0, 120}, {980, 220, 780}, {0, 80}, {620, 420, 480}, {0, 180}
@@ -24,51 +23,8 @@ static const ToneSegment TONE_PATTERN_SUSTAIN[] = {
   {0, 160}, {520, 2600}, {0, 850}
 };
 static const ToneSegment TONE_PATTERN_RAW[] = {
-  {1000, 3000}
+  {0, 120}, {1000, 300}, {0, 100}
 };
-
-static uint8_t clampToneBoost(uint8_t level) {
-  return level <= 5 ? level : 2;
-}
-
-static const char* toneBoostName(uint8_t level) {
-  switch (clampToneBoost(level)) {
-    case 1: return "+3 dB";
-    case 2: return "+6 dB";
-    case 3: return "+9 dB";
-    case 4: return "+12 dB";
-    case 5: return "Max";
-    case 0:
-    default:
-      return "0 dB";
-  }
-}
-
-static uint8_t toneBoostTargetRegister() {
-  switch (clampToneBoost(toneBoostLevel)) {
-    case 1: return 0xC5;
-    case 2: return 0xCB;
-    case 3: return 0xD1;
-    case 4: return 0xD7;
-    case 5: return 0xFF;
-    case 0:
-    default:
-      return 0xBF;
-  }
-}
-
-static uint8_t tonePcmDrivePercent() {
-  switch (clampToneBoost(toneBoostLevel)) {
-    case 1: return 100;
-    case 2: return 100;
-    case 3: return 100;
-    case 4: return 100;
-    case 5: return 100;
-    case 0:
-    default:
-      return 100;
-  }
-}
 
 static ToneStyle clampToneStyle(uint8_t style) {
   return style < TONE_STYLE_COUNT ? (ToneStyle)style : TONE_STYLE_BWOMP;
@@ -82,7 +38,7 @@ static const char* toneStyleName(ToneStyle style) {
     case TONE_STYLE_ALERT: return "Pager";
     case TONE_STYLE_LOUD: return "Bell";
     case TONE_STYLE_SUSTAIN: return "Sustain";
-    case TONE_STYLE_RAW: return "Raw";
+    case TONE_STYLE_RAW: return "Test Sine";
     case TONE_STYLE_BWOMP:
     default:
       return "Low Bell";
@@ -128,303 +84,175 @@ static const ToneSegment* tonePatternFor(ToneStyle style, size_t& count) {
   }
 }
 
-static uint8_t toneCodecVolumeRegister() {
-  uint8_t pct = constrain((int)toneVolumePercent, 0, 100);
-  if (pct == 0) return 0x00;
-  return toneBoostTargetRegister();
+
+// Unity codec gain plus bounded PCM amplitude gives every volume setting headroom.
+// Keep legacy API values readable, but retire the experimental gain/profiles.
+static uint8_t clampToneBoost(uint8_t) { return 0; }
+static const char* toneBoostName(uint8_t) { return "0 dB"; }
+static uint8_t tonePcmDrivePercent() { return 75; }
+static uint8_t clampToneCodecProfile(uint8_t) { return TONE_CODEC_PROFILE_DRIVER; }
+static const char* toneCodecProfileName(uint8_t) { return "Speaker"; }
+static uint8_t toneCodecVolumeRegister() { return toneVolumePercent ? 0xBF : 0x00; }
+static float toneCodecGainDb() { return toneVolumePercent ? 0.0f : -95.5f; }
+
+static void toneSetSpeakerEnabled(bool enabled) {
+  toneSpeakerEnabled = enabled;
+  if (CYD_AUDIO_ENABLE_PIN >= 0) {
+    const int off = CYD_AUDIO_ENABLE_LEVEL == LOW ? HIGH : LOW;
+    digitalWrite(CYD_AUDIO_ENABLE_PIN, enabled ? CYD_AUDIO_ENABLE_LEVEL : off);
+  }
+  toneWorker.ampEnabled.store(enabled);
 }
 
-static float toneCodecGainDb() {
-  uint8_t reg = toneCodecVolumeRegister();
-  if (reg == 0x00) return -95.5f;
-  if (reg == 0x01) return -90.5f;
-  return ((int)reg - 0xBF) * 0.5f;
+static void requestToneRecovery(bool manual) {
+  if (manual) { toneRecoveryAttempts = 0; toneRecoveryAttempted = false; }
+  toneWorker.epoch.fetch_add(1);
+  toneWorker.pauseRequested.store(true);
+  toneI2sReady = toneCodecReady = false;
+  toneSetSpeakerEnabled(false);
 }
 
 static bool toneCodecWrite(uint8_t reg, uint8_t value) {
   Wire.beginTransmission((uint8_t)CYD_AUDIO_CODEC_ADDR);
-  Wire.write(reg);
-  Wire.write(value);
-  return Wire.endTransmission() == 0;
+  Wire.write(reg); Wire.write(value);
+  bool ok = Wire.endTransmission() == 0;
+  if (!ok) ++toneCodecIoFailures;
+  return ok;
 }
 
-static uint8_t toneCodecRead(uint8_t reg, uint8_t fallback) {
+static bool toneCodecReadChecked(uint8_t reg, uint8_t& value) {
   Wire.beginTransmission((uint8_t)CYD_AUDIO_CODEC_ADDR);
   Wire.write(reg);
-  if (Wire.endTransmission(false) != 0) return fallback;
-  if (Wire.requestFrom((uint8_t)CYD_AUDIO_CODEC_ADDR, (uint8_t)1) != 1) return fallback;
-  return Wire.read();
+  if (Wire.endTransmission(false) != 0 || Wire.requestFrom((uint8_t)CYD_AUDIO_CODEC_ADDR, (uint8_t)1) != 1) {
+    ++toneCodecIoFailures;
+    return false;
+  }
+  value = Wire.read();
+  return true;
 }
 
 static int toneCodecReadInt(uint8_t reg) {
   if (!toneCodecReady) return -1;
-  return (int)toneCodecRead(reg, 0xFF);
-}
-
-static uint8_t clampToneCodecProfile(uint8_t profile) {
-  return profile < TONE_CODEC_PROFILE_COUNT ? profile : TONE_CODEC_PROFILE_REF_HP;
-}
-
-static const char* toneCodecProfileName(uint8_t profile) {
-  switch (clampToneCodecProfile(profile)) {
-    case TONE_CODEC_PROFILE_DRIVER: return "Driver";
-    case TONE_CODEC_PROFILE_REF_LINE: return "Ref Line";
-    case TONE_CODEC_PROFILE_LEGACY: return "Legacy";
-    case TONE_CODEC_PROFILE_REF_HP:
-    default:
-      return "Ref HP";
-  }
-}
-
-static uint8_t toneProfileReg0A(uint8_t profile) {
-  (void)profile;
-  return 0x4C;
-}
-
-static uint8_t toneProfileReg12(uint8_t profile) {
-  switch (clampToneCodecProfile(profile)) {
-    case TONE_CODEC_PROFILE_REF_HP:
-    case TONE_CODEC_PROFILE_REF_LINE:
-      return 0x01;
-    case TONE_CODEC_PROFILE_DRIVER:
-    case TONE_CODEC_PROFILE_LEGACY:
-    default:
-      return 0x00;
-  }
-}
-
-static uint8_t toneProfileReg13(uint8_t profile) {
-  return clampToneCodecProfile(profile) == TONE_CODEC_PROFILE_REF_LINE ? 0x00 : 0x10;
-}
-
-static uint8_t toneProfileReg15(uint8_t profile) {
-  return clampToneCodecProfile(profile) == TONE_CODEC_PROFILE_LEGACY ? 0x00 : 0x40;
-}
-
-static uint8_t toneProfileReg37(uint8_t profile) {
-  return clampToneCodecProfile(profile) == TONE_CODEC_PROFILE_LEGACY ? 0x08 : 0x48;
-}
-
-static bool writeToneCodecOutputProfileRaw() {
-  const uint8_t profile = clampToneCodecProfile(toneCodecProfile);
-  bool ok = true;
-  ok &= toneCodecWrite(0x0A, toneProfileReg0A(profile));
-  ok &= toneCodecWrite(0x17, 0xBF);
-  ok &= toneCodecWrite(0x0E, 0x02);
-  ok &= toneCodecWrite(0x12, toneProfileReg12(profile));
-  ok &= toneCodecWrite(0x14, 0x1A);
-  ok &= toneCodecWrite(0x0D, 0x01);
-  ok &= toneCodecWrite(0x15, 0x40);
-  ok &= toneCodecWrite(0x37, toneProfileReg37(profile));
-  ok &= toneCodecWrite(0x45, 0x00);
-  return ok;
-}
-
-static bool applyToneCodecOutputProfile() {
-  if (!toneCodecReady) return false;
-  return writeToneCodecOutputProfileRaw();
+  uint8_t value;
+  if (toneCodecReadChecked(reg, value)) return value;
+  requestToneRecovery(false);
+  return -1; // Never disguise an I2C failure as the valid register value 0xFF.
 }
 
 static bool initToneCodec() {
-  Wire.beginTransmission((uint8_t)CYD_AUDIO_CODEC_ADDR);
-  if (Wire.endTransmission() != 0) {
-    toneCodecInitFailures++;
-    return false;
+  uint8_t id1 = 0, id2 = 0;
+  bool ok = toneCodecReadChecked(0xFD, id1) && toneCodecReadChecked(0xFE, id2);
+  if (!ok || id1 != 0x83 || id2 != 0x11) { ++toneCodecInitFailures; return false; }
+  // ES8311 slave, external MCLK=256*16 kHz, 16-bit Philips I2S. Register 04
+  // matches Espressif's 4.096 MHz/16 kHz DAC oversampling coefficient (0x20).
+  // ADC data is muted AND tri-stated; OUTP/OUTN use line drive into the board PA.
+  static const uint8_t config[][2] = {
+    {0x44,0x08}, {0x44,0x08}, {0x01,0x30}, {0x02,0x00},
+    {0x03,0x10}, {0x04,0x20}, {0x05,0x00}, {0x0B,0x00},
+    {0x0C,0x00}, {0x10,0x1F}, {0x11,0x7F}, {0x00,0x80},
+    {0x01,0x35}, {0x06,0x07}, {0x07,0x10}, {0x08,0xFF},
+    {0x09,0x0C}, {0x0A,0x4C}, {0x0D,0x01}, {0x0E,0x62},
+    {0x12,0x00}, {0x13,0x00}, {0x37,0x48}, {0x45,0x00}
+  };
+  for (const auto& setting : config) {
+    if (!toneCodecWrite(setting[0], setting[1])) { ok = false; break; }
+    if (setting[0] == 0x00) delay(12);
   }
-
-  bool ok = true;
-  ok &= toneCodecWrite(0x01, 0x30);
-  ok &= toneCodecWrite(0x02, 0x00);
-  ok &= toneCodecWrite(0x03, 0x10);
-  ok &= toneCodecWrite(0x16, 0x24);
-  ok &= toneCodecWrite(0x04, 0x10);
-  ok &= toneCodecWrite(0x05, 0x00);
-  ok &= toneCodecWrite(0x0B, 0x00);
-  ok &= toneCodecWrite(0x0C, 0x00);
-  ok &= toneCodecWrite(0x10, 0x1F);
-  ok &= toneCodecWrite(0x11, 0x7F);
-  ok &= toneCodecWrite(0x00, 0x80);
-  delay(12);
-  uint8_t resetReg = toneCodecRead(0x00, 0x80);
-  resetReg &= (uint8_t)~0x40;
-  ok &= toneCodecWrite(0x00, resetReg);
-  ok &= toneCodecWrite(0x01, 0x3F);
-  uint8_t clkReg = toneCodecRead(0x01, 0x3F);
-  clkReg &= (uint8_t)~0x80;
-  ok &= toneCodecWrite(0x01, clkReg);
-  ok &= toneCodecWrite(0x02, 0x00);
-  ok &= toneCodecWrite(0x03, 0x10);
-  ok &= toneCodecWrite(0x04, 0x10);
-  ok &= toneCodecWrite(0x05, 0x00);
-  ok &= toneCodecWrite(0x06, 0x03);
-  ok &= toneCodecWrite(0x07, 0x00);
-  ok &= toneCodecWrite(0x08, 0xFF);
-  ok &= toneCodecWrite(0x09, 0x0C);
-  ok &= toneCodecWrite(0x13, 0x10);
-  ok &= toneCodecWrite(0x1B, 0x0A);
-  ok &= toneCodecWrite(0x1C, 0x6A);
-  ok &= toneCodecWrite(0x0D, 0x01);
-  ok &= toneCodecWrite(0x0E, 0x02);
-  ok &= writeToneCodecOutputProfileRaw();
-  ok &= toneCodecWrite(0x32, toneCodecVolumeRegister());
-
-  uint8_t muteReg = toneCodecRead(0x31, 0x00);
-  if (toneVolumePercent == 0) muteReg |= 0x60;
-  else muteReg &= (uint8_t)~0x60;
-  ok &= toneCodecWrite(0x31, muteReg);
-  ok &= toneCodecWrite(0x00, 0x80);
-  if (!ok) toneCodecInitFailures++;
+  ok = ok && toneCodecWrite(0x32, toneCodecVolumeRegister());
+  ok = ok && toneCodecWrite(0x31, toneVolumePercent ? 0x00 : 0x60);
+  uint8_t value = 0;
+  ok = ok && toneCodecReadChecked(0x04, value) && value == 0x20;
+  ok = ok && toneCodecReadChecked(0x09, value) && value == 0x0C;
+  ok = ok && toneCodecReadChecked(0x32, value) && value == toneCodecVolumeRegister();
+  if (!ok) ++toneCodecInitFailures;
   return ok;
 }
 
-static void toneSetSpeakerEnabled(bool enabled) {
-  if (CYD_AUDIO_ENABLE_PIN < 0) return;
-  toneSpeakerEnabled = enabled;
-  const int disabledLevel = (CYD_AUDIO_ENABLE_LEVEL == LOW) ? HIGH : LOW;
-  digitalWrite(CYD_AUDIO_ENABLE_PIN, enabled ? CYD_AUDIO_ENABLE_LEVEL : disabledLevel);
+static bool beginToneI2s() {
+  // GPIO6 is the codec's recording output. Never configure it as a transmitter.
+  pinMode(6, INPUT);
+  toneI2s.setPins(CYD_AUDIO_BCLK_PIN, CYD_AUDIO_LRCLK_PIN, CYD_AUDIO_DOUT_PIN, -1, CYD_AUDIO_MCLK_PIN);
+  return toneI2s.begin(I2S_MODE_STD, TONE_SAMPLE_RATE, I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO);
+}
+
+static bool applyToneCodecOutputProfile() {
+  // Legacy clients may still send profile names; playback uses one fixed setup.
+  return toneCodecReady;
 }
 
 static void applyToneVolume() {
   toneVolumePercent = constrain((int)toneVolumePercent, 0, 100);
-  if (toneCodecReady) {
-    toneCodecWrite(0x32, toneCodecVolumeRegister());
-    uint8_t muteReg = toneCodecRead(0x31, 0x00);
-    if (toneVolumePercent == 0) muteReg |= 0x60;
-    else muteReg &= (uint8_t)~0x60;
-    toneCodecWrite(0x31, muteReg);
-  }
-  if (toneVolumePercent == 0) {
-    toneActive = false;
-    pendingToneKind = TONE_NONE;
-    toneSpeakerHoldUntilMs = 0;
+  toneWorker.volume.store(toneVolumePercent);
+  if (!toneVolumePercent) {
+    toneWorker.epoch.fetch_add(1); // Cancel queued/current sounds without resetting I2S.
     toneSetSpeakerEnabled(false);
+  }
+  if (toneCodecReady && (!toneCodecWrite(0x32, toneCodecVolumeRegister()) ||
+                         !toneCodecWrite(0x31, toneVolumePercent ? 0x00 : 0x60))) {
+    requestToneRecovery(false);
   }
 }
 
 static const char* toneAudioStateLabel() {
-  if (!toneI2sReady) return "not ready";
-  return toneCodecReady ? "I2S + codec" : "I2S";
+  if (!toneTaskHandle) return "Audio unavailable";
+  if (toneWorker.pauseRequested.load()) return toneRecoveryAttempts >= 3 ? "Audio fault" : "Recovering audio";
+  return toneI2sReady && toneCodecReady ? (toneActive ? "Playing" : "Ready") : "Audio unavailable";
 }
 
 static void updateToneVolumeLabel() {
   if (!lblToneVolume) return;
   char text[176];
-  snprintf(text, sizeof(text),
-           "Volume: %u%%  Boost: %s\nCodec: %s  %.1f dB  %s\nMsg: %s  DM: %s",
-           toneVolumePercent,
-           toneBoostName(toneBoostLevel),
-           toneAudioStateLabel(),
-           toneCodecGainDb(),
-           toneCodecProfileName(toneCodecProfile),
-           toneStyleName(toneMessageStyle),
-           toneStyleName(toneDirectStyle));
+  snprintf(text, sizeof(text), "Volume: %u%%  %s\nMsg: %s  DM: %s",
+           toneVolumePercent, toneAudioStateLabel(), toneStyleName(toneMessageStyle), toneStyleName(toneDirectStyle));
   lv_label_set_text(lblToneVolume, text);
 }
 
 static void toneVolumeSliderEvent(lv_event_t* e) {
-  lv_obj_t* slider = (lv_obj_t*)lv_event_get_target(e);
-  toneVolumePercent = constrain((int)lv_slider_get_value(slider), 0, 100);
+  toneVolumePercent = constrain((int)lv_slider_get_value((lv_obj_t*)lv_event_get_target(e)), 0, 100);
   prefs.putUChar("toneVol", toneVolumePercent);
-  applyToneVolume();
-  updateToneVolumeLabel();
+  applyToneVolume(); updateToneVolumeLabel();
 }
 
 static void updateToneDropdowns() {
-  if (dropdownToneBoost && lv_dropdown_get_selected(dropdownToneBoost) != (uint16_t)toneBoostLevel) {
-    lv_dropdown_set_selected(dropdownToneBoost, (uint16_t)toneBoostLevel);
-  }
-  if (dropdownToneMessage && lv_dropdown_get_selected(dropdownToneMessage) != (uint16_t)toneMessageStyle) {
+  if (dropdownToneMessage && lv_dropdown_get_selected(dropdownToneMessage) != (uint16_t)toneMessageStyle)
     lv_dropdown_set_selected(dropdownToneMessage, (uint16_t)toneMessageStyle);
-  }
-  if (dropdownToneDirect && lv_dropdown_get_selected(dropdownToneDirect) != (uint16_t)toneDirectStyle) {
+  if (dropdownToneDirect && lv_dropdown_get_selected(dropdownToneDirect) != (uint16_t)toneDirectStyle)
     lv_dropdown_set_selected(dropdownToneDirect, (uint16_t)toneDirectStyle);
-  }
-}
-
-static void toneBoostDropdownEvent(lv_event_t* e) {
-  lv_obj_t* dropdown = (lv_obj_t*)lv_event_get_target(e);
-  toneBoostLevel = clampToneBoost((uint8_t)lv_dropdown_get_selected(dropdown));
-  prefs.putUChar("toneBoost", toneBoostLevel);
-  applyToneVolume();
-  updateToneVolumeLabel();
 }
 
 static void toneMessageDropdownEvent(lv_event_t* e) {
-  lv_obj_t* dropdown = (lv_obj_t*)lv_event_get_target(e);
-  toneMessageStyle = clampToneStyle((uint8_t)lv_dropdown_get_selected(dropdown));
-  prefs.putUChar("toneMsg", (uint8_t)toneMessageStyle);
-  updateToneVolumeLabel();
+  toneMessageStyle = clampToneStyle((uint8_t)lv_dropdown_get_selected((lv_obj_t*)lv_event_get_target(e)));
+  prefs.putUChar("toneMsg", (uint8_t)toneMessageStyle); updateToneVolumeLabel();
 }
-
 static void toneDirectDropdownEvent(lv_event_t* e) {
-  lv_obj_t* dropdown = (lv_obj_t*)lv_event_get_target(e);
-  toneDirectStyle = clampToneStyle((uint8_t)lv_dropdown_get_selected(dropdown));
-  prefs.putUChar("toneDir", (uint8_t)toneDirectStyle);
-  updateToneVolumeLabel();
+  toneDirectStyle = clampToneStyle((uint8_t)lv_dropdown_get_selected((lv_obj_t*)lv_event_get_target(e)));
+  prefs.putUChar("toneDir", (uint8_t)toneDirectStyle); updateToneVolumeLabel();
 }
 
-static bool startToneSegment(uint8_t segmentIndex) {
-  size_t count = 0;
-  const ToneSegment* pattern = tonePatternFor(activeToneStyle, count);
-  if (!pattern || segmentIndex >= count) return false;
-  activeToneSegment = segmentIndex;
-  activeToneFramesRemaining = ((uint32_t)pattern[segmentIndex].durationMs * TONE_SAMPLE_RATE) / 1000U;
-  if (activeToneFramesRemaining == 0) activeToneFramesRemaining = 1;
-  activeToneSegmentTotalFrames = activeToneFramesRemaining;
-  tonePhase = 0.0f;
-  return true;
-}
-
-static void startTone(ToneKind kind) {
-  if (!toneI2sReady || toneVolumePercent == 0 || kind == TONE_NONE) return;
-  activeToneKind = kind;
-  activeToneStyle = toneStyleForKind(kind);
-  toneActive = startToneSegment(0);
-  if (!toneActive) {
-    activeToneKind = TONE_NONE;
-    return;
+static bool enqueueTone(ToneKind kind, ToneStyle style, bool test, uint8_t volumeLimit = 100) {
+  if (!toneTaskHandle || !toneRequestQueue || !toneVolumePercent || kind == TONE_NONE) return false;
+  if (!toneI2sReady || !toneCodecReady || toneWorker.pauseRequested.load()) {
+    if (toneRecoveryAttempts >= 3) requestToneRecovery(true);
+    return false;
   }
-  lastToneMs = millis();
-  toneSpeakerHoldUntilMs = 0;
-  toneSetSpeakerEnabled(true);
-}
-
-static void finishTone() {
-  toneActive = false;
-  activeToneKind = TONE_NONE;
-  activeToneFramesRemaining = 0;
-  activeToneSegmentTotalFrames = 0;
-  if (pendingToneKind != TONE_NONE) {
-    ToneKind next = pendingToneKind;
-    pendingToneKind = TONE_NONE;
-    startTone(next);
-    return;
-  }
-  toneSpeakerHoldUntilMs = millis() + TONE_SPEAKER_HOLD_MS;
+  unsigned jobs = toneWorker.jobs.load();
+  if ((test && jobs) || jobs >= 2) { toneWorker.dropped.fetch_add(1); return false; }
+  ToneRequest request{kind, style, toneWorker.epoch.load(), volumeLimit};
+  toneWorker.jobs.fetch_add(1);
+  toneWorker.nextKind.store(kind);
+  BaseType_t sent = kind == TONE_DIRECT ? xQueueSendToFront(toneRequestQueue, &request, 0) :
+                                         xQueueSend(toneRequestQueue, &request, 0);
+  if (sent == pdTRUE) return true;
+  toneWorker.jobs.fetch_sub(1); toneWorker.dropped.fetch_add(1);
+  return false;
 }
 
 static void queueTone(ToneKind kind, bool replace) {
-  if (!toneI2sReady || toneVolumePercent == 0 || kind == TONE_NONE) return;
-  if (replace) {
-    pendingToneKind = TONE_NONE;
-    startTone(kind);
-    return;
-  }
-  if (toneActive) {
-    if (kind == TONE_DIRECT || pendingToneKind == TONE_NONE) pendingToneKind = kind;
-    return;
-  }
-  startTone(kind);
+  enqueueTone(kind, toneStyleForKind(kind), replace || kind == TONE_TEST);
 }
-
-static void queueToneStyle(ToneStyle style, bool replace) {
-  if (!toneI2sReady || toneVolumePercent == 0) return;
-  ToneStyle previousMessageStyle = toneMessageStyle;
-  toneMessageStyle = clampToneStyle((uint8_t)style);
-  queueTone(TONE_TEST, replace);
-  toneMessageStyle = previousMessageStyle;
+static bool queueToneStyle(ToneStyle style, bool) {
+  return enqueueTone(TONE_TEST, clampToneStyle((uint8_t)style), true);
 }
-
 static int8_t toneStyleIndexFromText(String value) {
   value.trim();
   value.toLowerCase();
@@ -440,7 +268,7 @@ static int8_t toneStyleIndexFromText(String value) {
   if (value == "pager" || value == "alert") return TONE_STYLE_ALERT;
   if (value == "bell" || value == "loud") return TONE_STYLE_LOUD;
   if (value == "sustain" || value == "carrier" || value == "test") return TONE_STYLE_SUSTAIN;
-  if (value == "raw" || value == "square" || value == "tone") return TONE_STYLE_RAW;
+  if (value == "test sine" || value == "sine" || value == "raw" || value == "square" || value == "tone") return TONE_STYLE_RAW;
   return -1;
 }
 
@@ -505,8 +333,8 @@ static String buildToneStatusJson() {
   json += "\"toneDirect\":\"" + String(toneStyleName(toneDirectStyle)) + "\",";
   json += "\"toneCodecReg\":" + String(toneCodecVolumeRegister()) + ",";
   json += "\"toneCodecGainDb\":" + String(toneCodecGainDb(), 1) + ",";
-  json += "\"toneAudioReady\":" + String(toneI2sReady ? "true" : "false") + ",";
-  json += "\"toneCodecReady\":" + String(toneCodecReady ? "true" : "false") + ",";
+  json += "\"toneAudioReady\":" + String(toneI2sReady && toneTaskHandle && !toneWorker.pauseRequested.load() ? "true" : "false") + ",";
+  json += "\"toneCodecReady\":" + String(toneCodecReady && !toneWorker.pauseRequested.load() ? "true" : "false") + ",";
   json += "\"toneActive\":" + String(toneActive ? "true" : "false") + ",";
   json += "\"tonePending\":" + String((int)pendingToneKind) + ",";
   json += "\"toneLastMs\":" + String(lastToneMs) + ",";
@@ -551,117 +379,185 @@ static String buildToneStatusJson() {
   json += "\"toneLastWriteBytes\":" + String((unsigned)toneLastWriteBytes) + ",";
   json += "\"toneShortWrites\":" + String(toneShortWrites) + ",";
   json += "\"toneWriteFailures\":" + String(toneWriteFailures) + ",";
+  json += "\"toneDataPin\":" + String(CYD_AUDIO_DOUT_PIN) + ",";
+  json += "\"toneWorkerReady\":" + String(toneTaskHandle ? "true" : "false") + ",";
+  json += "\"toneQueued\":" + String(toneWorker.jobs.load()) + ",";
+  json += "\"toneDropped\":" + String(toneWorker.dropped.load()) + ",";
+  json += "\"toneRecovering\":" + String(toneWorker.pauseRequested.load() ? "true" : "false") + ",";
+  json += "\"toneRecoveryAttempts\":" + String(toneRecoveryAttempts) + ",";
+  json += "\"toneRecoveries\":" + String(toneRecoveries) + ",";
+  json += "\"toneCodecIoFailures\":" + String(toneCodecIoFailures) + ",";
+  json += "\"toneCodecRegFC\":" + String(toneCodecReadInt(0xFC)) + ",";
   json += "\"toneLastI2sError\":" + String(toneLastI2sError);
   json += "}";
   return json;
 }
 
-static void serviceToneAudio() {
-  if (!toneActive && toneSpeakerEnabled && toneSpeakerHoldUntilMs && (int32_t)(millis() - toneSpeakerHoldUntilMs) >= 0) {
-    toneSpeakerHoldUntilMs = 0;
-    toneSetSpeakerEnabled(false);
-  }
-  if (!toneI2sReady || !toneActive) return;
-  if (toneVolumePercent == 0) {
-    finishTone();
-    return;
-  }
 
-  size_t count = 0;
-  const ToneSegment* pattern = tonePatternFor(activeToneStyle, count);
-  if (!pattern || activeToneSegment >= count) {
-    finishTone();
-    return;
-  }
+static bool toneRequestCancelled(uint32_t epoch) {
+  return toneWorker.pauseRequested.load() || toneWorker.epoch.load() != epoch || !toneWorker.volume.load();
+}
 
-  uint32_t framesToWrite = activeToneFramesRemaining;
-  if (framesToWrite > TONE_FRAMES_PER_SERVICE) framesToWrite = TONE_FRAMES_PER_SERVICE;
-
-  int16_t frames[TONE_FRAMES_PER_SERVICE * 2];
-  const ToneSegment& segment = pattern[activeToneSegment];
-  const int32_t amplitude = (int32_t)map(constrain((int)toneVolumePercent, 0, 100), 0, 100, 0, 32700)
-                              * (int32_t)tonePcmDrivePercent() / 100;
-  const float startFrequency = (float)segment.frequency;
-  const float endFrequency = (float)(segment.endFrequency ? segment.endFrequency : segment.frequency);
-  for (uint32_t i = 0; i < framesToWrite; i++) {
-    int16_t sample = 0;
-    if (segment.frequency) {
-      uint32_t frameIndex = activeToneSegmentTotalFrames > activeToneFramesRemaining
-                              ? activeToneSegmentTotalFrames - activeToneFramesRemaining + i
-                              : i;
-      float progress = activeToneSegmentTotalFrames > 1
-                         ? (float)frameIndex / (float)(activeToneSegmentTotalFrames - 1)
-                         : 1.0f;
-      if (progress > 1.0f) progress = 1.0f;
-      float frequency = startFrequency + (endFrequency - startFrequency) * progress;
-      uint32_t frameIndexInSegment = activeToneSegmentTotalFrames > activeToneFramesRemaining
-                                       ? activeToneSegmentTotalFrames - activeToneFramesRemaining + i
-                                       : i;
-      uint32_t framesLeftInSegment = activeToneSegmentTotalFrames > frameIndexInSegment
-                                       ? activeToneSegmentTotalFrames - frameIndexInSegment
-                                       : 0;
-      uint32_t rampFrames = min<uint32_t>(TONE_SAMPLE_RATE / 12U, activeToneSegmentTotalFrames / 3U);
-      if (rampFrames == 0) rampFrames = 1;
-      float envelope = 1.0f;
-      if (frameIndexInSegment < rampFrames) envelope = (float)frameIndexInSegment / (float)rampFrames;
-      if (framesLeftInSegment < rampFrames) envelope = min(envelope, (float)framesLeftInSegment / (float)rampFrames);
-      if (envelope < 0.0f) envelope = 0.0f;
-      envelope = envelope * envelope * (3.0f - (2.0f * envelope));
-
-      if (activeToneStyle == TONE_STYLE_RAW) {
-        float wrapped = fmodf(tonePhase, 6.28318530718f);
-        sample = wrapped < 3.14159265359f ? amplitude : (int16_t)-amplitude;
-      } else {
-        float sine = sinf(tonePhase);
-        float shaped = sine + (0.08f * sinf(tonePhase * 2.0f)) + (0.05f * sinf(tonePhase * 3.0f));
-        shaped *= 0.96f;
-        if (shaped > 1.0f) shaped = 1.0f;
-        if (shaped < -1.0f) shaped = -1.0f;
-        sample = (int16_t)(shaped * amplitude * envelope);
-      }
-      float phaseStep = (6.28318530718f * frequency) / (float)TONE_SAMPLE_RATE;
-      tonePhase += phaseStep;
-      if (tonePhase >= 6.28318530718f) tonePhase -= 6.28318530718f;
+static bool writeToneBlock(const int16_t* frames, size_t bytes, uint32_t epoch, bool silence = false) {
+  size_t offset = 0;
+  uint32_t started = millis();
+  while (offset < bytes) {
+    if (toneWorker.pauseRequested.load() || (!silence && toneRequestCancelled(epoch))) return false;
+    size_t requested = bytes - offset, sent = 0;
+    // Use the native byte count: the Arduino wrapper loses bytes accepted on a
+    // timeout. Retain and retry the unsent tail, never advance over missing data.
+    esp_err_t error = i2s_channel_write(toneI2s.txChan(), (const uint8_t*)frames + offset, requested, &sent, 40);
+    toneWorker.writeCalls.fetch_add(1);
+    toneWorker.bytesWritten.fetch_add(sent);
+    toneWorker.lastRequested.store(requested); toneWorker.lastWritten.store(sent);
+    toneWorker.lastError.store(error);
+    if (sent != requested) toneWorker.shortWrites.fetch_add(1);
+    if (error != ESP_OK || !sent) toneWorker.failures.fetch_add(1);
+    if (sent > requested || sent % (2 * sizeof(int16_t))) {
+      toneWorker.lastError.store(ESP_ERR_INVALID_SIZE);
+      toneWorker.pauseRequested.store(true); return false;
     }
-    frames[i * 2] = sample;
-    frames[i * 2 + 1] = sample;
+    offset += sent;
+    if ((error != ESP_OK && error != ESP_ERR_TIMEOUT) || (offset < bytes && millis() - started >= 160)) {
+      toneWorker.pauseRequested.store(true); return false;
+    }
+    if (!sent) vTaskDelay(pdMS_TO_TICKS(1));
   }
+  return true;
+}
 
-  const size_t requestedBytes = (size_t)framesToWrite * 2U * sizeof(int16_t);
-  const size_t writtenBytes = toneI2s.write((const uint8_t*)frames, requestedBytes);
-  toneWriteCalls++;
-  toneLastWriteRequested = requestedBytes;
-  toneLastWriteBytes = writtenBytes;
-  toneBytesWritten += (uint32_t)writtenBytes;
-  toneLastI2sError = toneI2s.lastError();
-  if (writtenBytes == 0) toneWriteFailures++;
-  if (writtenBytes != requestedBytes) toneShortWrites++;
-  activeToneFramesRemaining -= framesToWrite;
-  if (activeToneFramesRemaining > 0) return;
-  if (!startToneSegment(activeToneSegment + 1)) finishTone();
+static bool drainToneAudio(uint32_t epoch) {
+  int16_t silence[TONE_FRAMES_PER_SERVICE * 2] = {};
+  for (uint32_t left = TONE_SAMPLE_RATE / 8; left;) {
+    uint32_t length = min<uint32_t>(TONE_FRAMES_PER_SERVICE, left);
+    if (!writeToneBlock(silence, length * 2 * sizeof(int16_t), epoch, true)) return false;
+    left -= length;
+  }
+  return true;
+}
+
+static bool playToneRequest(const ToneRequest& request) {
+  size_t count = 0;
+  const ToneSegment* pattern = tonePatternFor(request.style, count);
+  if (!pattern || !count) return false;
+  int16_t frames[TONE_FRAMES_PER_SERVICE * 2];
+  float phase = 0;
+  for (size_t segmentIndex = 0; segmentIndex < count; ++segmentIndex) {
+    const ToneSegment& segment = pattern[segmentIndex];
+    const uint32_t total = max<uint32_t>(1, (uint32_t)segment.durationMs * TONE_SAMPLE_RATE / 1000);
+    const uint32_t ramp = max<uint32_t>(1, min<uint32_t>(TONE_SAMPLE_RATE / 50, total / 3));
+    for (uint32_t position = 0; position < total;) {
+      if (toneRequestCancelled(request.epoch)) return false;
+      const uint32_t length = min<uint32_t>(TONE_FRAMES_PER_SERVICE, total - position);
+      const float amplitude = 24576.0f * min<uint8_t>(toneWorker.volume.load(), request.volumeLimit) / 100.0f;
+      for (uint32_t i = 0; i < length; ++i) {
+        uint32_t index = position + i;
+        float envelope = min(1.0f, (float)index / ramp);
+        envelope = min(envelope, (float)(total - 1 - index) / ramp);
+        envelope = envelope * envelope * (3.0f - 2.0f * envelope);
+        int16_t sample = segment.frequency ? (int16_t)(sinf(phase) * amplitude * envelope) : 0;
+        frames[i * 2] = frames[i * 2 + 1] = sample;
+        float progress = total > 1 ? (float)index / (total - 1) : 1;
+        float end = segment.endFrequency ? segment.endFrequency : segment.frequency;
+        float frequency = segment.frequency + (end - segment.frequency) * progress;
+        phase += 6.28318530718f * frequency / TONE_SAMPLE_RATE;
+        if (phase >= 6.28318530718f) phase -= 6.28318530718f;
+      }
+      if (!writeToneBlock(frames, length * 2 * sizeof(int16_t), request.epoch)) return false;
+      position += length;
+    }
+  }
+  // The native write completes when DMA accepts data. Queue enough zeros to
+  // drain the six 240-frame descriptors before declaring playback complete.
+  return drainToneAudio(request.epoch);
+}
+
+static void toneAudioTask(void*) {
+  uint32_t finishedMs = 0;
+  for (;;) {
+    if (toneWorker.pauseRequested.load()) {
+      toneWorker.ampWanted.store(false);
+      ToneRequest stale;
+      while (xQueueReceive(toneRequestQueue, &stale, 0) == pdTRUE) {
+        toneWorker.jobs.fetch_sub(1); toneWorker.dropped.fetch_add(1);
+      }
+      toneWorker.paused.store(true); // No I2S access until the main loop resumes us.
+      while (toneWorker.pauseRequested.load()) vTaskDelay(pdMS_TO_TICKS(10));
+      toneWorker.paused.store(false);
+    }
+    if (toneWorker.ampWanted.load() && millis() - finishedMs >= TONE_SPEAKER_HOLD_MS)
+      toneWorker.ampWanted.store(false);
+    ToneRequest request;
+    if (xQueueReceive(toneRequestQueue, &request, pdMS_TO_TICKS(20)) != pdTRUE) continue;
+    if (!toneRequestCancelled(request.epoch)) {
+      toneWorker.active.store(true); toneWorker.kind.store(request.kind); toneWorker.style.store(request.style);
+      toneWorker.startedMs.store(millis()); toneWorker.ampWanted.store(true);
+      uint32_t waitStarted = millis();
+      while (!toneWorker.ampEnabled.load() && !toneRequestCancelled(request.epoch) && millis() - waitStarted < 500)
+        vTaskDelay(pdMS_TO_TICKS(2));
+      if (toneWorker.ampEnabled.load() && !toneRequestCancelled(request.epoch)) {
+        if (!playToneRequest(request)) {
+          // Flush cancelled sounds while muted before accepting another test.
+          if (!toneWorker.pauseRequested.load()) drainToneAudio(toneWorker.epoch.load());
+          toneWorker.ampWanted.store(false);
+        }
+      } else {
+        toneWorker.ampWanted.store(false); toneWorker.dropped.fetch_add(1);
+      }
+      finishedMs = millis();
+      toneWorker.active.store(false); toneWorker.kind.store(TONE_NONE);
+    } else {
+      toneWorker.dropped.fetch_add(1);
+    }
+    toneWorker.jobs.fetch_sub(1);
+  }
+}
+
+static void serviceToneAudio() {
+  toneActive = toneWorker.active.load();
+  activeToneKind = (ToneKind)toneWorker.kind.load();
+  activeToneStyle = (ToneStyle)toneWorker.style.load();
+  pendingToneKind = toneWorker.jobs.load() > (toneActive ? 1U : 0U) ? (ToneKind)toneWorker.nextKind.load() : TONE_NONE;
+  lastToneMs = toneWorker.startedMs.load();
+  toneWriteCalls = toneWorker.writeCalls.load(); toneBytesWritten = toneWorker.bytesWritten.load();
+  toneShortWrites = toneWorker.shortWrites.load(); toneWriteFailures = toneWorker.failures.load();
+  toneLastWriteRequested = toneWorker.lastRequested.load(); toneLastWriteBytes = toneWorker.lastWritten.load();
+  toneLastI2sError = toneWorker.lastError.load();
+  if (toneWorker.pauseRequested.load()) {
+    toneSetSpeakerEnabled(false); toneI2sReady = toneCodecReady = false;
+    // A failed backend never blocks the UI in a permanent retry loop. Three
+    // attempts, at least two seconds apart; another user request can retry later.
+    if (!toneTaskHandle || !toneWorker.paused.load() || toneRecoveryAttempts >= 3 ||
+        (toneRecoveryAttempted && millis() - toneLastRecoveryMs < 2000)) return;
+    toneRecoveryAttempted = true; toneLastRecoveryMs = millis(); ++toneRecoveryAttempts;
+    toneI2s.end();
+    toneI2sReady = beginToneI2s();
+    toneCodecReady = toneI2sReady && initToneCodec();
+    if (toneI2sReady && toneCodecReady) {
+      ++toneRecoveries; toneRecoveryAttempts = 0;
+      toneWorker.pauseRequested.store(false);
+      Serial.println("[audio] recovered; ready for next notification");
+    }
+    return;
+  }
+  bool enable = toneTaskHandle && toneI2sReady && toneCodecReady && toneVolumePercent && toneWorker.ampWanted.load();
+  if (enable != toneSpeakerEnabled) toneSetSpeakerEnabled(enable);
 }
 
 static void initToneAudio() {
-  if (CYD_AUDIO_ENABLE_PIN >= 0) {
-    pinMode(CYD_AUDIO_ENABLE_PIN, OUTPUT);
-    toneSetSpeakerEnabled(false);
-  }
-
-  toneI2s.setPins(CYD_AUDIO_BCLK_PIN, CYD_AUDIO_LRCLK_PIN, CYD_AUDIO_DOUT_PIN, -1, CYD_AUDIO_MCLK_PIN);
-  toneI2sReady = toneI2s.begin(I2S_MODE_STD,
-                               TONE_SAMPLE_RATE,
-                               I2S_DATA_BIT_WIDTH_16BIT,
-                               I2S_SLOT_MODE_STEREO);
-  toneCodecReady = initToneCodec();
-  applyToneVolume();
-
-  char line[128];
-  snprintf(line, sizeof(line),
-           "[audio] CYD speaker %s, codec %s, volume %u%%\n",
-           toneI2sReady ? "ready" : "not ready",
-           toneCodecReady ? "ready" : "not detected",
-           toneVolumePercent);
-  appendLine(eventLog, LOG_SIZE, line);
-  Serial.print(line);
+  if (CYD_AUDIO_ENABLE_PIN >= 0) pinMode(CYD_AUDIO_ENABLE_PIN, OUTPUT);
+  toneSetSpeakerEnabled(false);
+  toneWorker.volume.store(toneVolumePercent);
+  toneI2sReady = beginToneI2s();
+  toneCodecReady = toneI2sReady && initToneCodec();
+  toneRequestQueue = xQueueCreate(2, sizeof(ToneRequest));
+  if (toneRequestQueue && xTaskCreate(toneAudioTask, "notify-audio", 6144, nullptr, 2, &toneTaskHandle) != pdPASS)
+    toneTaskHandle = nullptr;
+  if (!toneTaskHandle && toneRequestQueue) { vQueueDelete(toneRequestQueue); toneRequestQueue = nullptr; }
+  if (!toneI2sReady || !toneCodecReady) requestToneRecovery(false);
+  if (!toneTaskHandle) { toneI2sReady = toneCodecReady = false; toneSetSpeakerEnabled(false); }
+  Serial.printf("[audio] data GPIO%d, I2S=%s codec=%s worker=%s volume=%u%% unity gain\n",
+                CYD_AUDIO_DOUT_PIN, toneI2sReady ? "ready" : "fault", toneCodecReady ? "ready" : "fault",
+                toneTaskHandle ? "ready" : "fault", toneVolumePercent);
   updateToneVolumeLabel();
 }

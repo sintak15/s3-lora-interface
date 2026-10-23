@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 
 // Shared runtime state; included once by the main sketch.
 LV_FONT_DECLARE(comic_neue_12);
@@ -232,8 +233,8 @@ struct GpsStats {
 struct LocalBatteryStats {
   bool gaugePresent = false;
   bool gaugeSocReliable = true;
-  bool quickStartSent = false;
   uint32_t lastGaugeMs = 0;
+  uint32_t lastSampleMs = 0;
   uint32_t rawMv = 0;
   uint32_t rawPackMv = 0;
   uint32_t filteredPackMv = 0;
@@ -244,24 +245,20 @@ struct LocalBatteryStats {
   bool chargeRateValid = false;
   float chargeRatePercentHr = 0.0f;
   int32_t instantDeltaMv = 0;
-  int16_t calibrationOffsetTenths = 0;
-  int16_t calibrationOffsetMv = 0;
   int percent = 100;
   int gaugePercent = 100;
-  int correctedGaugePercent = 100;
   uint8_t trendSampleCount = 0;
-  uint8_t stableSampleCount = 0;
   char powerState[36] = "ext power";
   char percentSource[32] = "MAX17048";
   uint16_t gaugeVersion = 0;
   uint16_t rawGaugeSoc = 0;
   float gaugeSoc = 100.0f;
-  float correctedGaugeSoc = 100.0f;
-  int voltagePercent = 100;
   bool charging = false;
   uint32_t previousPackMv = 0;
   uint32_t previousSampleMs = 0;
-  uint32_t lastLearnSaveMs = 0;
+  uint32_t lastRuntimeSaveMs = 0;
+  bool runtimeSaveAttempted = false;
+  float savedDischargeRate = 0;
   uint8_t trendHead = 0;
   uint8_t trendCount = 0;
   uint32_t trendMv[12] = {};
@@ -579,15 +576,10 @@ static ToneKind pendingToneKind = TONE_NONE;
 static ToneStyle activeToneStyle = TONE_STYLE_BWOMP;
 static ToneStyle toneMessageStyle = TONE_STYLE_BWOMP;
 static ToneStyle toneDirectStyle = TONE_STYLE_DOUBLE;
-static uint8_t toneBoostLevel = 2;
-static uint8_t toneCodecProfile = TONE_CODEC_PROFILE_REF_HP;
-static uint8_t activeToneSegment = 0;
-static uint32_t activeToneFramesRemaining = 0;
-static uint32_t activeToneSegmentTotalFrames = 0;
-static float tonePhase = 0.0f;
-static uint8_t toneVolumePercent = 75;
+static uint8_t toneBoostLevel = 0;
+static uint8_t toneCodecProfile = TONE_CODEC_PROFILE_DRIVER;
+static uint8_t toneVolumePercent = 50;
 static uint32_t lastToneMs = 0;
-static uint32_t toneSpeakerHoldUntilMs = 0;
 static uint32_t toneCodecInitFailures = 0;
 static uint32_t toneWriteCalls = 0;
 static uint32_t toneBytesWritten = 0;
@@ -596,6 +588,30 @@ static uint32_t toneWriteFailures = 0;
 static size_t toneLastWriteRequested = 0;
 static size_t toneLastWriteBytes = 0;
 static int toneLastI2sError = 0;
+struct ToneRequest {
+  ToneKind kind;
+  ToneStyle style;
+  uint32_t epoch;
+  uint8_t volumeLimit = 100;
+};
+// The task owns PCM generation and I2S writes. Codec I2C and GPIO control stay
+// on the main loop; recovery waits for the task's explicit pause acknowledgement.
+struct ToneWorkerState {
+  std::atomic<bool> pauseRequested{false}, paused{false}, active{false}, ampWanted{false}, ampEnabled{false};
+  std::atomic<uint8_t> volume{50}, kind{TONE_NONE}, style{TONE_STYLE_BWOMP}, nextKind{TONE_NONE};
+  std::atomic<uint32_t> epoch{0}, jobs{0}, dropped{0}, startedMs{0};
+  std::atomic<uint32_t> writeCalls{0}, bytesWritten{0}, shortWrites{0}, failures{0};
+  std::atomic<uint32_t> lastRequested{0}, lastWritten{0};
+  std::atomic<int> lastError{0};
+};
+static ToneWorkerState toneWorker;
+static QueueHandle_t toneRequestQueue = nullptr;
+static TaskHandle_t toneTaskHandle = nullptr;
+static uint32_t toneCodecIoFailures = 0;
+static uint32_t toneRecoveries = 0;
+static uint8_t toneRecoveryAttempts = 0;
+static bool toneRecoveryAttempted = false;
+static uint32_t toneLastRecoveryMs = 0;
 static uint32_t lastLocalSentMs = 0;
 static uint8_t lastLocalSentChannel = PUBLIC_CHANNEL_INDEX;
 static uint32_t lastLocalSentTo = BROADCAST_ADDR;

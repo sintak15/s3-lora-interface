@@ -39,14 +39,6 @@ static bool max17048ReadReg16(uint8_t reg, uint16_t& value) {
   return true;
 }
 
-static bool max17048WriteReg16(uint8_t reg, uint16_t value) {
-  Wire.beginTransmission(MAX17048_ADDR);
-  Wire.write(reg);
-  Wire.write((uint8_t)(value >> 8));
-  Wire.write((uint8_t)(value & 0xFF));
-  return Wire.endTransmission() == 0;
-}
-
 static const char* i2cKnownDeviceName(uint8_t addr) {
   switch (addr) {
     case TOUCH_ADDR: return "touch";
@@ -136,19 +128,6 @@ static constexpr uint32_t BATTERY_LOW_VOLTAGE_MV = 3650;
 static constexpr uint32_t BATTERY_CRITICAL_VOLTAGE_MV = 3500;
 static constexpr int BATTERY_LOW_SOC_PERCENT = 20;
 static constexpr int BATTERY_CRITICAL_SOC_PERCENT = 10;
-
-static int estimateLiPoPercentFromMv(uint32_t mv) {
-  if (mv >= 4200) return 100;
-  if (mv >= 4100) return map(mv, 4100, 4200, 90, 100);
-  if (mv >= 4000) return map(mv, 4000, 4100, 75, 90);
-  if (mv >= 3900) return map(mv, 3900, 4000, 55, 75);
-  if (mv >= 3800) return map(mv, 3800, 3900, 35, 55);
-  if (mv >= 3700) return map(mv, 3700, 3800, 20, 35);
-  if (mv >= 3600) return map(mv, 3600, 3700, 10, 20);
-  if (mv >= 3500) return map(mv, 3500, 3600, 5, 10);
-  if (mv >= 3400) return map(mv, 3400, 3500, 0, 5);
-  return 0;
-}
 
 static uint32_t filterBatteryVoltage(uint32_t rawMv, bool chargeRateValid, float chargeRate) {
   localBattery.rawMv = rawMv;
@@ -297,65 +276,15 @@ static bool decideBatteryCharging(bool chargeRateValid, float chargeRate, uint32
   return localBattery.charging;
 }
 
-static int chooseDisplayedBatteryPercent(float soc, int voltagePercent, bool socReliable, bool charging) {
-  localBattery.gaugePercent = constrain((int)roundf(soc), 0, 100);
-  float correctedSoc = soc + ((float)localBattery.calibrationOffsetTenths / 10.0f);
-  if (correctedSoc < 0.0f) correctedSoc = 0.0f;
-  if (correctedSoc > 100.0f) correctedSoc = 100.0f;
-  localBattery.correctedGaugeSoc = correctedSoc;
-  localBattery.correctedGaugePercent = constrain((int)roundf(correctedSoc), 0, 100);
-  localBattery.calibrationOffsetMv = 0;
-
-  if (!socReliable) {
-    strlcpy(localBattery.percentSource,
-            batteryVoltageQualified() ? "Voltage estimate" : "Voltage estimate (settling)",
-            sizeof(localBattery.percentSource));
-    return voltagePercent;
-  }
-
-  strlcpy(localBattery.percentSource,
-          localBattery.voltageUnstable ? "MAX17048 SOC (voltage noisy)" :
-          (localBattery.calibrationOffsetTenths ? "MAX17048 SOC + trim" : "MAX17048 SOC"),
-          sizeof(localBattery.percentSource));
-  return localBattery.correctedGaugePercent;
-}
-
-static void updateBatteryLearning(float soc, int voltagePercent, bool socReliable, bool charging,
-                                  bool chargeRateValid, float chargeRate, uint32_t nowMs) {
-  if (!socReliable || charging) {
-    localBattery.stableSampleCount = 0;
-    return;
-  }
-
-  if (chargeRateValid && fabsf(chargeRate) > 1.5f) {
-    localBattery.stableSampleCount = 0;
-    return;
-  }
-
-  if (abs(localBattery.instantDeltaMv) > 3) {
-    localBattery.stableSampleCount = 0;
-    return;
-  }
-
-  int targetOffsetTenths = (int)roundf(((float)voltagePercent - soc) * 10.0f);
-  targetOffsetTenths = constrain(targetOffsetTenths, -120, 120);
-  int errorTenths = targetOffsetTenths - localBattery.calibrationOffsetTenths;
-  if (abs(errorTenths) < 10) {
-    localBattery.stableSampleCount = min<uint8_t>(localBattery.stableSampleCount + 1, 255);
-    return;
-  }
-
-  localBattery.stableSampleCount = min<uint8_t>(localBattery.stableSampleCount + 1, 255);
-  if (localBattery.stableSampleCount < 30) return;
-
-  localBattery.calibrationOffsetTenths += errorTenths > 0 ? 1 : -1;
-  localBattery.calibrationOffsetTenths = constrain(localBattery.calibrationOffsetTenths, -120, 120);
-  localBattery.stableSampleCount = 0;
-
-  if (!localBattery.lastLearnSaveMs || nowMs - localBattery.lastLearnSaveMs > 60000) {
-    prefs.putShort("batTrim10", localBattery.calibrationOffsetTenths);
-    localBattery.lastLearnSaveMs = nowMs;
-  }
+static void saveBatteryRuntimeLearning(uint32_t nowMs) {
+  float rate = batteryRuntime.learnedPercentPerHour();
+  // Save the first qualified rate promptly so a physical switch can cut power.
+  // Later writes need a meaningful change and are bounded to once per 15 min.
+  if (!FieldStatus::runtimeCheckpointDue(rate, localBattery.savedDischargeRate,
+                                       localBattery.runtimeSaveAttempted, localBattery.lastRuntimeSaveMs, nowMs)) return;
+  localBattery.runtimeSaveAttempted = true;
+  localBattery.lastRuntimeSaveMs = nowMs;
+  if (prefs.putFloat("batRateV1", rate) == sizeof(float)) localBattery.savedDischargeRate = rate;
 }
 
 static bool sampleMax17048() {
@@ -363,7 +292,7 @@ static bool sampleMax17048() {
   uint16_t rawSoc = 0;
   if (!max17048ReadReg16(0x02, rawVcell) || !max17048ReadReg16(0x04, rawSoc)) {
     localBattery.gaugePresent = false;
-    batteryRuntime.reset();
+    batteryRuntime.pause();
     localBattery.batteryLow = false;
     localBattery.batteryCritical = false;
     localBattery.voltageLowSustained = false;
@@ -375,44 +304,39 @@ static bool sampleMax17048() {
   uint16_t rawVersion = 0;
   if (max17048ReadReg16(0x08, rawVersion)) localBattery.gaugeVersion = rawVersion;
 
-  uint32_t rawPackMv = (uint32_t)(((rawVcell >> 4) * 125UL + 50UL) / 100UL);
+  uint32_t rawPackMv = (rawVcell * 5UL + 32UL) / 64UL;
   float soc = (float)(rawSoc >> 8) + ((float)(rawSoc & 0xFF) / 256.0f);
   if (soc < 0.0f) soc = 0.0f;
   if (soc > 100.0f) soc = 100.0f;
   float chargeRate = 0.0f;
   bool chargeRateValid = readMax17048ChargeRate(chargeRate);
   uint32_t packMv = filterBatteryVoltage(rawPackMv, chargeRateValid, chargeRate);
-  int voltagePercent = estimateLiPoPercentFromMv(packMv);
-  bool socReliable = !(soc < 1.0f && packMv > 3350);
-  if (!socReliable && !localBattery.quickStartSent) {
-    if (max17048WriteReg16(0x06, 0x4000)) {
-      localBattery.quickStartSent = true;
-      appendLine(eventLog, LOG_SIZE, "[battery] MAX17048 quick-start sent\n");
-    }
-  }
-
   uint32_t now = millis();
   bool charging = decideBatteryCharging(chargeRateValid, chargeRate, packMv, now);
-  updateBatteryLearning(soc, voltagePercent, socReliable, charging, chargeRateValid, chargeRate, now);
-  int displayedPercent = smoothDisplayedBatteryPercent(chooseDisplayedBatteryPercent(soc, voltagePercent, socReliable, charging), charging);
-  updateBatteryAlertState(displayedPercent, packMv, charging, now);
+  localBattery.gaugePercent = constrain((int)roundf(soc), 0, 100);
+  int displayedPercent = smoothDisplayedBatteryPercent(localBattery.gaugePercent, charging);
+  // Alerts use the gauge directly so display smoothing cannot delay a warning.
+  updateBatteryAlertState(localBattery.gaugePercent, packMv, charging, now);
   localBattery.gaugePresent = true;
   localBattery.lastGaugeMs = now;
   localBattery.rawGaugeSoc = rawSoc;
   localBattery.gaugeSoc = soc;
-  localBattery.gaugeSocReliable = socReliable;
-  localBattery.voltagePercent = voltagePercent;
+  localBattery.gaugeSocReliable = true;
   localBattery.chargeRateValid = chargeRateValid;
   localBattery.chargeRatePercentHr = chargeRateValid ? chargeRate : 0.0f;
   localBattery.charging = charging;
   localBattery.percent = displayedPercent;
   updateBatteryTrend(packMv, now);
-  batteryRuntime.sample(now, soc, socReliable && !localBattery.voltageUnstable, charging);
+  batteryRuntime.sample(now, soc, !localBattery.voltageUnstable, charging, chargeRate, chargeRateValid);
+  saveBatteryRuntimeLearning(now);
+  strlcpy(localBattery.percentSource, "MAX17048 SOC", sizeof(localBattery.percentSource));
   strlcpy(localBattery.powerState, localBattery.percentSource, sizeof(localBattery.powerState));
   return true;
 }
 
 static void sampleLocalBattery() {
-  if (localBattery.lastGaugeMs && millis() - localBattery.lastGaugeMs < 1000) return;
+  uint32_t now = millis();
+  if (localBattery.lastSampleMs && now - localBattery.lastSampleMs < 1000) return;
+  localBattery.lastSampleMs = now;
   sampleMax17048();
 }

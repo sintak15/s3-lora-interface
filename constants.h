@@ -6,7 +6,7 @@
 #include "config/device_config.example.h"
 #endif
 
-#define FIRMWARE_VERSION "v0.1.91"
+#define FIRMWARE_VERSION "v0.1.93"
 
 #ifndef DEVICE_NAME
 #define DEVICE_NAME "s3-lora-interface"
@@ -56,7 +56,7 @@
 #endif
 
 #ifndef CYD_AUDIO_DOUT_PIN
-#define CYD_AUDIO_DOUT_PIN 6
+#define CYD_AUDIO_DOUT_PIN 8
 #endif
 
 #ifndef CYD_AUDIO_LRCLK_PIN
