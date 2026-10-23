@@ -1,0 +1,57 @@
+{
+  "size_mm": [
+    104.0,
+    124.0,
+    20.099998474121094
+  ],
+  "bodies": [
+    {
+      "volume_mm3": 35857.141,
+      "bed_contact_mm2": 8727.48
+    }
+  ],
+  "cyd_pilot_diameter_mm": 2,
+  "cyd_pilots": [
+    {
+      "center_mm": [
+        11,
+        15
+      ],
+      "bottom_z_mm": 2.8999996185302734,
+      "top_z_mm": 5.699999809265137
+    },
+    {
+      "center_mm": [
+        11,
+        93
+      ],
+      "bottom_z_mm": 2.8999996185302734,
+      "top_z_mm": 5.699999809265137
+    },
+    {
+      "center_mm": [
+        53,
+        15
+      ],
+      "bottom_z_mm": 2.8999996185302734,
+      "top_z_mm": 5.699999809265137
+    },
+    {
+      "center_mm": [
+        53,
+        93
+      ],
+      "bottom_z_mm": 2.8999996185302734,
+      "top_z_mm": 5.699999809265137
+    }
+  ],
+  "cyd_screws": "M2.5 x 4 mm for nominal 1.6 mm PCB",
+  "gps_rims_filled": true,
+  "coupon": [
+    {
+      "volume_mm3": 425.311,
+      "bed_contact_mm2": 142.057
+    }
+  ],
+  "physical_fit_verified": false
+}

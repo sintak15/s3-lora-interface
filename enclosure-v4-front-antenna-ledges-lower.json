@@ -1,0 +1,27 @@
+{
+  "size_mm": [
+    104.0,
+    124.0,
+    20.099998474121094
+  ],
+  "bodies": [
+    {
+      "volume_mm3": 35697.926,
+      "bed_contact_mm2": 8727.48
+    }
+  ],
+  "ledge_z_mm": 3.8,
+  "round_bracket_post_z_mm": 11.3,
+  "antenna_total_thickness_mm": 7.5,
+  "stack_top_z_mm": 11.3,
+  "ledge_lowering_mm": 7.5,
+  "neo6m_seat_z_mm": 18,
+  "heltec_post_z_mm": 20.1,
+  "coupon": [
+    {
+      "volume_mm3": 8713.694,
+      "bed_contact_mm2": 1858.607
+    }
+  ],
+  "physical_fit_verified": false
+}

@@ -1,0 +1,52 @@
+{
+  "size_mm": [
+    104.0,
+    124.0,
+    18.0
+  ],
+  "bodies": [
+    {
+      "volume_mm3": 33901.783,
+      "bed_contact_mm2": 8727.48
+    }
+  ],
+  "gps_screw_pilots": [
+    {
+      "center_mm": [
+        60.6,
+        114.33000000000001
+      ],
+      "pilot_bottom_z_mm": 12.0,
+      "pilot_top_z_mm": 18.0
+    },
+    {
+      "center_mm": [
+        92.97999999999999,
+        114.33000000000001
+      ],
+      "pilot_bottom_z_mm": 12.0,
+      "pilot_top_z_mm": 18.0
+    },
+    {
+      "center_mm": [
+        60.6,
+        92.60000000000001
+      ],
+      "pilot_bottom_z_mm": 12.0,
+      "pilot_top_z_mm": 18.0
+    },
+    {
+      "center_mm": [
+        92.97999999999999,
+        92.60000000000001
+      ],
+      "pilot_bottom_z_mm": 12.0,
+      "pilot_top_z_mm": 18.0
+    }
+  ],
+  "pilot_diameter_mm": 1.6,
+  "pilot_depth_mm": 6,
+  "screws": "4 x M2 x 6 mm pan head",
+  "heltec_post_top_z_mm": 14.9,
+  "physical_fit_verified": false
+}

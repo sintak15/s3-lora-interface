@@ -1,0 +1,19 @@
+{
+  "size_mm": [
+    104.0,
+    124.0,
+    20.099998474121094
+  ],
+  "bodies": [
+    {
+      "volume_mm3": 34589.091,
+      "bed_contact_mm2": 8763.739
+    }
+  ],
+  "original_volume_mm3": 39585.575,
+  "reduction_percent": 12.6,
+  "downward_face_heights_mm": [
+    4.76
+  ],
+  "notes": "Only elevated downward faces are short tie-anchor tunnel bridges. Physical printing and slicer support generation are unverified."
+}

@@ -46,6 +46,29 @@ The current build uses:
 The verified CYD has 16 MiB flash and 8 MiB PSRAM. Pin assignments below are
 specific to this hardware. GPIO numbers are not physical header positions.
 
+## Enclosure
+
+[V4 OpenSCAD enclosure](enclosure_v4.scad) uses measured component envelopes,
+the single-battery holder, intact power assembly and oval speaker. It provides
+visible CYD and Heltec screens, module mounts and separate charging/USB access.
+Printed antenna and speaker screw retainers provide mounting without foam.
+See the [V4 enclosure guide](docs/ENCLOSURE_V4.md) for previews, exports and
+assembly. Print the fit coupon and verify connector/mount offsets before a full
+case. The [V3 prototype](docs/ENCLOSURE.md) remains available separately.
+
+Latest fit revisions (earlier STL iterations are retained for reference):
+
+- [Current face: tapered GPS supports and 1.8 mm CYD pilots](enclosure-v4-front-gps-tapered-rims.stl).
+- [Current base plus two Heltec brackets on one 180 mm plate](enclosure-v4-latest-base-and-heltec-brackets.stl).
+- [Current base alone: MAX screw posts and open battery area](enclosure-v4-base-max-screw-posts.stl).
+- [Matching antenna brackets](enclosure-v4-antenna-rails-repair.stl).
+- [Speaker retaining frame](enclosure-v4-speaker-frame.stl).
+
+Print at 100% scale in millimetres, keeping the supplied bed orientation.
+See the [latest face notes](docs/GPS_TAPERED_RIMS.md) and
+[base mounting notes](docs/MAX_SCREW_POSTS.md) for screw sizes and fit checks.
+The current designs have geometry checks but are still physical-fit prototypes.
+
 ## Build and first connection
 
 1. Install the pinned Arduino dependencies and board configuration from

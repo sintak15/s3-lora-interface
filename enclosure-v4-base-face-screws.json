@@ -1,0 +1,53 @@
+{
+  "size_mm": [
+    104.0,
+    124.0,
+    35.79999923706055
+  ],
+  "bodies": [
+    {
+      "volume_mm3": 59006.441,
+      "bed_contact_mm2": 12652.338
+    }
+  ],
+  "case_pilots": [
+    {
+      "center_mm": [
+        5,
+        5
+      ],
+      "z_min_mm": 22.0,
+      "z_max_mm": 34.0
+    },
+    {
+      "center_mm": [
+        5,
+        119
+      ],
+      "z_min_mm": 22.0,
+      "z_max_mm": 34.0
+    },
+    {
+      "center_mm": [
+        99,
+        5
+      ],
+      "z_min_mm": 22.0,
+      "z_max_mm": 34.0
+    },
+    {
+      "center_mm": [
+        99,
+        119
+      ],
+      "z_min_mm": 22.0,
+      "z_max_mm": 34.0
+    }
+  ],
+  "pilot_diameter_mm": 2.6,
+  "pilot_depth_mm": 12,
+  "case_screws": "M3 x 25 mm from face",
+  "engagement_mm": 9,
+  "blind_bottom_margin_mm": 3,
+  "physical_fit_verified": false
+}

@@ -1,0 +1,19 @@
+{
+  "size_mm": [
+    104.0,
+    124.0,
+    19.860000610351562
+  ],
+  "bodies": [
+    {
+      "volume_mm3": 34730.041,
+      "bed_contact_mm2": 8727.48
+    }
+  ],
+  "post_drop_mm": 5.2,
+  "post_top_z_mm": 14.9,
+  "pcb_support_z_mm": 8.2,
+  "pilot_diameter_mm": 2.5,
+  "pilot_depth_mm": 8,
+  "physical_bracket_fit_verified": false
+}

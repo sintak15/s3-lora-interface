@@ -1,0 +1,135 @@
+{
+  "bed_mm": [
+    180,
+    180
+  ],
+  "scale": 1,
+  "supports_required": true,
+  "included": "2 shells, 2 Heltec clamps, 2 GPS rails, 1 speaker frame; no optional fit coupon",
+  "min_mm": [
+    8.0,
+    15.0,
+    0.0
+  ],
+  "max_mm": [
+    172.79999847412108,
+    130.0,
+    124.0
+  ],
+  "size_mm": [
+    164.8,
+    115.0,
+    124.0
+  ],
+  "body_count": 7,
+  "placements": [
+    {
+      "part": "front",
+      "min_mm": [
+        8.0,
+        15.0,
+        0.0
+      ],
+      "max_mm": [
+        112.0,
+        35.599998474121094,
+        124.0
+      ],
+      "orientation": "on lower edge",
+      "bodies": [
+        {
+          "volume_mm3": 39585.575,
+          "bed_contact_mm2": 1072.8
+        }
+      ]
+    },
+    {
+      "part": "back",
+      "min_mm": [
+        8.0,
+        65.0,
+        0.0
+      ],
+      "max_mm": [
+        112.0,
+        100.79999923706055,
+        124.0
+      ],
+      "orientation": "on lower edge",
+      "bodies": [
+        {
+          "volume_mm3": 69327.97,
+          "bed_contact_mm2": 3031.2
+        }
+      ]
+    },
+    {
+      "part": "speaker_retainer",
+      "min_mm": [
+        120.0,
+        15.0,
+        0.0
+      ],
+      "max_mm": [
+        172.79999847412108,
+        48.19999694824219,
+        5.800000190734863
+      ],
+      "orientation": "flat",
+      "bodies": [
+        {
+          "volume_mm3": 1139.722,
+          "bed_contact_mm2": 544.929
+        }
+      ]
+    },
+    {
+      "part": "clamps",
+      "min_mm": [
+        120.0,
+        60.0,
+        0.0
+      ],
+      "max_mm": [
+        160.9999994277954,
+        76.79999923706055,
+        12.700000762939453
+      ],
+      "orientation": "flat",
+      "bodies": [
+        {
+          "volume_mm3": 489.252,
+          "bed_contact_mm2": 125.024
+        },
+        {
+          "volume_mm3": 489.252,
+          "bed_contact_mm2": 125.024
+        }
+      ]
+    },
+    {
+      "part": "antenna_retainers",
+      "min_mm": [
+        124.0,
+        90.0,
+        0.0
+      ],
+      "max_mm": [
+        131.39999771118164,
+        130.0,
+        1.8000001668929997
+      ],
+      "orientation": "flat",
+      "bodies": [
+        {
+          "volume_mm3": 101.354,
+          "bed_contact_mm2": 52.038
+        },
+        {
+          "volume_mm3": 116.043,
+          "bed_contact_mm2": 52.038
+        }
+      ]
+    }
+  ]
+}

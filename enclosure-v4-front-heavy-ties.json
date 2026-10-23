@@ -1,0 +1,29 @@
+{
+  "size_mm": [
+    104.0,
+    124.0,
+    20.099998474121094
+  ],
+  "bodies": [
+    {
+      "volume_mm3": 35523.685,
+      "bed_contact_mm2": 8727.48
+    }
+  ],
+  "cyd_post_height_above_floor_mm": 3.3,
+  "heltec_post_diameter_mm": 7.2,
+  "heltec_root_diameter_before_flat_mm": 9,
+  "gps_extra_clearance_per_side_mm": 0.5,
+  "case_clearance_diameter_mm": 3.4,
+  "gps_rail_bodies": [
+    {
+      "volume_mm3": 101.354,
+      "bed_contact_mm2": 52.038
+    },
+    {
+      "volume_mm3": 116.043,
+      "bed_contact_mm2": 52.038
+    }
+  ],
+  "physical_fit_verified": false
+}

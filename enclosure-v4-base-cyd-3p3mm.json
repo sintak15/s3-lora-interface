@@ -1,0 +1,16 @@
+{
+  "size_mm": [
+    104.0,
+    124.0,
+    35.79999923706055
+  ],
+  "bodies": [
+    {
+      "volume_mm3": 69358.714,
+      "bed_contact_mm2": 12515.71
+    }
+  ],
+  "orientation": "Exterior rear face on bed; mounts up",
+  "matching_front": "enclosure-v4-front-cyd-3p3mm.stl",
+  "physical_fit_verified": false
+}

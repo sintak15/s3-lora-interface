@@ -1,0 +1,55 @@
+{
+  "size_mm": [
+    152.9999994277954,
+    124.0,
+    35.79999923706055
+  ],
+  "bed_mm": [
+    180,
+    180
+  ],
+  "placements": [
+    {
+      "source": "enclosure-v4-base-max-screw-posts.stl",
+      "min_mm": [
+        8.0,
+        8.0,
+        0.0
+      ],
+      "max_mm": [
+        112.0,
+        132.0,
+        35.79999923706055
+      ]
+    },
+    {
+      "source": "enclosure-v4-heltec-clamps.stl",
+      "min_mm": [
+        120.0,
+        8.0,
+        0.0
+      ],
+      "max_mm": [
+        160.9999994277954,
+        24.799998855590815,
+        12.700000762939453
+      ]
+    }
+  ],
+  "bodies": [
+    {
+      "volume_mm3": 56762.838,
+      "bed_contact_mm2": 12652.338
+    },
+    {
+      "volume_mm3": 489.252,
+      "bed_contact_mm2": 125.024
+    },
+    {
+      "volume_mm3": 489.252,
+      "bed_contact_mm2": 125.024
+    }
+  ],
+  "scaling": 1,
+  "rotation_applied": false
+}

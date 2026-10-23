@@ -1,0 +1,37 @@
+{
+  "size_mm": [
+    104.0,
+    124.0,
+    20.099998474121094
+  ],
+  "bodies": [
+    {
+      "volume_mm3": 35708.794,
+      "bed_contact_mm2": 8727.48
+    }
+  ],
+  "heltec_post_top_z_mm": 20.1,
+  "neo6m_seat_z_mm": 18,
+  "antenna_seat_z_mm": 11.3,
+  "antenna_lowered_mm": 1.6,
+  "antenna_retainer_post_inner_gap_mm": 29.8,
+  "neo6m_nominal_post_diameter_mm": 6,
+  "neo6m_root_diameter_mm": 8,
+  "rails": [
+    {
+      "volume_mm3": 122.706,
+      "bed_contact_mm2": 63.899
+    },
+    {
+      "volume_mm3": 137.394,
+      "bed_contact_mm2": 63.899
+    }
+  ],
+  "coupon": [
+    {
+      "volume_mm3": 8724.561,
+      "bed_contact_mm2": 1858.607
+    }
+  ],
+  "physical_fit_verified": false
+}

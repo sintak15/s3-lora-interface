@@ -1,0 +1,33 @@
+{
+  "size_mm": [
+    104.0,
+    124.0,
+    20.099998474121094
+  ],
+  "bodies": [
+    {
+      "volume_mm3": 35880.565,
+      "bed_contact_mm2": 8727.48
+    }
+  ],
+  "cyd_pilot_diameter_mm": 1.8,
+  "cyd_pilot_depth_mm": 2.8,
+  "neo6m_pilot_depth_mm": 2.8,
+  "gps_transition_degrees": 45,
+  "max_elevated_underside_angle_degrees": 45.00410161644951,
+  "test_meshes": {
+    "enclosure-v4-gps-tapered-rims-coupon": [
+      {
+        "volume_mm3": 8869.898,
+        "bed_contact_mm2": 1858.607
+      }
+    ],
+    "enclosure-v4-cyd-tight-test": [
+      {
+        "volume_mm3": 426.979,
+        "bed_contact_mm2": 142.057
+      }
+    ]
+  },
+  "physical_print_verified": false
+}

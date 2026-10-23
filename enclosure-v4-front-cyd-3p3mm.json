@@ -1,0 +1,26 @@
+{
+  "size_mm": [
+    104.0,
+    124.0,
+    20.099998474121094
+  ],
+  "bodies": [
+    {
+      "volume_mm3": 34193.205,
+      "bed_contact_mm2": 8763.739
+    }
+  ],
+  "cyd_post_height_above_floor_mm": 3.3,
+  "cyd_seat_z_mm": 5.7,
+  "verified_post_top_triangles": [
+    128,
+    128,
+    128,
+    128
+  ],
+  "cyd_usb_center_z_mm": 8.3,
+  "downward_face_heights_mm": [
+    4.76
+  ],
+  "physical_fit_verified": false
+}

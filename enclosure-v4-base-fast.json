@@ -1,0 +1,16 @@
+{
+  "size_mm": [
+    104.0,
+    124.0,
+    35.79999923706055
+  ],
+  "bodies": [
+    {
+      "volume_mm3": 57927.72,
+      "bed_contact_mm2": 12515.71
+    }
+  ],
+  "original_volume_mm3": 69358.714,
+  "model_volume_reduction_percent": 16.5,
+  "physical_print_verified": false
+}

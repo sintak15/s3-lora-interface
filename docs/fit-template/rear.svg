@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="190mm" height="250mm" viewBox="0 0 190 250">
+<g font-family="Arial, sans-serif" fill="#111">
+<text x="8" y="12" font-size="5">V4 enclosure: full-size fit template</text>
+<text x="8" y="21" font-size="3.5">REAR — looking into rear shell</text>
+<text x="8" y="29" font-size="3">ANTENNA / SWITCH END ↑ · All dimensions in mm</text>
+<g transform="translate(35 38)"><rect x="0.0" y="0.0" width="104.0" height="124.0" rx="7.0" fill="none" stroke="#111" stroke-width="0.25"/><rect x="2.3999999999999915" y="2.3999999999999915" width="99.2" height="119.2" rx="4.6" fill="none" stroke="#111" stroke-width="0.25" stroke-dasharray="1.5 1"/><circle cx="99.0" cy="119.0" r="1.7" fill="none" stroke="#111" stroke-width="0.2"/><path d="M97.0,119.0h4 M99.0,117.0v4" stroke="#111" stroke-width="0.15"/><circle cx="99.0" cy="5.0" r="1.7" fill="none" stroke="#111" stroke-width="0.2"/><path d="M97.0,5.0h4 M99.0,3.0v4" stroke="#111" stroke-width="0.15"/><circle cx="5.0" cy="119.0" r="1.7" fill="none" stroke="#111" stroke-width="0.2"/><path d="M3.0,119.0h4 M5.0,117.0v4" stroke="#111" stroke-width="0.15"/><circle cx="5.0" cy="5.0" r="1.7" fill="none" stroke="#111" stroke-width="0.2"/><path d="M3.0,5.0h4 M5.0,3.0v4" stroke="#111" stroke-width="0.15"/><rect x="65.0" y="43.0" width="30.0" height="70.0" rx="0" fill="none" stroke="#111" stroke-width="0.25"/><text x="80.0" y="78.0" text-anchor="middle" font-size="2.5">Power 30 × 70</text><rect x="9.399999999999999" y="36.599999999999994" width="22.6" height="76.4" rx="0" fill="none" stroke="#111" stroke-width="0.25"/><text x="20.7" y="74.8" text-anchor="middle" font-size="2.5">Holder 22.6 × 76.4</text><rect x="38.300000000000004" y="53.55" width="20.4" height="25.45" rx="0" fill="none" stroke="#111" stroke-width="0.25"/><text x="48.5" y="66.27499999999999" text-anchor="middle" font-size="2.5">MAX</text><rect x="53.2" y="9.8" width="40.8" height="28.2" rx="0" fill="none" stroke="#111" stroke-width="0.25"/><text x="73.6" y="23.9" text-anchor="middle" font-size="2.5">Speaker</text><rect x="101.6" y="50.0" width="2.4" height="18.0" rx="0" fill="none" stroke="#111" stroke-width="0.25" stroke-dasharray="1.5 1"/></g>
+<text x="8" y="175" font-size="3">Solid: component envelope / shell. Dashed: wall / glass / overlay.</text>
+<text x="8" y="182" font-size="3">Place actual parts on their outlines; check edges and hole centres.</text>
+<text x="8" y="189" font-size="3">GPS board overlaps its patch at different heights.</text>
+<text x="8" y="196" font-size="3">Paper checks XY only; verify height, wires, ports and mounts in CAD/coupon.</text>
+<text x="8" y="203" font-size="3">Print at 100% / Actual size. Disable Fit to page. Measure ruler first.</text>
+<path d="M10 219h100 M10 216v6 M60 216v6 M110 216v6" fill="none" stroke="#111" stroke-width="0.3"/>
+<text x="10" y="228" font-size="3">0</text><text x="57" y="228" font-size="3">50</text><text x="105" y="228" font-size="3">100 mm</text>
+<rect x="145" y="213" width="25" height="25" fill="none" stroke="#111" stroke-width="0.25"/>
+<text x="144" y="244" font-size="3">25 × 25 mm check</text>
+</g></svg>

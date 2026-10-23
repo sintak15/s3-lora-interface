@@ -1,0 +1,31 @@
+{
+  "size_mm": [
+    71.40000057220459,
+    59.19999694824219,
+    12.700000762939453
+  ],
+  "bodies": [
+    {
+      "volume_mm3": 489.252,
+      "bed_contact_mm2": 125.024
+    },
+    {
+      "volume_mm3": 489.252,
+      "bed_contact_mm2": 125.024
+    },
+    {
+      "volume_mm3": 101.354,
+      "bed_contact_mm2": 52.038
+    },
+    {
+      "volume_mm3": 116.043,
+      "bed_contact_mm2": 52.038
+    },
+    {
+      "volume_mm3": 1139.722,
+      "bed_contact_mm2": 544.929
+    }
+  ],
+  "individual_exports_checked": true,
+  "physical_fit_verified": false
+}

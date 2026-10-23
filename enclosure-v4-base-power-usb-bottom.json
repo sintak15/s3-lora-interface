@@ -1,0 +1,27 @@
+{
+  "size_mm": [
+    104.0,
+    124.0,
+    35.79999923706055
+  ],
+  "bodies": [
+    {
+      "volume_mm3": 56676.149,
+      "bed_contact_mm2": 12652.338
+    }
+  ],
+  "clear_battery_area_mm": [
+    48,
+    80
+  ],
+  "floor_thickness_mm": 1.6,
+  "checked_holder_height_mm": 20.9,
+  "tape_allowance_mm": 1,
+  "case_pilot_diameter_mm": 2.6,
+  "case_pilot_depth_mm": 12,
+  "physical_fit_verified": false,
+  "power_usb_center_from_bottom_wall_mm": 27,
+  "power_usb_center_from_rear_face_mm": 9.5,
+  "new_opening_wall_area_mm2": 0.0,
+  "old_opening_filled_area_mm2": 216.0
+}

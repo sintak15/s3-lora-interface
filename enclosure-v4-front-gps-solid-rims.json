@@ -1,0 +1,32 @@
+{
+  "size_mm": [
+    104.0,
+    124.0,
+    20.099998474121094
+  ],
+  "bodies": [
+    {
+      "volume_mm3": 35837.38,
+      "bed_contact_mm2": 8727.48
+    }
+  ],
+  "cap_bottom_z_mm": 13.6,
+  "cap_top_z_mm": 18,
+  "pilot_bottom_z_mm": 14.8,
+  "pilot_top_z_mm": 18,
+  "nominal_pilot_wall_mm": 2.2,
+  "antenna_total_size_mm": [
+    25,
+    25,
+    7.5
+  ],
+  "antenna_seat_z_mm": 3.8,
+  "bracket_post_z_mm": 11.3,
+  "coupon": [
+    {
+      "volume_mm3": 8853.148,
+      "bed_contact_mm2": 1858.607
+    }
+  ],
+  "physical_strength_verified": false
+}

@@ -1,0 +1,23 @@
+{
+  "size_mm": [
+    104.0,
+    124.0,
+    35.79999923706055
+  ],
+  "bodies": [
+    {
+      "volume_mm3": 56675.406,
+      "bed_contact_mm2": 12652.338
+    }
+  ],
+  "clear_battery_area_mm": [
+    48,
+    80
+  ],
+  "floor_thickness_mm": 1.6,
+  "checked_holder_height_mm": 20.9,
+  "tape_allowance_mm": 1,
+  "case_pilot_diameter_mm": 2.6,
+  "case_pilot_depth_mm": 12,
+  "physical_fit_verified": false
+}
