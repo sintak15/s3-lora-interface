@@ -4,7 +4,7 @@ A touchscreen and local web interface for a Heltec Meshtastic radio, built on
 an ESP32-S3 CYD. Read messages, check radio and battery status, browse nodes,
 and use offline maps without depending on internet access.
 
-**Current firmware: v0.1.94.** The CYD runs this firmware; the Heltec runs
+**Current firmware: v0.1.95.** The CYD runs this firmware; the Heltec runs
 Meshtastic and handles the LoRa radio connection.
 
 ## Pin mapping — quick reference
@@ -200,10 +200,14 @@ this receive-only physical wiring.
 The CYD receives on GPIO3 and transmits on **GPIO2**, at **9600 baud**.
 GPIO2 is the unused expansion IO alongside GPIO3/14/21; see the
 [LCDWiki board manual](https://www.lcdwiki.com/res/ES3C28P/2.8inch_IPS_ESP32-S3_ES3C28P_ES3N28P_User_Manual.pdf).
-Boot sends no GPS configuration commands. USB `gps rate` queries the receiver;
-`gps rate 1`, `gps rate 2` and `gps rate 5` request measurement rates with
-acknowledgement and readback reporting. Prefer 1 Hz for the shared 9600-baud
-stream; higher rates may exceed its NMEA bandwidth. Use compatible 3.3 V UART signals and common
+Boot sends no GPS configuration commands. **System > GPS > Config** reads and
+changes update rate, navigation mode and SBAS. Its **Adv** submenu controls power
+mode and Normal/Compact NMEA output. Apply checks receiver readback; Save is a
+separate request to retain settings. Prefer 1 Hz; higher rates require Compact
+output and Maximum performance mode on the shared 9600-baud stream. USB
+`gps config` reads all settings; `gps rate` reads the rate alone. See the
+[GPS configuration guide](docs/GPS_CONFIG.md) for choices and constraints.
+Use compatible 3.3 V UART signals and common
 ground; the breakout's boosted 5V power input is separate from UART logic.
 The GPS and radio serial connections use different pins and baud rates.
 See [GPS wiring and control ownership](docs/GPS_DIAGNOSTICS.md#gps-wiring-and-control-ownership)

@@ -173,7 +173,7 @@ static void showPage(lv_obj_t* target, bool remember) {
   lv_obj_t* pages[] = {
     pageLauncher, pageFunctions, pageOperate, pageDiagnose, pageNodes, pageNodeDetail, pageMeshHealth, pagePacketInspector,
     pageTxHistory, pagePublicChat, pagePrivateChat, pageDirectChat, pageMessageDiag, pageGps, pageMapCoverage,
-    pageSystem, pageSystemInterface, pageSystemSerial, pageSystemRadio, pageSystemGps,
+    pageSystem, pageSystemInterface, pageSystemSerial, pageSystemRadio, pageSystemGps, pageGpsConfig, pageGpsAdvanced,
     pageWifi, pageWifiStats, pageWifiLocal, pageWifiScan, pageBacklight, pageSound, pageBattery
   };
   for (lv_obj_t* page : pages) {
@@ -351,6 +351,13 @@ static void clearUiObjectPointers() {
   pageSystemSerial = nullptr;
   pageSystemRadio = nullptr;
   pageSystemGps = nullptr;
+  pageGpsConfig = pageGpsAdvanced = nullptr;
+  btnGpsConfigRead = nullptr;
+  for (auto& object : gpsConfigStatusLabels) object = nullptr;
+  for (auto& object : gpsConfigCurrentLabels) object = nullptr;
+  for (auto& object : gpsConfigDropdowns) object = nullptr;
+  for (auto& object : gpsConfigApplyButtons) object = nullptr;
+  for (auto& object : gpsConfigSaveButtons) object = nullptr;
   pageWifi = nullptr;
   pageWifiStats = nullptr;
   pageWifiLocal = nullptr;
@@ -1279,6 +1286,8 @@ static void buildLandscapeKeyboardScreen() {
 
 #include "HomeUi.inc"
 
+#include "GpsUi.inc"
+
 static void buildScreenUi() {
   lv_obj_t* screen = lv_scr_act();
   mainScreen = screen;
@@ -1307,6 +1316,8 @@ static void buildScreenUi() {
   pageSystemSerial = makePage(screen);
   pageSystemRadio = makePage(screen);
   pageSystemGps = makePage(screen);
+  pageGpsConfig = makePage(screen);
+  pageGpsAdvanced = makePage(screen);
   pageWifi = makePage(screen);
   pageWifiStats = makePage(screen);
   pageWifiLocal = makePage(screen);
@@ -1752,14 +1763,17 @@ static void buildScreenUi() {
   lv_label_set_text(lblSystemRadio, "Radio ready");
   styleBoundedLabel(lblSystemRadio, lv_pct(100), COLOR_TEXT, LV_LABEL_LONG_WRAP);
 
-  makePageTitle(pageSystemGps, "GPS Stats");
+  makePageTitle(pageSystemGps, "GPS");
   makePageScrollable(pageSystemGps);
+  lv_obj_t* gpsConfigButton = makeActionButton(pageSystemGps, "Config", 28, [](lv_event_t*) { openGpsConfig(); });
+  lv_obj_set_height(gpsConfigButton, 44);
   lv_obj_t* gpsPanel = makePanel(pageSystemGps);
   lv_obj_set_size(gpsPanel, SCREEN_W - 12, 430);
-  lv_obj_align(gpsPanel, LV_ALIGN_TOP_MID, 0, 24);
+  lv_obj_align(gpsPanel, LV_ALIGN_TOP_MID, 0, 84);
   lblGpsStats = lv_label_create(gpsPanel);
   lv_label_set_text(lblGpsStats, "Waiting for CYD GPS UART...");
   styleBoundedLabel(lblGpsStats, lv_pct(100), COLOR_TEXT, LV_LABEL_LONG_WRAP);
+  buildGpsConfigUi();
 
   makePageTitle(pageWifi, "WiFi");
   makePageScrollable(pageWifi);

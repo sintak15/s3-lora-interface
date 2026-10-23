@@ -1,4 +1,4 @@
-# GPS receiver diagnostics and control (v0.1.91)
+# GPS receiver diagnostics and control
 
 USB command `gps` reports the CYD receiver's raw byte count, last-byte age,
 checksum-valid NMEA sentences, checksum failures, fix-bearing sentences,
@@ -52,29 +52,40 @@ UART logic, independently of the breakout's 5V power connection.
 | Command | Action |
 | --- | --- |
 | `gps` | Print diagnostics without transmitting to the receiver |
+| `gps config` | Read rate, navigation, SBAS, power and six NMEA message rates |
 | `gps rate` | Poll receiver measurement/navigation-rate settings |
 | `gps rate 1` | Request 1000 ms measurement period (1 Hz) |
 | `gps rate 2` | Request 500 ms measurement period (2 Hz) |
 | `gps rate 5` | Request 200 ms measurement period (5 Hz) |
+| `gps save` | Request receiver storage after a complete read or verified apply |
 
-Commands use UBX-CFG-RATE with navigation rate 1 and GPS-time alignment,
+Rate changes use UBX-CFG-RATE with navigation rate 1, preserving time alignment,
 following the [u-blox 6 protocol specification, section 31.17](https://content.u-blox.com/sites/default/files/products/documents/u-blox6_ReceiverDescrProtSpec_%28GPS.G6-SW-10018%29_Public.pdf).
 The CYD waits up to 2 seconds for ACK/NAK, then queries the rate after ACK.
 The reported measurement period comes from a receiver reply, not the request.
 Polls also time out after 2 seconds. Additional commands are rejected while
-one is pending; invalid rates send nothing. Higher rates can exceed the shared
-9600-baud NMEA bandwidth; start with 1 Hz.
+one is pending; invalid rates send nothing. Run `gps config` before setting a
+rate so the CYD can validate the receiver's power mode and output. Above 1 Hz
+requires Compact output and Maximum performance, selected in
+[System > GPS > Config > Adv](GPS_CONFIG.md). USB rate commands use the same
+validation and never implicitly change power or NMEA output. Start with 1 Hz.
 
 `gps` and health JSON add `gpsTxPin`, `gpsControlState`,
 `gpsMeasurementPeriodMs`, `gpsUbxReplies` and `gpsUbxChecksumErrors`. A null
-period means no valid rate reply since the last command. UBX frames are
+period means the rate is not currently confirmed. Additional fields report
+`gpsConfigBusy`, `gpsConfigKnownMask`, `gpsNavigationModel`, `gpsSbasEnabled`,
+`gpsReceiverPowerMode`, `gpsNmeaProfile`, `gpsConfigCanSave` and `gpsConfigError`.
+The known-mask bits 0–9 correspond to rate, navigation, SBAS, power, GGA, GLL,
+GSA, GSV, RMC and VTG. UBX frames are
 checksum checked and kept out of NMEA parsing; truncated frames reset after
 a 250 ms receive gap. Payload lengths are capped at 256 bytes, retaining only
-6 bytes. The error counter also includes rejected oversize UBX headers.
+36 bytes for NAV5 and the smaller supported replies. The error counter also
+includes rejected oversize UBX headers.
 
-No baud changes, NMEA-message configuration or flash/EEPROM saves are sent.
-Changes apply to the receiver's current configuration; retention depends on
-its power/backup state. Adding TX alone does not improve GPS accuracy.
+Config can explicitly change NMEA output and request receiver storage, as
+described in the [configuration guide](GPS_CONFIG.md). No baud changes or
+automatic startup writes are sent. Retention depends on the module's storage
+and backup power. Adding TX alone does not improve GPS accuracy.
 
 ### Wiring verification
 
@@ -83,7 +94,8 @@ its power/backup state. Adding TX alone does not improve GPS accuracy.
 3. Run `gps` and confirm bytes and valid NMEA sentences continue increasing.
 4. Run `gps rate` and check the returned measurement period. A timeout with
    working NMEA suggests the new transmit wire or disabled UBX input.
-5. Optionally run `gps rate 1` and check ACK followed by 1000 ms readback.
+5. Run `gps config` before an optional `gps rate 1`, then check ACK followed by
+   1000 ms readback. Leave Save alone when doing a temporary wiring check.
 
 Compilation and protocol tests do not verify the physical wiring or receiver.
 

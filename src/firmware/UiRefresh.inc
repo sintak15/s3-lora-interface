@@ -761,6 +761,7 @@ static void refreshScreenUi() {
     lv_label_set_text(lblGpsStats, gpsText);
   }
 
+  refreshGpsConfigUi();
   refreshMapUi();
 
   refreshChatViews(pageForce || isUiDirty(UI_DIRTY_CHAT));

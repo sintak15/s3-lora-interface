@@ -169,3 +169,14 @@ confirmed clear. See [audio operation and installation records](AUDIO.md).
 Short, rounded notification boops replaced misleading bell/chime labels.
 Bubble Pop and Double Pop added quick 600-to-1200 Hz sweeps. Browser preview
 now follows the saved message selection and volume. See [sound choices](AUDIO.md).
+
+## GPS Config and Adv (v0.1.95)
+
+System > GPS gains Config for update rate, navigation mode and SBAS, plus Adv
+for receiver power mode and NMEA output. Changes use explicit Apply with
+readback verification and a separate receiver Save. The command state machine
+limits bandwidth, preserves unrelated settings and reports partial failures.
+See [GPS configuration and installation](GPS_CONFIG.md). The production build
+was flashed on October 23, 2026; USB identity and a full ten-field receiver read
+passed without changing GPS settings. Touchscreen Apply/Save and persistence
+after receiver power removal remain untested.

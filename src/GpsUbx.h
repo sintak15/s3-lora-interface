@@ -3,29 +3,33 @@
 #include <stddef.h>
 
 namespace GpsUbx {
-struct Packet { uint8_t bytes[14]{}; size_t size = 0; };
-constexpr Packet ratePacket(unsigned hz) {
+static constexpr size_t MAX_CONFIG_PAYLOAD = 36;
+struct Packet { uint8_t bytes[MAX_CONFIG_PAYLOAD + 8]{}; size_t size = 0; };
+constexpr Packet packet(uint8_t cls, uint8_t id, const uint8_t* payload = nullptr, size_t length = 0) {
   Packet p{};
-  if (hz != 0 && hz != 1 && hz != 2 && hz != 5) return p;
-  p.size = hz ? 14 : 8;
-  p.bytes[0]=0xb5; p.bytes[1]=0x62; p.bytes[2]=6; p.bytes[3]=8;
-  p.bytes[4]=hz ? 6 : 0;
-  if (hz) {
-    const unsigned ms=1000/hz;
-    p.bytes[6]=ms & 255; p.bytes[7]=ms >> 8;
-    p.bytes[8]=1; p.bytes[10]=1; // navRate=1, GPS time reference
-  }
-  uint8_t a=0,b=0;
-  for (size_t i=2;i<p.size-2;++i) { a+=p.bytes[i]; b+=a; }
-  p.bytes[p.size-2]=a; p.bytes[p.size-1]=b;
+  if (length > MAX_CONFIG_PAYLOAD || (length && !payload)) return p;
+  p.size = length + 8;
+  p.bytes[0] = 0xb5; p.bytes[1] = 0x62; p.bytes[2] = cls; p.bytes[3] = id;
+  p.bytes[4] = (uint8_t)length;
+  for (size_t i = 0; i < length; ++i) p.bytes[6 + i] = payload[i];
+  uint8_t a = 0, b = 0;
+  for (size_t i = 2; i < p.size - 2; ++i) { a += p.bytes[i]; b += a; }
+  p.bytes[p.size - 2] = a; p.bytes[p.size - 1] = b;
   return p;
+}
+constexpr Packet ratePacket(unsigned hz) {
+  if (hz != 0 && hz != 1 && hz != 2 && hz != 5) return {};
+  if (!hz) return packet(6, 8);
+  const unsigned ms = 1000 / hz;
+  const uint8_t payload[] = {(uint8_t)ms, (uint8_t)(ms >> 8), 1, 0, 1, 0};
+  return packet(6, 8, payload, sizeof(payload));
 }
 
 // Bounded streaming UBX decoder. Keep binary replies out of the NMEA parser.
 struct Decoder {
   uint8_t state=0, cls=0, id=0, a=0,b=0, header=0;
   uint16_t length=0,pos=0;
-  uint8_t payload[6]{};
+  uint8_t payload[MAX_CONFIG_PAYLOAD]{};
   bool ready=false;
   uint32_t bad=0;
   constexpr void reset() { state=0; ready=false; }

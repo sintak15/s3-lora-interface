@@ -40,6 +40,7 @@
 #include "src/MapCoverage.h"
 #include "src/BuildIdentity.h"
 #include "src/GpsUbx.h"
+#include "src/GpsConfig.h"
 
 #ifdef FIRMWARE_RUN_TESTS
 #include "src/tests/ReliabilityTests.h"
@@ -49,6 +50,7 @@
 #include "src/tests/MapNavigationTests.h"
 #include "src/tests/MapCoverageTests.h"
 #include "src/tests/GpsUbxTests.h"
+#include "src/tests/GpsConfigTests.h"
 #include "src/tests/NotificationSoundTests.h"
 #endif
 
