@@ -7,6 +7,44 @@ and use offline maps without depending on internet access.
 **Current firmware: v0.1.91.** The CYD runs this firmware; the Heltec runs
 Meshtastic and handles the LoRa radio connection.
 
+## Pin mapping — quick reference
+
+For the **LCDWiki 2.8-inch ESP32-S3 CYD** and **Heltec V3.2**. Numbers below
+are **GPIO numbers on the named board**, not physical header positions.
+All modules share a common ground; UART and I²C signals use 3.3 V logic.
+
+| CYD pin / terminal | Connect to | Purpose |
+| --- | --- | --- |
+| **GPIO14 — RX** | **Heltec GPIO39 — TX** | Heltec → CYD, 115200 baud |
+| **GPIO21 — TX** | **Heltec GPIO38 — RX** | CYD → Heltec, 115200 baud |
+| **GPIO3 — GPS RX** | **GPS TX**; split that same GPS TX wire to **Heltec GPIO5 — GPS RX** | GPS → both boards, 9600 baud |
+| **GPIO2 — GPS TX** | **GPS RX** | CYD → GPS configuration, 9600 baud |
+| **GPIO16 — SDA** | **MAX17048 SDA** | Shared I²C data; gauge address `0x36`; also used by built-in touch and audio codec |
+| **GPIO15 — SCL** | **MAX17048 SCL** | Shared I²C clock |
+| **GND** | Heltec GND, GPS GND, MAX17048 GND and power ground | Common ground |
+| **5V** | Boost-converter 5V output; same rail supplies Heltec 5V and GY-NEO6MV2 VCC | Board / breakout power, separate from UART logic |
+| **3V3** | MAX17048 breakout VCC, subject to its supply requirements | Gauge supply; cell sensing connects to the raw battery |
+
+**Leave Heltec GPIO4 disconnected from GPS RX.** Only CYD GPIO2 drives that
+wire. Enable the Heltec Serial module in **PROTO / Protobuf** mode at
+**115200 baud**, with **RX 38 / TX 39**. Enable GPS with **GPS RX 5**.
+See [detailed wiring and battery connections](#wiring) below.
+
+These built-in CYD connections are already routed on the board:
+
+| Built-in function | CYD GPIO assignment |
+| --- | --- |
+| TFT | CS **10**, DC **46**, MOSI **11**, SCLK **12**, MISO **13**, backlight **45** |
+| Touch | SDA **16**, SCL **15**, reset **18**, interrupt **17**; I²C address `0x38` |
+| MicroSD | CLK **38**, CMD **40**, D0 **39**, D1 **41**, D2 **48**, D3 **47** |
+| Audio clocks | MCLK **4**, BCLK **5**, LRCLK **7** |
+| Audio data | **8** ESP32 → codec playback input; **6** codec → ESP32 recording output |
+| Audio control | Amplifier enable **1**, active low; codec I²C address `0x18` |
+
+**Audio firmware discrepancy:** v0.1.91 currently selects GPIO6 for playback;
+the [board schematic](https://www.lcdwiki.com/res/ES3C28P/2.8inch_ESP32-S3_Display_Schematic.pdf)
+requires GPIO8. This remains an outstanding firmware correction.
+
 ## What it does
 
 - **Home dashboard:** radio status, battery level, node/GPS status and a message
