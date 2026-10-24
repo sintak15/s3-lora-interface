@@ -16,6 +16,6 @@ constexpr const char* trend(bool valid, float rate) {
 }
 constexpr const char* trendLabel(bool valid, float rate) {
   return !valid || !(rate == rate) ? "Unavailable" :
-         rate > 0 ? "Increasing" : rate < 0 ? "Decreasing" : "Steady";
+         rate > 0 ? "+" : rate < 0 ? "-" : "=";
 }
 } // namespace Max17048

@@ -16,6 +16,7 @@ static void allocateRuntimeBuffers();
 static void appendLine(char* buffer, size_t bufferSize, const char* line);
 static void appendPacketEvent(const char* line);
 static void refreshDashboardLabels();
+static void loadPowerLogView();
 static void showNodeDetail(uint32_t nodeNum);
 static void directSelectedNode();
 static void showSelectedNodeOnMap();
@@ -325,7 +326,7 @@ static bool isRecentLocalEcho(uint8_t channel, uint32_t to, const uint8_t* text,
 static void formatChatTimestamp(char* out, size_t outSize);
 static void copyChatPreview(char* out, size_t outSize, const char* sender, const uint8_t* text, size_t len);
 static void recordChatActivity(uint8_t channel, uint32_t to, const char* sender, const uint8_t* text, size_t len);
-static void appendChatMessage(uint8_t channel, uint32_t to, const char* sender, const uint8_t* text, size_t len);
+static void appendChatMessage(uint8_t channel, uint32_t to, const char* sender, const uint8_t* text, size_t len, bool local);
 static bool writeStreamFrame(const uint8_t* payload, size_t len);
 static uint32_t allocateMeshPacketId();
 static uint8_t activeHopLimit();

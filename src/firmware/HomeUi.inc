@@ -51,7 +51,7 @@ static void buildHomeUi() {
 
   auto* battery = homeCard("BATTERY", 6, 118, 105, 70, [](lv_event_t*) { showPage(pageBattery); });
   lblHomePower = homeLabel(battery, "--", 9, 21, 85, &lv_font_montserrat_22, 0xF4F8FF);
-  lblHomePowerDetail = homeLabel(battery, "Checking battery", 9, 49, 91, &lv_font_montserrat_10, 0xA1B5CE);
+  lblHomePowerDetail = homeLabel(battery, "Checking battery", 9, 49, 91, batterySymbolFont(&lv_font_montserrat_10), 0xA1B5CE);
   homePowerBar = lv_bar_create(battery); lv_obj_set_pos(homePowerBar, 9, 63); lv_obj_set_size(homePowerBar, 84, 2);
   lv_bar_set_range(homePowerBar, 0, 100); lv_bar_set_value(homePowerBar, 0, LV_ANIM_OFF);
   lv_obj_set_style_bg_color(homePowerBar, lv_color_hex(0x294766), LV_PART_MAIN);

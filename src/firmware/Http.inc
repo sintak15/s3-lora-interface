@@ -65,7 +65,10 @@ static void appendTileCacheStatusJson(String& json) {
 }
 
 static void appendBatteryCycleStatusJson(String& json) {
-  json += "\"batteryCycleEnabled\":" + String(batteryCycle.enabled ? "true" : "false") + ",";
+  json += "\"batteryCycleEnabled\":" + String("true") + ",";
+  json += "\"batteryLogRotationEnabled\":" + String(batteryCycle.rotationEnabled ? "true" : "false") + ",";
+  json += "\"batteryLogWindowSeconds\":" + String((unsigned long long)(batteryCycle.rotationClock.elapsed() / 1000)) + ",";
+  json += "\"batteryLogPreviousAvailable\":" + String(batteryCycle.previousAvailable ? "true" : "false") + ",";
   json += "\"batteryCyclePhase\":\"" + String(batteryCyclePhase()) + "\",";
   json += "\"batteryCycleStatus\":\"" + jsonEscape(batteryCycle.status) + "\",";
   json += "\"batteryVoltageSpanMv\":" + String(batteryCycle.lastSpanMv) + ",";
@@ -1049,10 +1052,15 @@ static void registerWebRoutes() {
   server.on("/diagnostics/report", HTTP_GET, handleFieldReport);
   server.on("/sd/power-health", HTTP_GET, []() { handleSdDownload(SD_POWER_HEALTH_PATH, "power-health.log", "text/plain"); });
   server.on("/sd/battery-cycle", HTTP_GET, []() { handleSdDownload(SD_BATTERY_CYCLE_PATH, "battery-cycle.csv", "text/csv"); });
+  server.on("/sd/power-health/previous", HTTP_GET, []() { handleSdDownload(SD_POWER_HEALTH_PREVIOUS_PATH, "power-health-previous.log", "text/plain"); });
+  server.on("/sd/battery-cycle/previous", HTTP_GET, []() { handleSdDownload(SD_BATTERY_PREVIOUS_PATH, "battery-cycle-previous.csv", "text/csv"); });
   server.on("/battery/cycle", HTTP_POST, []() {
     if (!requireWebAuth()) return;
     const String action = server.arg("action");
-    if (action != "start" && action != "stop" && action != "charging" && action != "discharging" && action != "resting") {
+    if (action == "start" || action == "stop" || action == "charging" || action == "discharging" || action == "resting") {
+      server.send(410, "text/plain", "Diagnostics run continuously; use rotation-on or rotation-off for retention"); return;
+    }
+    if (action != "rotation-on" && action != "rotation-off") {
       server.send(400, "text/plain", "Unknown battery cycle action"); return;
     }
     const bool ok = controlBatteryCycle(action);

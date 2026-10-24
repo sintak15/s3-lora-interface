@@ -72,7 +72,10 @@ on a line, MAC/time colons, literal hash characters and bounded output.
 MAX17048 checks cover register units, signed CRATE, fractional/zero SOC and
 failed rate reads. Voltage-variation checks cover known sample statistics,
 window resets and steps across record boundaries. Web checks cover single
-logging requests, explicit SD failures and uncertain connection-loss outcomes.
+retention requests, explicit save failures and uncertain connection-loss outcomes.
+Rotation checks cover the 48-hour boundary, unlimited mode, millis rollover and
+recovery after every journal/directory operation. Chat checks cover direction,
+multiline content, reserved sender names and escaping.
 
 Host-side USB protocol tests run without connecting to a device:
 

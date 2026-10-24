@@ -49,12 +49,30 @@ have separate expandable topics. Field reports remain directly downloadable.
 SD storage initially shows status, type, usage and capacity; saved files and
 maintenance counters have their own expandable groups.
 
-The Battery & runtime topic shows the battery level trend reported by the MAX sensor and sampled voltage
-variation, plus power-health logging controls. Start/stop logging and optionally
-mark physical charger changes; download the readable log or detailed CSV. There
-is no dedicated before/after mode. Both files continue across logging sessions
-and enabled recording resumes after restart. See [battery statistics](BATTERY_STATS.md)
-for measurement limits and file size limits. CYD controls are under System > Battery.
+The Battery & runtime topic shows bold **Battery: +**, **Battery: -** and
+**Battery: =** indicators, sampled voltage variation and automatic logging status.
+The retention checkbox rotates after 48 hours of powered-on recording; disabling
+it keeps the current log growing. Current and previous readable/CSV downloads
+remain available. On the CYD, **System > Battery > View logs** opens a scrollable
+recent log with **Current log**, **Previous log** and **Refresh log** controls.
+See [battery statistics](BATTERY_STATS.md) for retention and measurement limits.
+
+## Clear controls and message direction
+
+Use plain action-and-object labels that explain the result of tapping a control.
+When space is tight, use a separate page or a short visible explanation instead
+of an ambiguous abbreviation. Settings that change retention must say so and
+remain separate from the automatic measurement status. This is the standing
+labeling preference for future interface changes.
+
+Public, secondary-channel and direct-message histories use light blue
+(`#85BFFF`) for this device's messages and white (`#F4F8FF`) for messages from
+other devices. A visible web legend explains the colors, and persisted sender
+labels remain readable without color. New incoming entries are marked `from`
+and outgoing/local-echo entries use `me`, based on the actual node direction.
+A remote node named `me` is still an incoming entry. Multiline content remains
+part of its original message, and literal HTML/LVGL color commands are escaped.
+Raw SD message logs keep plain text; colors are applied only while displaying.
 
 ## CYD label/value colors
 

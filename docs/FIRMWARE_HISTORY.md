@@ -261,3 +261,20 @@ previous bytes preserved. Logging remains enabled. The installed application is
 `fb94d1fb3dadd3e98ff46808e1971a5a89ed8b1e0c60425a6cf6242c389eb406`.
 A full physical charge/discharge cycle and oscilloscope/EMI measurements remain
 outside these software checks. See the [investigation](MESSAGE_RESTART_REVIEW_2026-10-24.md).
+
+## Continuous diagnostics and clearer controls (v0.1.101)
+
+Power-health recording is always enabled, replacing manual start/stop/charger
+note buttons and the 16 MiB stop. A persisted retention setting defaults to
+48 hours of powered-on recording, retaining the current readable/CSV pair and
+one previous pair. Unlimited mode keeps appending. Directory rotation uses a
+persistent recovery journal; rotation age survives ordinary restarts and short
+power cycles through flushed records and NVS fallback checkpoints. Existing
+v0.1.100 logs migrate intact. The CYD has a bounded scrollable recent-log viewer.
+
+Battery +, - and = indicators use bold glyphs, including a generated three-symbol
+font with normal-text fallback on the CYD. Message histories show local entries
+in blue and other devices in white. New persisted direction tags are derived
+from actual node direction, independently of display names. User content is
+escaped before web/LVGL styling. Clear action labels and short explanations are
+recorded as the preferred approach for future interface work.

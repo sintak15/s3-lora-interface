@@ -17,7 +17,7 @@ static void printFirmwareIdentity() {
 static void formatBatteryRuntime(char* out, size_t size) {
   if (!localBattery.gaugePresent) strlcpy(out, "unavailable (no gauge)", size);
   else if (!localBattery.chargeRateValid) strlcpy(out, "Battery: Unavailable", size);
-  else if (localBattery.charging) strlcpy(out, "Battery: Increasing", size);
+  else if (localBattery.charging) strlcpy(out, "Battery: +", size);
   else if (batteryRuntime.minutes() < 0) strlcpy(out, "estimating...", size);
   else {
     int32_t minutes = FieldStatus::roundedRuntimeMinutes(batteryRuntime.minutes());
@@ -86,7 +86,7 @@ static void refreshDashboardLabels() {
     lv_obj_set_style_text_color(lblHomePower, lv_color_hex(color), 0);
     if (lblHomePowerDetail) {
       if (!localBattery.gaugePresent) strlcpy(line, "No gauge", sizeof(line));
-      else if (localBattery.charging) strlcpy(line, "Battery: Increasing", sizeof(line));
+      else if (localBattery.charging) strlcpy(line, "Battery: +", sizeof(line));
       else if (localBattery.batteryCritical) strlcpy(line, "Charge soon", sizeof(line));
       else if (localBattery.batteryLow) strlcpy(line, "Battery low", sizeof(line));
       else formatBatteryRuntime(line, sizeof(line));
@@ -591,6 +591,7 @@ static void refreshScreenUi() {
                "Last change: %ld mV\n"
                "Voltage trend: %.1f mV/min\n"
                "Battery: %s\n"
+               "Key: + up / - down / = steady\n"
                "Discharge: %.1f%%/hr\n"
                "Saved discharge: %.1f%%/hr\n"
                "Updated: %lu s ago\n\n"
@@ -644,9 +645,14 @@ static void refreshScreenUi() {
                (unsigned long)(ESP.getMinFreeHeap() / 1024),
                (unsigned long)(ESP.getFreePsram() / 1024));
     }
+    if (swPowerLogRotation) {
+      if (batteryCycle.rotationEnabled) lv_obj_add_state(swPowerLogRotation, LV_STATE_CHECKED);
+      else lv_obj_clear_state(swPowerLogRotation, LV_STATE_CHECKED);
+    }
     size_t used = strlen(batteryText);
-    snprintf(batteryText + used, sizeof(batteryText) - used, "\n\nCycle log: %s\nMarked phase: %s\nRows/errors: %lu/%lu\nVoltage span/SD: %lu/%.1f mV\nMax sample step: %lu mV\nMAX read errors: %lu\n1 Hz samples; not RF noise.",
-             batteryCycle.status, batteryCyclePhase(), (unsigned long)batteryCycle.rows, (unsigned long)batteryCycle.errors,
+    snprintf(batteryText + used, sizeof(batteryText) - used, "\n\nContinuous log: %s\nRetention: %s\nLog age: %.1f h\nMode: %s\nRows/errors: %lu/%lu\nVoltage span/SD: %lu/%.1f mV\nMax sample step: %lu mV\nMAX read errors: %lu\n1 Hz samples; not RF noise.",
+             batteryCycle.status, batteryCycle.rotationEnabled ? "48h + previous" : "Unlimited",
+             batteryCycle.rotationClock.elapsed() / 3600000.0, batteryCyclePhase(), (unsigned long)batteryCycle.rows, (unsigned long)batteryCycle.errors,
              (unsigned long)batteryCycle.lastSpanMv, batteryCycle.lastStdDevMv,
              (unsigned long)batteryCycle.lastStepMv, (unsigned long)localBattery.readErrors);
     setReadoutText(lblBatteryStats, batteryText);

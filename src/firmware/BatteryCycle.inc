@@ -1,13 +1,16 @@
-// User-operated cycle recorder. Never switches a charger/load or rewrites MAX SOC.
-static const char* batteryCyclePhase() {
-  static const char* phases[] = {"unmarked", "charging", "discharging", "resting"};
-  return phases[batteryCycle.phase < 4 ? batteryCycle.phase : 0];
-}
+// Continuous power diagnostics. Charger-phase markers never alter MAX readings.
+// Legacy CSV phase column now identifies automatic recording.
+static const char* batteryCyclePhase() { return "automatic"; }
 
 static bool writeBatteryCycleRow(const char* event) {
   if (!sdStorage.available) {
     batteryCycle.unavailableDeferrals++;
     strlcpy(batteryCycle.status, "Waiting for SD; recording deferred", sizeof(batteryCycle.status));
+    return false;
+  }
+  if (powerLogDownloadActive()) {
+    batteryCycle.busyDeferrals++;
+    strlcpy(batteryCycle.status, "SD transfer active; recording deferred", sizeof(batteryCycle.status));
     return false;
   }
   // Do not delay radio/UI work behind a download or map read.
@@ -17,24 +20,33 @@ static bool writeBatteryCycleRow(const char* event) {
     strlcpy(batteryCycle.status, "SD busy; recording deferred", sizeof(batteryCycle.status));
     return false;
   }
+  if (!batteryCycle.pathsReady && !preparePowerLogStorage()) {
+    batteryCycle.errors++;
+    strlcpy(batteryCycle.status, "Could not prepare log storage", sizeof(batteryCycle.status));
+    return false;
+  }
+  bool rotated = batteryCycle.rotationPending || batteryCycle.rotationClock.due(batteryCycle.rotationEnabled);
+  if (rotated) {
+    batteryCycle.pathsReady = false;
+    PowerLogStorage storage;
+    if (!PowerLog::rotate(storage)) {
+      batteryCycle.errors++;
+      strlcpy(batteryCycle.status, "Rotation pending; retrying safely", sizeof(batteryCycle.status));
+      return false;
+    }
+    batteryCycle.previousAvailable = SD_MMC.exists(SD_POWER_HEALTH_PREVIOUS_PATH);
+    batteryCycle.pathsReady = true;
+  }
   File file = SD_MMC.open(SD_BATTERY_CYCLE_PATH, FILE_APPEND);
   File readable = SD_MMC.open(SD_POWER_HEALTH_PATH, FILE_APPEND);
   if (!file || !readable) {
     if (file) file.close();
     if (readable) readable.close();
     batteryCycle.errors++;
-    strlcpy(batteryCycle.status, "SD open failed", sizeof(batteryCycle.status));
+    strlcpy(batteryCycle.status, "SD open failed; retrying", sizeof(batteryCycle.status));
     return false;
   }
-  // Append across sessions and restarts; never silently erase an earlier test.
-  if (file.size() >= 16UL * 1024 * 1024 || readable.size() >= 16UL * 1024 * 1024) {
-    file.close();
-    readable.close();
-    batteryCycle.enabled = false;
-    prefs.putBool("batCycleOn", false);
-    strlcpy(batteryCycle.status, "Stopped: 16 MiB log limit", sizeof(batteryCycle.status));
-    return false;
-  }
+  if (rotated) event = "rotation";
   static const char header[] = "session,boot,uptime_ms,event,phase,gauge_valid,crate_valid,vcell_raw,soc_raw,crate_raw,status_valid,status_raw,config_valid,config_raw,soc_percent,cell_mv,soc_rate_percent_hr,cell_min_mv,cell_max_mv,runtime_minutes,radio_seen,radio_age_ms,firmware,voltage_samples,voltage_span_mv,voltage_stddev_mv,largest_step_mv,max_read_attempts,max_read_errors,uart_frames,uart_decode_errors,uart_timeouts,uart_bad_lengths,codec_io_errors,audio_write_errors,audio_recoveries,wifi_rssi_dbm,sd_write_errors,log_errors,utc\n";
   bool ok = file.size() != 0 || file.print(header) == sizeof(header) - 1;
   uint16_t status = 0, config = 0;
@@ -70,10 +82,11 @@ static bool writeBatteryCycleRow(const char* event) {
     (unsigned long)sdStorage.writeErrors, (unsigned long)batteryCycle.errors, utc);
   ok = ok && length > 0 && (size_t)length < sizeof(row) && file.print(row) == (size_t)length;
   file.close(); // Flush each row; a hard power cut can still lose the last SD write.
-  char entry[1600];
+  char entry[1800];
   int entryLength = snprintf(entry, sizeof(entry),
     "\nUTC %s | Uptime %lu s | session %08lx | boot %08lx | %s | firmware %s\n"
-    "  Charger phase marked by you: %s.\n"
+    "  Current log age: %llu s of powered-on recording. Rotation: %s.\n"
+    "  Logging mode: %s. Battery readings are automatic.\n"
     "  Battery sensor: %s; level %.2f%%; cell %.3f V; Battery: %s (change %.2f percentage points/hour; rate %s).\n"
     "  Voltage since last record: %lu valid 1 Hz samples; min/max %.3f/%.3f V; span %lu mV; standard deviation %.2f mV; largest sampled step %lu mV.\n"
     "  Errors since this boot: MAX reads %lu of %lu; UART decode %lu, timeout %lu, invalid length %lu; audio codec %lu, output writes %lu; audio recoveries %lu.\n"
@@ -81,6 +94,7 @@ static bool writeBatteryCycleRow(const char* event) {
     "  Battery warning: %s. Runtime estimate: %ld minutes (-1 = unavailable). SD write errors: %lu; failed log writes: %lu.\n"
     "  Recording delays: SD busy %lu attempts; SD unavailable %lu attempts. Voltage samples are retained until the next successful record.\n",
     utc, (unsigned long)(millis() / 1000), (unsigned long)batteryCycle.session, (unsigned long)batteryCycle.boot, event, FIRMWARE_VERSION,
+    (unsigned long long)(batteryCycle.rotationClock.elapsed() / 1000), batteryCycle.rotationEnabled ? "every 48 hours; current + previous retained" : "unlimited; no automatic deletion",
     batteryCyclePhase(), localBattery.gaugePresent ? "available" : "READ FAILED; battery values stale",
     localBattery.gaugeSoc, localBattery.rawPackMv / 1000.0f,
     Max17048::trendLabel(localBattery.gaugePresent && localBattery.chargeRateValid, localBattery.chargeRatePercentHr),
@@ -103,7 +117,7 @@ static bool writeBatteryCycleRow(const char* event) {
     batteryCycle.rows++;
     sdStorage.writes++;
     batteryCycle.voltageWindow.resetWindow();
-    strlcpy(batteryCycle.status, batteryCycle.enabled ? "Recording to SD" : "Stopped; CSV retained", sizeof(batteryCycle.status));
+    strlcpy(batteryCycle.status, "Continuous recording to SD", sizeof(batteryCycle.status));
   } else {
     batteryCycle.errors++;
     sdStorage.writeErrors++;
@@ -113,38 +127,21 @@ static bool writeBatteryCycleRow(const char* event) {
 }
 
 static bool controlBatteryCycle(const String& action) {
-  if (action == "start") {
-    if (batteryCycle.enabled) return true; // Repeated taps do not restart the session.
-    if (!sdStorage.available) return false;
-    batteryCycle.session = esp_random();
-    batteryCycle.phase = 0;
-    batteryCycle.voltageWindow = SampleVariation();
-    if (prefs.putUInt("batCycleId", batteryCycle.session) != sizeof(uint32_t) ||
-        prefs.putUChar("batCyclePhase", 0) != sizeof(uint8_t) ||
-        prefs.putBool("batCycleOn", true) != sizeof(bool)) return false;
-    batteryCycle.enabled = true;
-    batteryCycle.bootPending = false;
-    batteryCycle.lastWriteMs = millis();
-    if (writeBatteryCycleRow("start")) return true;
-    batteryCycle.enabled = false;
-    prefs.putBool("batCycleOn", false);
-    return false;
+  if (action == "rotation-on" || action == "rotation-off") {
+    return setPowerLogRotation(action == "rotation-on");
   }
-  if (!batteryCycle.enabled) return action == "stop";
-  if (action == "stop") {
-    if (prefs.putBool("batCycleOn", false) != sizeof(bool)) return false;
-    batteryCycle.enabled = false;
-    return writeBatteryCycleRow("stop");
-  }
-  uint8_t phase = action == "charging" ? 1 : action == "discharging" ? 2 : action == "resting" ? 3 : 0;
-  if (!phase || prefs.putUChar("batCyclePhase", phase) != sizeof(uint8_t)) return false;
-  batteryCycle.phase = phase;
-  batteryCycle.lastWriteMs = millis();
-  return writeBatteryCycleRow("marker");
+  return false;
 }
 
 static void sampleBatteryCycle() {
-  if (!batteryCycle.enabled) return;
+  batteryCycle.rotationClock.tick(millis());
+  if (millis() - batteryCycle.lastCheckpointMs >= PowerLog::CHECKPOINT_MS) {
+    batteryCycle.lastCheckpointMs = millis();
+    if (prefs.putULong64("batLogAge", batteryCycle.rotationClock.elapsed()) != sizeof(uint64_t)) {
+      batteryCycle.errors++;
+      strlcpy(batteryCycle.status, "Rotation clock save failed", sizeof(batteryCycle.status));
+    }
+  }
   if (localBattery.gaugePresent && localBattery.lastGaugeMs != batteryCycle.observedGaugeMs) {
     batteryCycle.observedGaugeMs = localBattery.lastGaugeMs;
     batteryCycle.voltageWindow.add(localBattery.rawPackMv);

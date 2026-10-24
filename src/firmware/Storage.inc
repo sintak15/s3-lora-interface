@@ -208,6 +208,7 @@ static bool appendSdLine(const char* path, const char* line) {
 }
 
 static void initSdStorage() {
+  batteryCycle.pathsReady = false;
   SdLock lock(5000);
   if (!lock) {
     sdStorage.available = false;

@@ -87,6 +87,15 @@ static void styleBoundedLabel(lv_obj_t* label, lv_coord_t width, uint32_t color,
 
 // Shared by label/value readouts, never editable fields or message/log bodies.
 static char readoutTextBuffer[4096];
+static const lv_font_t* batterySymbolFont(const lv_font_t* regular) {
+  lv_font_t* symbols = regular == &lv_font_montserrat_10 ? &battery_symbols_10 :
+                       regular == &comic_neue_12 ? &battery_symbols_12 : &battery_symbols_14;
+  symbols->fallback = regular;
+  symbols->line_height = regular->line_height;
+  symbols->base_line = regular->base_line;
+  return symbols;
+}
+
 static void setReadoutText(lv_obj_t* label, const char* text) {
   if (!label) return;
   const bool colored = DiagnosticText::format(readoutTextBuffer, sizeof(readoutTextBuffer), text);
@@ -195,7 +204,7 @@ static void showPage(lv_obj_t* target, bool remember) {
     pageLauncher, pageFunctions, pageOperate, pageDiagnose, pageNodes, pageNodeDetail, pageMeshHealth, pagePacketInspector,
     pageTxHistory, pagePublicChat, pagePrivateChat, pageDirectChat, pageMessageDiag, pageGps, pageMapCoverage,
     pageSystem, pageSystemInterface, pageSystemSerial, pageSystemRadio, pageSystemGps, pageGpsConfig, pageGpsAdvanced,
-    pageWifi, pageWifiStats, pageWifiLocal, pageWifiScan, pageBacklight, pageSound, pageBattery
+    pageWifi, pageWifiStats, pageWifiLocal, pageWifiScan, pageBacklight, pageSound, pageBattery, pagePowerLogs
   };
   for (lv_obj_t* page : pages) {
     if (!page) continue;
@@ -204,6 +213,7 @@ static void showPage(lv_obj_t* target, bool remember) {
   }
   if (keyboard) lv_obj_add_flag(keyboard, LV_OBJ_FLAG_HIDDEN);
   currentPage = target;
+  if (target == pagePowerLogs) loadPowerLogView();
   if (btnNavBack && btnNavHome) {
     bool home = target == pageLauncher;
     lv_label_set_text(lv_obj_get_child(btnNavBack, 0), home ? "Menu" : "Back");
@@ -386,7 +396,7 @@ static void clearUiObjectPointers() {
   pageWifiScan = nullptr;
   pageBacklight = nullptr;
   pageSound = nullptr;
-  pageBattery = nullptr;
+  pageBattery = pagePowerLogs = taPowerLogs = lblPowerLogView = swPowerLogRotation = nullptr;
   currentPage = nullptr;
   navigationDepth = 0;
   memset(navigationStack, 0, sizeof(navigationStack));
@@ -699,6 +709,40 @@ static bool setReadonlyTextNewest(lv_obj_t* ta, const char* text, bool forceScro
     scrollReadonlyTextToBottom(ta);
   }
   return !same;
+}
+
+static bool setChatTextNewest(lv_obj_t* area, const char* text, bool forceScroll) {
+  static char colored[CHAT_SIZE * 2 + 1024];
+  bool formatted = ChatText::format(colored, sizeof(colored), text);
+  lv_label_set_recolor(lv_textarea_get_label(area), formatted);
+  return setReadonlyTextNewest(area, formatted ? colored : text, forceScroll);
+}
+
+static void loadPowerLogView() {
+  if (!taPowerLogs || !lblPowerLogView) return;
+  if (!sdStorage.available) {
+    lv_label_set_text(lblPowerLogView, "SD card unavailable");
+    setReadonlyTextStable(taPowerLogs, "Logs will be available when the SD card is mounted.", true);
+    return;
+  }
+  SdLock lock(0);
+  if (!lock) {
+    lv_label_set_text(lblPowerLogView, "SD busy; tap Refresh");
+    return;
+  }
+  static char tail[4096];
+  const char* path = powerLogViewPrevious ? SD_POWER_HEALTH_PREVIOUS_PATH : SD_POWER_HEALTH_PATH;
+  size_t count = loadSdTextTail(path, tail, sizeof(tail));
+  const char* text = tail;
+  // Begin with a complete timestamped entry, rather than half of a field.
+  if (count && strncmp(text, "UTC ", 4) != 0) {
+    const char* entry = strstr(text, "\nUTC ");
+    if (entry) text = entry + 1;
+  }
+  lv_label_set_text(lblPowerLogView, powerLogViewPrevious ? "Previous log\nRecent entries" : "Current log\nRecent entries");
+  setReadonlyTextStable(taPowerLogs, count ? text : powerLogViewPrevious ?
+                        "No previous log yet. It becomes available after the first rotation." :
+                        "Waiting for the first log entry. Tap Refresh shortly.", true);
 }
 
 static NodeRecord* findNode(uint32_t num) {
@@ -1347,6 +1391,7 @@ static void buildScreenUi() {
   pageBacklight = makePage(screen);
   pageSound = makePage(screen);
   pageBattery = makePage(screen);
+  pagePowerLogs = makePage(screen);
 
   currentPage = pageLauncher;
   lv_obj_clear_flag(pageLauncher, LV_OBJ_FLAG_HIDDEN);
@@ -1933,17 +1978,42 @@ static void buildScreenUi() {
 
   makePageTitle(pageBattery, "Battery");
   makePageScrollable(pageBattery);
-  makeSmallButton(pageBattery, "Start log", 0, 24, 110, [](lv_event_t*) { controlBatteryCycle("start"); });
-  makeSmallButton(pageBattery, "Stop log", 120, 24, 110, [](lv_event_t*) { controlBatteryCycle("stop"); });
-  makeSmallButton(pageBattery, "Charge", 0, 60, 74, [](lv_event_t*) { controlBatteryCycle("charging"); });
-  makeSmallButton(pageBattery, "Discharge", 78, 60, 74, [](lv_event_t*) { controlBatteryCycle("discharging"); });
-  makeSmallButton(pageBattery, "Rest", 156, 60, 74, [](lv_event_t*) { controlBatteryCycle("resting"); });
+  makeSmallButton(pageBattery, "View logs", 0, 24, 110, [](lv_event_t*) { showPage(pagePowerLogs); });
+  swPowerLogRotation = lv_checkbox_create(pageBattery);
+  lv_checkbox_set_text(swPowerLogRotation, "48h rotation");
+  lv_obj_set_pos(swPowerLogRotation, 120, 24);
+  lv_obj_set_style_text_font(swPowerLogRotation, UI_FONT_SMALL, 0);
+  if (batteryCycle.rotationEnabled) lv_obj_add_state(swPowerLogRotation, LV_STATE_CHECKED);
+  lv_obj_add_event_cb(swPowerLogRotation, [](lv_event_t* e) {
+    auto* object = (lv_obj_t*)lv_event_get_target(e);
+    bool enabled = lv_obj_has_state(object, LV_STATE_CHECKED);
+    if (!setPowerLogRotation(enabled)) {
+      if (batteryCycle.rotationEnabled) lv_obj_add_state(object, LV_STATE_CHECKED);
+      else lv_obj_clear_state(object, LV_STATE_CHECKED);
+    }
+  }, LV_EVENT_VALUE_CHANGED, nullptr);
+  auto* logPolicyHint = lv_label_create(pageBattery);
+  styleBoundedLabel(logPolicyHint, 230, COLOR_MUTED, LV_LABEL_LONG_WRAP);
+  lv_obj_set_pos(logPolicyHint, 0, 52);
+  lv_label_set_text(logPolicyHint, "Always logs. Off = keep all logs.");
   lv_obj_t* batteryPanel = makePanel(pageBattery);
   lv_obj_set_size(batteryPanel, SCREEN_W - 12, 660);
-  lv_obj_align(batteryPanel, LV_ALIGN_TOP_MID, 0, 108);
+  lv_obj_align(batteryPanel, LV_ALIGN_TOP_MID, 0, 84);
   lblBatteryStats = lv_label_create(batteryPanel);
   setReadoutText(lblBatteryStats, "Reading S3 battery...");
   styleBoundedLabel(lblBatteryStats, lv_pct(100), COLOR_TEXT, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_font(lblBatteryStats, batterySymbolFont(UI_FONT_SMALL), 0);
+
+  makePageTitle(pagePowerLogs, "Power logs");
+  lv_obj_set_height(makeSmallButton(pagePowerLogs, "Current log", 0, 24, 110, [](lv_event_t*) { powerLogViewPrevious = false; loadPowerLogView(); }), 30);
+  lv_obj_set_height(makeSmallButton(pagePowerLogs, "Previous log", 120, 24, 110, [](lv_event_t*) { powerLogViewPrevious = true; loadPowerLogView(); }), 30);
+  lv_obj_set_height(makeSmallButton(pagePowerLogs, "Refresh log", 120, 62, 110, [](lv_event_t*) { loadPowerLogView(); }), 30);
+  lblPowerLogView = lv_label_create(pagePowerLogs);
+  styleBoundedLabel(lblPowerLogView, 110, COLOR_ACCENT, LV_LABEL_LONG_WRAP);
+  lv_obj_set_pos(lblPowerLogView, 0, 62);
+  taPowerLogs = makeReadonlyText(pagePowerLogs, 100, 146);
+  lv_textarea_set_text(taPowerLogs, "Waiting for log entries");
+
 
   buildNavBar(screen);
   showPage(pageLauncher, false);

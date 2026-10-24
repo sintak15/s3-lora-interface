@@ -73,11 +73,11 @@ async function testRendering() {
   assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryRuntimeMinutes:NaN})', context), 'Estimating remaining time');
   assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryRuntimeMinutes:Infinity})', context), 'Estimating remaining time');
   assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryRuntimeMinutes:125,batteryRuntimeBasis:"<img>"})', context), '~2h 5m');
-  assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryCharging:true,batteryRuntimeMinutes:125})', context), 'Battery: Increasing');
+  assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryCharging:true,batteryRuntimeMinutes:125})', context), 'Battery: +');
   assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryChargeRateValid:false})', context), 'Battery: Unavailable');
-  assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryGaugeTrend:"rising",batteryCharging:false})', context), 'Battery: Increasing');
+  assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryGaugeTrend:"rising",batteryCharging:false})', context), 'Battery: +');
   assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:false})', context), 'Unavailable (no gauge)');
-  for (const [direction,label] of [['rising','Increasing'],['falling','Decreasing'],['steady','Steady'],['unavailable','Unavailable']]) {
+  for (const [direction,label] of [['rising','+'],['falling','-'],['steady','='],['unavailable','Unavailable']]) {
     context.batteryDirection=direction;
     assert.equal(vm.runInContext('batteryTrendLabel({batteryGaugeTrend:batteryDirection})',context),label);
   }
@@ -149,21 +149,40 @@ async function testBatteryCycleControls(){
     calls++;
     assert.equal(url,'/battery/cycle');
     assert.equal(options.method,'POST');
-    assert.equal(new URLSearchParams(options.body).get('action'),'charging');
+    assert.equal(new URLSearchParams(options.body).get('action'),'rotation-off');
     return new Promise(resolve=>{finish=resolve;});
   };
-  const first=vm.runInContext("batteryCycleAction('charging')",context);
-  await vm.runInContext("batteryCycleAction('charging')",context);
-  assert.equal(calls,1,'Duplicate taps must not emit multiple markers');
-  finish({ok:true,text:async()=> 'Recording to SD'});
+  const first=vm.runInContext("batteryCycleAction('rotation-off')",context);
+  await vm.runInContext("batteryCycleAction('rotation-off')",context);
+  assert.equal(calls,1,'Duplicate retention changes must share one request');
+  finish({ok:true,text:async()=> 'Continuous recording to SD'});
   await first;
-  assert.equal(elements.batteryCycleStatus.textContent,'Recording to SD');
-  context.fetch=async()=>({ok:false,text:async()=> 'SD unavailable'});
-  await vm.runInContext("batteryCycleAction('start')",context);
-  assert.equal(elements.batteryCycleStatus.textContent,'Action failed: SD unavailable');
+  assert.equal(elements.batteryCycleStatus.textContent,'Continuous recording to SD');
+  context.fetch=async()=>({ok:false,text:async()=> 'Setting not saved'});
+  await vm.runInContext("batteryCycleAction('rotation-on')",context);
+  assert.equal(elements.batteryCycleStatus.textContent,'Action failed: Setting not saved');
   context.fetch=async()=>{throw new Error('offline');};
-  await vm.runInContext("batteryCycleAction('stop')",context);
+  await vm.runInContext("batteryCycleAction('rotation-on')",context);
   assert(elements.batteryCycleStatus.textContent.includes('result unknown'));
+}
+
+function testChatColorsAndBatterySymbols(){
+  context.chatFixture='[03:00] [me] Mine #FF0000 <img src=x>\n[03:01] [from me] Remote\n  [fake] [me] quoted\n';
+  vm.runInContext('renderChatLog(publicChatLog,chatFixture)',context);
+  const rendered=elements.publicChatLog.innerHTML;
+  assert(rendered.includes('class="chatMine"'));
+  assert(rendered.includes('class="chatOther"'));
+  assert(rendered.includes('&lt;img'));
+  assert(!rendered.includes('<img'));
+  assert(rendered.includes('class="chatOther">  [fake] [me] quoted'));
+  for (const symbol of ['+','-','=']) {
+    context.batterySymbol=symbol;
+    assert(vm.runInContext('statValue("Battery",batterySymbol)',context).includes('<strong class="batterySymbol">'));
+    assert(vm.runInContext('statValue("Power","Battery: "+batterySymbol)',context).includes('<strong class="batterySymbol">'));
+  }
+  assert(vm.runInContext('statValue("Power","<img>")',context).includes('&lt;img'));
+  assert(!html.includes('Start logging') && !html.includes('Stop logging'));
+  assert(!html.includes('Mark charging') && !html.includes('Mark resting'));
 }
 
 async function testSavedMessageTone(){
@@ -243,6 +262,7 @@ function testBundledMapAssets(){
   await testRetryRequests();
   await testSavedMessageTone();
   await testBatteryCycleControls();
+  testChatColorsAndBatterySymbols();
   testOfflineCoverage();
   testImperialMapScale();
   testBundledMapAssets();

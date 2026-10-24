@@ -421,14 +421,14 @@ static void refreshChatViews(bool force) {
   if (!force && !isUiDirty(UI_DIRTY_CHAT)) return;
   if (currentPage == pagePublicChat && taPublicChat) {
     formatNoChannelChat(publicChannelLabel(), emptyText, sizeof(emptyText));
-    updated |= setReadonlyTextNewest(taPublicChat, publicChatLog[0] ? publicChatLog : emptyText, force);
+    updated |= setChatTextNewest(taPublicChat, publicChatLog[0] ? publicChatLog : emptyText, force);
   }
   if (currentPage == pagePrivateChat && taFamilyChat) {
     formatNoChannelChat(privateChannelLabel(), emptyText, sizeof(emptyText));
-    updated |= setReadonlyTextNewest(taFamilyChat, familyChatLog[0] ? familyChatLog : emptyText, force);
+    updated |= setChatTextNewest(taFamilyChat, familyChatLog[0] ? familyChatLog : emptyText, force);
   }
   if (currentPage == pageDirectChat && taDirectChat) {
-    updated |= setReadonlyTextNewest(taDirectChat, directChatLog[0] ? directChatLog : "No direct messages yet", force);
+    updated |= setChatTextNewest(taDirectChat, directChatLog[0] ? directChatLog : "No direct messages yet", force);
   }
   if (updated || force) clearUiDirty(UI_DIRTY_CHAT);
 }
@@ -939,15 +939,28 @@ static void recordChatActivity(uint8_t channel, uint32_t to, const char* sender,
   refreshDashboardLabels();
 }
 
-static void appendChatMessage(uint8_t channel, uint32_t to, const char* sender, const uint8_t* text, size_t len) {
+static void appendChatMessage(uint8_t channel, uint32_t to, const char* sender, const uint8_t* text, size_t len, bool local) {
   if (!text || len == 0) return;
   char stamp[28];
   formatChatTimestamp(stamp, sizeof(stamp));
-  char line[320];
-  snprintf(line, sizeof(line), "[%s] [%s] %.*s\n", stamp, sender && sender[0] ? sender : "unknown", (int)len, text);
+  // Reserve [me] for packets from our actual node, not a remote display name.
+  char safeSender[64];
+  if (local) strlcpy(safeSender, "me", sizeof(safeSender));
+  else snprintf(safeSender, sizeof(safeSender), "from %s", sender && sender[0] ? sender : "unknown");
+  for (char* p = safeSender; *p; ++p) if (*p == '[' || *p == ']' || (uint8_t)*p < 0x20) *p = ' ';
+  char line[824];
+  size_t used = snprintf(line, sizeof(line), "[%s] [%s] ", stamp, safeSender);
+  for (size_t i = 0; i < len && used + 4 < sizeof(line); ++i) {
+    char ch = (char)text[i];
+    if (ch == '\r') continue;
+    line[used++] = ch;
+    // A body line cannot impersonate a persisted sender header.
+    if (ch == '\n') { line[used++] = ' '; line[used++] = ' '; }
+  }
+  line[used++] = '\n'; line[used] = 0;
   if (isDirectAddress(to)) appendLine(directChatLog, CHAT_SIZE, line);
   else appendLine(isPrivateChannel(channel) ? familyChatLog : publicChatLog, CHAT_SIZE, line);
-  recordChatActivity(channel, to, sender, text, len);
+  recordChatActivity(channel, to, safeSender, text, len);
   refreshChatViews();
 }
 
@@ -1076,7 +1089,7 @@ static bool sendTextMessage(const char* text, int8_t channelIndex) {
 
   rememberLocalSentText(packet.channel, packet.to, text, data.payload.size);
   recordTxMessage(packet.channel, packet.to, text, data.payload.size, true, packet.id);
-  appendChatMessage(packet.channel, packet.to, "me", data.payload.bytes, data.payload.size);
+  appendChatMessage(packet.channel, packet.to, "me", data.payload.bytes, data.payload.size, true);
 
   char line[96];
   snprintf(line, sizeof(line), "[local] text sent on %s\n", channelName(packet.channel));
@@ -1115,7 +1128,7 @@ static bool sendDirectTextMessage(const char* text, uint32_t toNode) {
 
   rememberLocalSentText(packet.channel, packet.to, text, data.payload.size);
   recordTxMessage(packet.channel, packet.to, text, data.payload.size, true, packet.id);
-  appendChatMessage(packet.channel, packet.to, "me", data.payload.bytes, data.payload.size);
+  appendChatMessage(packet.channel, packet.to, "me", data.payload.bytes, data.payload.size, true);
 
   char line[96];
   snprintf(line, sizeof(line), "[local] direct text sent to !%08lX\n", (unsigned long)toNode);
@@ -1927,7 +1940,7 @@ static void handleDecodedPacket(const meshtastic_MeshPacket& packet) {
     if (localEcho) {
       markTxEchoSeen(packet.channel, packet.to, data.payload.bytes, data.payload.size);
     } else {
-      appendChatMessage(packet.channel, packet.to, fromThisNode ? "me" : nodeName(packet.from), chatBytes, chatLen);
+      appendChatMessage(packet.channel, packet.to, fromThisNode ? "me" : nodeName(packet.from), chatBytes, chatLen, fromThisNode);
       if (!fromThisNode) queueTone(isDirectAddress(packet.to) ? TONE_DIRECT : TONE_MESSAGE);
     }
     snprintf(line, sizeof(line), "[%s ch%u %s%s] %.*s\n",

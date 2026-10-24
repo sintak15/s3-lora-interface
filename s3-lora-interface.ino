@@ -36,6 +36,8 @@
 #include "src/FieldStatus.h"
 #include "src/Max17048.h"
 #include "src/SampleVariation.h"
+#include "src/LogRotation.h"
+#include "src/ChatText.h"
 #include "src/MapTileCache.h"
 #include "src/TileUpload.h"
 #include "src/MapNavigation.h"
@@ -51,6 +53,8 @@
 #include "src/tests/FieldStatusTests.h"
 #include "src/tests/Max17048Tests.h"
 #include "src/tests/SampleVariationTests.h"
+#include "src/tests/LogRotationTests.h"
+#include "src/tests/ChatTextTests.h"
 #include "src/tests/MapTileCacheTests.h"
 #include "src/tests/TileUploadTests.h"
 #include "src/tests/MapNavigationTests.h"
@@ -69,6 +73,7 @@
 #include "src/firmware/Storage.inc"
 #include "src/firmware/Gps.inc"
 #include "src/firmware/Battery.inc"
+#include "src/firmware/PowerLogStorage.inc"
 #include "src/firmware/BatteryCycle.inc"
 #include "src/firmware/Network.inc"
 #include "src/firmware/DisplaySettings.inc"
@@ -129,11 +134,21 @@ void setup() {
   batteryRuntime.restore(localBattery.savedDischargeRate);
   localBattery.runtimeSaveAttempted = localBattery.savedDischargeRate > 0;
   localBattery.lastRuntimeSaveMs = millis();
-  batteryCycle.enabled = prefs.getBool("batCycleOn", false);
+  // Continuous diagnostics replace the old manual enable/size-stop setting.
+  if (prefs.isKey("batCycleOn")) prefs.remove("batCycleOn");
+  batteryCycle.rotationEnabled = prefs.getBool("batLogLimit", true);
+  batteryCycle.rotationPending = prefs.getBool("batLogPending", false);
+  batteryCycle.restoredAgeMs = prefs.getULong64("batLogAge", 0);
+  batteryCycle.rotationClock.restore(batteryCycle.restoredAgeMs, millis());
+  batteryCycle.lastCheckpointMs = millis();
   batteryCycle.session = prefs.getUInt("batCycleId", 0);
-  batteryCycle.phase = prefs.getUChar("batCyclePhase", 0);
+  if (prefs.isKey("batCyclePhase")) prefs.remove("batCyclePhase");
   batteryCycle.boot = esp_random();
-  if (batteryCycle.enabled) strlcpy(batteryCycle.status, "Resuming after restart", sizeof(batteryCycle.status));
+  if (!batteryCycle.session) {
+    batteryCycle.session = esp_random();
+    prefs.putUInt("batCycleId", batteryCycle.session);
+  }
+  strlcpy(batteryCycle.status, "Continuous logging; waiting for SD", sizeof(batteryCycle.status));
   loadInterfaceSettings();
   applyFontMode();
   Serial.println("[boot] init screen");

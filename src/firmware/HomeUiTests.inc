@@ -17,7 +17,7 @@ static void runHomeUiTests() {
   radioResponseSeen = true; lastRadioResponseMs = millis();
   localBattery.gaugePresent = true; localBattery.charging = true; localBattery.percent = 100;
   refreshDashboardLabels();
-  check("Connected and charging states", strcmp(lv_label_get_text(lblHomeLink), "Connected") == 0 && strcmp(lv_label_get_text(lblHomePower), "100%") == 0 && strcmp(lv_label_get_text(lblHomePowerDetail), "Battery: Increasing") == 0 && lv_bar_get_value(homePowerBar) == 100);
+  check("Connected and charging states", strcmp(lv_label_get_text(lblHomeLink), "Connected") == 0 && strcmp(lv_label_get_text(lblHomePower), "100%") == 0 && strcmp(lv_label_get_text(lblHomePowerDetail), "Battery: +") == 0 && lv_bar_get_value(homePowerBar) == 100);
   lastRadioResponseMs = millis() - 100000; localBattery.charging = false; localBattery.batteryLow = localBattery.batteryCritical = true; localBattery.percent = 5;
   gpsStats.valid = true; gpsStats.lastUpdateMs = millis() - 31000;
   unreadPublic = 999; nodeCount = MAX_NODES;

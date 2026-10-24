@@ -426,6 +426,11 @@ static constexpr uint32_t COLOR_TEXT = 0xF4F8FF;
 static constexpr uint32_t COLOR_MUTED = 0xA1B5CE;
 static constexpr uint32_t COLOR_ACCENT = 0x85BFFF;
 static constexpr uint32_t COLOR_ACTION = 0x3B9DFF;
+extern "C" {
+  extern lv_font_t battery_symbols_10;
+  extern lv_font_t battery_symbols_12;
+  extern lv_font_t battery_symbols_14;
+}
 static const lv_font_t* UI_FONT_SMALL = &comic_neue_12;
 static const lv_font_t* UI_FONT_DEFAULT = &comic_neue_14;
 #if LV_FONT_MONTSERRAT_16
@@ -472,8 +477,14 @@ static uint32_t lastRadioResponseMs = 0;
 static bool radioResponseSeen = false;
 static FieldStatus::RuntimeEstimate batteryRuntime;
 struct BatteryCycleLog {
-  bool enabled = false;
-  uint8_t phase = 0; // User annotation only: unmarked, charging, discharging, resting.
+  bool rotationEnabled = true;
+  bool rotationPending = false;
+  bool pathsReady = false;
+  bool progressRecovered = false;
+  uint64_t restoredAgeMs = 0;
+  bool previousAvailable = false;
+  PowerLog::RotationClock rotationClock;
+  uint32_t lastCheckpointMs = 0;
   uint32_t session = 0;
   uint32_t boot = 0;
   uint32_t lastWriteMs = 0;
@@ -489,11 +500,16 @@ struct BatteryCycleLog {
   uint32_t lastStepMv = 0;
   uint32_t lastSamples = 0;
   bool bootPending = true;
-  char status[64] = "Stopped";
+  char status[64] = "Continuous logging";
 };
 static BatteryCycleLog batteryCycle;
-static const char* SD_BATTERY_CYCLE_PATH = "/s3-lora/battery-cycle.csv";
-static const char* SD_POWER_HEALTH_PATH = "/s3-lora/power-health.log";
+static constexpr const char* SD_POWER_LOG_ROOT = "/s3-lora/power-health";
+static constexpr const char* SD_POWER_LOG_CURRENT_DIR = "/s3-lora/power-health/current";
+static constexpr const char* SD_POWER_LOG_PREVIOUS_DIR = "/s3-lora/power-health/previous";
+static constexpr const char* SD_BATTERY_CYCLE_PATH = "/s3-lora/power-health/current/battery-cycle.csv";
+static constexpr const char* SD_POWER_HEALTH_PATH = "/s3-lora/power-health/current/power-health.log";
+static constexpr const char* SD_BATTERY_PREVIOUS_PATH = "/s3-lora/power-health/previous/battery-cycle.csv";
+static constexpr const char* SD_POWER_HEALTH_PREVIOUS_PATH = "/s3-lora/power-health/previous/power-health.log";
 static uint32_t magic1Count = 0;
 static uint32_t magic2Count = 0;
 static uint32_t streamFrames = 0;
@@ -677,6 +693,11 @@ static lv_obj_t* pageWifiScan = nullptr;
 static lv_obj_t* pageBacklight = nullptr;
 static lv_obj_t* pageSound = nullptr;
 static lv_obj_t* pageBattery = nullptr;
+static lv_obj_t* pagePowerLogs = nullptr;
+static lv_obj_t* taPowerLogs = nullptr;
+static lv_obj_t* lblPowerLogView = nullptr;
+static lv_obj_t* swPowerLogRotation = nullptr;
+static bool powerLogViewPrevious = false;
 static lv_obj_t* pageMessageDiag = nullptr;
 static lv_obj_t* currentPage = nullptr;
 static lv_obj_t* navigationStack[8] = {};
