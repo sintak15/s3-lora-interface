@@ -68,6 +68,31 @@ remain ignored under `build/heltec-update/` (`retry_*.py`,
 `retry-transfer-progress.json`, `retry-pre-update-config.json` and
 `retry-after-config.json`). They must not be committed with private settings.
 
+## Second remote node — October 23, 2026
+
+A second Heltec V3 base node also identified as **2.7.15.567b8ea**. Its complete
+device/module settings and eight channel slots were backed up before any reboot.
+The user confirmed remote power cycling was available. The verified 2.7.26
+Heltec V3 application image was prepared, and identity/settings were checked
+again before entering the installed updater.
+
+No TCP 3232 update service was reachable after loader entry, and the matching
+Bluetooth advertisement was not visible from this PC. A legacy Wi-Fi uploader
+opened its TCP return listener before sending an invitation and kept the same
+UDP return port open for 40 seconds to allow flash-erasure time. No invitation
+response arrived and **zero application-image bytes were transferred**. The
+installed loader's identity was not established; absence from a BLE scan does
+not prove that it was a Wi-Fi loader or that no Bluetooth loader was installed.
+
+After the user power-cycled this node, normal HTTP and Meshtastic TCP services
+returned. Independent readback confirmed the same node identity, firmware
+**2.7.15.567b8ea**, and exact matches for device settings, module settings and all
+eight channels. This was an unsuccessful wireless update attempt with verified
+recovery. No CYD firmware or first-node settings were changed by this attempt.
+Private captures remain ignored under `build/heltec-update/node139/`, including
+`pre-update-config.json`, `wifi-update-attempt.json`, `after-update-config.json`
+and `verification-result.json`.
+
 ## Available paths
 
 | Path | Requirement |
