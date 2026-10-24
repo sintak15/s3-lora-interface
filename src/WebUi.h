@@ -289,7 +289,7 @@ body.setup-required nav button:not([data-page="config"]),body.setup-required #na
 </section>
 <section class="page" id="diagnostics"><div class="pageIntro"><div><p class="eyebrow">DEVICE HEALTH</p><h2>Status & diagnostics</h2><p>The essentials first. Open a topic for detailed readings.</p></div><div class="actions"><a href="/diagnostics/report">Download field report</a></div></div>
 <div class="card"><h2>Current status</h2><div class="stats" id="diagStats"></div></div>
-<details class="card disclosure"><summary>Battery & runtime</summary><div class="stats" id="diagBatteryStats"></div></details>
+<details class="card disclosure"><summary>Battery & runtime</summary><div class="stats" id="diagBatteryStats"></div><div class="stats" id="diagNoiseStats"></div><h3>Battery & power health log</h3><p class="hint">Records MAX readings every 10 seconds and resumes after a restart. Charge and discharge normally; mark each charger change below. Marks are your observations, separate from the MAX trend. Stop at the normal low-battery warning; do not force a deep discharge. The readable log explains voltage variation and connection/audio error counters. Voltage is sampled at 1 Hz; it cannot measure RF interference or very brief spikes.</p><div class="statusbox" id="batteryCycleStatus" role="status">Stopped</div><div class="actions"><button onclick="batteryCycleAction('start')">Start logging</button><button class="secondaryAction" onclick="batteryCycleAction('charging')">Mark charging</button><button class="secondaryAction" onclick="batteryCycleAction('discharging')">Mark discharging</button><button class="secondaryAction" onclick="batteryCycleAction('resting')">Mark resting</button><button class="secondaryAction" onclick="batteryCycleAction('stop')">Stop logging</button><a href="/sd/power-health">Download readable log</a><a href="/sd/battery-cycle">Download detailed CSV</a></div></details>
 <details class="card disclosure"><summary>GPS & position</summary><div class="stats" id="diagGpsStats"></div></details>
 <details class="card disclosure"><summary>Radio traffic & serial data</summary><div class="stats" id="packetStats"></div><h3>Last serial data</h3><pre id="diagSerial"></pre></details>
 <details class="card disclosure"><summary>Maps & tile cache</summary><div class="stats" id="diagMapStats"></div></details>
@@ -397,8 +397,11 @@ function renderHealth(s){
  renderStatGroup('diagBatteryStats',[
   ['Battery alert',s.batteryHealth||'ok'],['Discharge',`${s.batteryDischargePercentHr||0}%/hr`],
   ['Raw voltage',`${s.rawSenseVoltage||0} V`],['Voltage filter',s.batteryVoltageUnstable?'Settling':'Stable'],
-  ['Voltage trend',`${s.batteryTrend||0} mV/min`],['Estimate basis',s.batteryRuntimeBasis||'Not yet available']
+  ['Voltage trend',`${s.batteryTrend||0} mV/min`],['Estimate basis',s.batteryRuntimeBasis||'Not yet available'],
+  ['Battery',batteryTrendLabel(s)],['Level change',s.batteryChargeRateValid?`${s.batteryChargeRatePercentHr}%/hour`:'Unavailable']
  ]);
+ renderStatGroup('diagNoiseStats',[["Sampled voltage span",`${s.batteryVoltageSpanMv||0} mV`],["Sampled standard deviation",`${s.batteryVoltageStdDevMv||0} mV`],["Largest sampled step",`${s.batteryVoltageLargestStepMv||0} mV`],["Window samples",s.batteryVoltageWindowSamples||0],["MAX read errors / attempts",`${s.batteryGaugeReadErrors||0} / ${s.batteryGaugeReadAttempts||0}`],["UART decode / timeout / length errors",`${s.errors||0} / ${s.frameTimeouts||0} / ${s.badLengths||0}`]]);
+ batteryCycleStatus.textContent=`${s.batteryCycleEnabled?'Recording':'Stopped'} · ${s.batteryCyclePhase||'unmarked'} · ${s.batteryCycleRows||0} rows this boot · ${s.batteryCycleErrors||0} write errors · ${s.batteryCycleBusyDeferrals||0} SD busy delays · ${s.batteryCycleSdUnavailableDeferrals||0} SD unavailable delays · ${s.batteryCycleStatus||''}`;
  renderStatGroup('diagGpsStats',[
   ['Position',s.gpsValid&&Number.isFinite(s.gpsLat)&&Number.isFinite(s.gpsLon)?`${s.gpsLat.toFixed(5)}, ${s.gpsLon.toFixed(5)}`:'No fix'],
   ['Satellites used',s.localGpsSatsUsed??'Unknown'],['Satellites in view',s.localGpsSatsInView??'Unknown'],
@@ -540,7 +543,10 @@ i2cProbeStatus.textContent=`${s.i2cProbeSummary||'Tap Probe I2C Map to scan the 
 renderNodes(s.nodes||[]);
 if(currentPage==='map')drawMap(s);
 }
-function batteryRuntimeLabel(s){if(!s.fuelGaugePresent)return 'Unavailable (no gauge)';if(s.batteryCharging)return 'Charging';const raw=s.batteryRuntimeMinutes;if(!Number.isFinite(raw)||raw<0)return 'Estimating remaining time';const m=raw===0?0:Math.max(5,Math.round(raw/5)*5);const basis={previous:'previous use',gauge:'gauge trend',current:'current use'}[s.batteryRuntimeBasis];return `~${Math.floor(m/60)}h ${m%60}m${basis?' · '+basis:''}`;}
+let batteryCycleBusy=false;
+async function batteryCycleAction(action){if(batteryCycleBusy)return;batteryCycleBusy=true;const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),8000);try{const r=await fetch('/battery/cycle',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({action}).toString(),signal:controller.signal});batteryCycleStatus.textContent=await r.text();if(!r.ok)batteryCycleStatus.textContent='Action failed: '+batteryCycleStatus.textContent;}catch(e){batteryCycleStatus.textContent='Connection lost; action result unknown. Check status before retrying.';}finally{clearTimeout(timeout);batteryCycleBusy=false;}}
+function batteryTrendLabel(s){return {rising:'Increasing',falling:'Decreasing',steady:'Steady',unavailable:'Unavailable'}[s.batteryGaugeTrend]||'Unavailable';}
+function batteryRuntimeLabel(s){if(!s.fuelGaugePresent)return 'Unavailable (no gauge)';if(s.batteryChargeRateValid===false)return 'Battery: Unavailable';if(s.batteryGaugeTrend==='rising'||s.batteryCharging)return 'Battery: Increasing';const raw=s.batteryRuntimeMinutes;if(!Number.isFinite(raw)||raw<0)return 'Estimating remaining time';const m=raw===0?0:Math.max(5,Math.round(raw/5)*5);const basis={previous:'previous use',gauge:'gauge trend',current:'current use'}[s.batteryRuntimeBasis];return `~${Math.floor(m/60)}h ${m%60}m${basis?' · '+basis:''}`;}
 function renderFieldStatus(s){
  renderOfflineCoverage(s);
  const state=s.linkHealth||'waiting';

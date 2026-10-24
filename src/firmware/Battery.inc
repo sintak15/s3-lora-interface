@@ -29,10 +29,11 @@ static void recordMapRenderTiming(uint32_t startedMs, bool drewTiles, bool cache
 }
 
 static bool max17048ReadReg16(uint8_t reg, uint16_t& value) {
+  ++localBattery.readAttempts;
   Wire.beginTransmission(MAX17048_ADDR);
   Wire.write(reg);
-  if (Wire.endTransmission(false) != 0) return false;
-  if (Wire.requestFrom(MAX17048_ADDR, (uint8_t)2) != 2) return false;
+  if (Wire.endTransmission(false) != 0) { ++localBattery.readErrors; return false; }
+  if (Wire.requestFrom(MAX17048_ADDR, (uint8_t)2) != 2) { ++localBattery.readErrors; return false; }
   uint8_t msb = Wire.read();
   uint8_t lsb = Wire.read();
   value = ((uint16_t)msb << 8) | lsb;
@@ -118,7 +119,8 @@ static String buildI2cProbeJson() {
 static bool readMax17048ChargeRate(float& percentPerHour) {
   uint16_t rawCrate = 0;
   if (!max17048ReadReg16(0x16, rawCrate)) return false;
-  percentPerHour = (float)((int16_t)rawCrate) * 0.208f;
+  localBattery.rawCrate = rawCrate;
+  percentPerHour = Max17048::rate(rawCrate);
   return true;
 }
 
@@ -213,16 +215,6 @@ static void updateBatteryAlertState(int displayedPercent, uint32_t packMv, bool 
     localBattery.voltageLowSustained;
 }
 
-static int smoothDisplayedBatteryPercent(int targetPercent, bool charging) {
-  targetPercent = constrain(targetPercent, 0, 100);
-  if (!localBattery.lastGaugeMs) return targetPercent;
-  int diff = targetPercent - localBattery.percent;
-  if (abs(diff) <= 1) return targetPercent;
-  int maxStep = charging ? 2 : 1;
-  if (diff > 0) return localBattery.percent + min(diff, maxStep);
-  return localBattery.percent - min(-diff, maxStep);
-}
-
 static void updateBatteryTrend(uint32_t packMv, uint32_t nowMs) {
   static constexpr uint8_t TREND_WINDOW = sizeof(localBattery.trendMv) / sizeof(localBattery.trendMv[0]);
   localBattery.trendMv[localBattery.trendHead] = packMv;
@@ -255,27 +247,6 @@ static void updateBatteryTrend(uint32_t packMv, uint32_t nowMs) {
   localBattery.deltaMvPerMin = localBattery.deltaMvPerMinTenths / 10;
 }
 
-static bool decideBatteryCharging(bool chargeRateValid, float chargeRate, uint32_t packMv, uint32_t nowMs) {
-  int32_t deltaMv = 0;
-  uint32_t elapsedMs = 0;
-  if (localBattery.previousSampleMs) {
-    deltaMv = (int32_t)packMv - (int32_t)localBattery.previousPackMv;
-    elapsedMs = nowMs - localBattery.previousSampleMs;
-  }
-  localBattery.instantDeltaMv = deltaMv;
-  localBattery.previousPackMv = packMv;
-  localBattery.previousSampleMs = nowMs;
-
-  if (!chargeRateValid) return localBattery.charging;
-  if (chargeRate >= 1.0f) return true;
-  if (chargeRate <= 0.0f) return false;
-
-  bool fastVoltageDrop = elapsedMs > 0 && elapsedMs <= 4000 && deltaMv <= -5;
-  if (localBattery.charging && fastVoltageDrop) return false;
-  if (!localBattery.charging && chargeRate >= 0.4f) return true;
-  return localBattery.charging;
-}
-
 static void saveBatteryRuntimeLearning(uint32_t nowMs) {
   float rate = batteryRuntime.learnedPercentPerHour();
   // Save the first qualified rate promptly so a physical switch can cut power.
@@ -292,31 +263,37 @@ static bool sampleMax17048() {
   uint16_t rawSoc = 0;
   if (!max17048ReadReg16(0x02, rawVcell) || !max17048ReadReg16(0x04, rawSoc)) {
     localBattery.gaugePresent = false;
+    localBattery.chargeRateValid = false;
+    localBattery.gaugeSocReliable = false;
+    localBattery.charging = false;
     batteryRuntime.pause();
     localBattery.batteryLow = false;
     localBattery.batteryCritical = false;
     localBattery.voltageLowSustained = false;
     localBattery.voltageCriticalSustained = false;
-    strlcpy(localBattery.powerState, "gauge missing", sizeof(localBattery.powerState));
+    strlcpy(localBattery.powerState, "Battery: Unavailable", sizeof(localBattery.powerState));
     return false;
   }
 
   uint16_t rawVersion = 0;
   if (max17048ReadReg16(0x08, rawVersion)) localBattery.gaugeVersion = rawVersion;
 
-  uint32_t rawPackMv = (rawVcell * 5UL + 32UL) / 64UL;
-  float soc = (float)(rawSoc >> 8) + ((float)(rawSoc & 0xFF) / 256.0f);
-  if (soc < 0.0f) soc = 0.0f;
-  if (soc > 100.0f) soc = 100.0f;
+  uint32_t rawPackMv = Max17048::millivolts(rawVcell);
+  float soc = Max17048::soc(rawSoc);
   float chargeRate = 0.0f;
   bool chargeRateValid = readMax17048ChargeRate(chargeRate);
   uint32_t packMv = filterBatteryVoltage(rawPackMv, chargeRateValid, chargeRate);
   uint32_t now = millis();
-  bool charging = decideBatteryCharging(chargeRateValid, chargeRate, packMv, now);
+  // CRATE is the gauge's averaged SOC slope, not a physical charger flag.
+  bool charging = chargeRateValid && chargeRate > 0;
+  localBattery.instantDeltaMv = localBattery.previousSampleMs ? (int32_t)rawPackMv - (int32_t)localBattery.previousPackMv : 0;
+  localBattery.previousPackMv = rawPackMv;
+  localBattery.previousSampleMs = now;
   localBattery.gaugePercent = constrain((int)roundf(soc), 0, 100);
-  int displayedPercent = smoothDisplayedBatteryPercent(localBattery.gaugePercent, charging);
-  // Alerts use the gauge directly so display smoothing cannot delay a warning.
   updateBatteryAlertState(localBattery.gaugePercent, packMv, charging, now);
+  // Filtering qualifies voltage warnings only; primary readings mirror MAX.
+  localBattery.batteryMv = rawPackMv;
+  localBattery.rawVcell = rawVcell;
   localBattery.gaugePresent = true;
   localBattery.lastGaugeMs = now;
   localBattery.rawGaugeSoc = rawSoc;
@@ -325,12 +302,13 @@ static bool sampleMax17048() {
   localBattery.chargeRateValid = chargeRateValid;
   localBattery.chargeRatePercentHr = chargeRateValid ? chargeRate : 0.0f;
   localBattery.charging = charging;
-  localBattery.percent = displayedPercent;
+  localBattery.percent = localBattery.gaugePercent;
   updateBatteryTrend(packMv, now);
-  batteryRuntime.sample(now, soc, !localBattery.voltageUnstable, charging, chargeRate, chargeRateValid);
+  if (!chargeRateValid) batteryRuntime.pause();
+  else batteryRuntime.sample(now, soc, true, charging, chargeRate, chargeRateValid);
   saveBatteryRuntimeLearning(now);
   strlcpy(localBattery.percentSource, "MAX17048 SOC", sizeof(localBattery.percentSource));
-  strlcpy(localBattery.powerState, localBattery.percentSource, sizeof(localBattery.powerState));
+  snprintf(localBattery.powerState, sizeof(localBattery.powerState), "Battery: %s", Max17048::trendLabel(chargeRateValid, chargeRate));
   return true;
 }
 

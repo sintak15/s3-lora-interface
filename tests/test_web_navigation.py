@@ -147,7 +147,11 @@ def main():
             assert page.locator('#diagBatteryStats').is_visible() is False
             page.screenshot(path=str(folder / f'after-health-{width}.png'), full_page=True)
             page.locator('summary', has_text='Battery & runtime').click()
-            assert page.locator('#diagBatteryStats .stat').count() == 6
+            assert page.locator('#diagBatteryStats .stat').count() == 8
+            assert page.locator('#diagNoiseStats .stat').count() == 6
+            assert page.locator('a[href="/sd/power-health"]').is_visible()
+            assert page.locator('button', has_text='Mark before').count() == 0
+            assert page.locator('button', has_text='Mark after').count() == 0
             colors = page.locator('#diagBatteryStats .stat').first.evaluate("e=>({label:getComputedStyle(e.querySelector('.label')).color,value:getComputedStyle(e.querySelector('.value')).color})")
             assert colors == dict(label='rgb(133, 191, 255)', value='rgb(244, 248, 255)'), colors
             assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')

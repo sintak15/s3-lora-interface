@@ -34,6 +34,8 @@
 #include "src/WebMapAssets.h"
 #include "src/Reliability.h"
 #include "src/FieldStatus.h"
+#include "src/Max17048.h"
+#include "src/SampleVariation.h"
 #include "src/MapTileCache.h"
 #include "src/TileUpload.h"
 #include "src/MapNavigation.h"
@@ -47,6 +49,8 @@
 #ifdef FIRMWARE_RUN_TESTS
 #include "src/tests/ReliabilityTests.h"
 #include "src/tests/FieldStatusTests.h"
+#include "src/tests/Max17048Tests.h"
+#include "src/tests/SampleVariationTests.h"
 #include "src/tests/MapTileCacheTests.h"
 #include "src/tests/TileUploadTests.h"
 #include "src/tests/MapNavigationTests.h"
@@ -65,6 +69,7 @@
 #include "src/firmware/Storage.inc"
 #include "src/firmware/Gps.inc"
 #include "src/firmware/Battery.inc"
+#include "src/firmware/BatteryCycle.inc"
 #include "src/firmware/Network.inc"
 #include "src/firmware/DisplaySettings.inc"
 #include "src/firmware/Audio.inc"
@@ -124,6 +129,11 @@ void setup() {
   batteryRuntime.restore(localBattery.savedDischargeRate);
   localBattery.runtimeSaveAttempted = localBattery.savedDischargeRate > 0;
   localBattery.lastRuntimeSaveMs = millis();
+  batteryCycle.enabled = prefs.getBool("batCycleOn", false);
+  batteryCycle.session = prefs.getUInt("batCycleId", 0);
+  batteryCycle.phase = prefs.getUChar("batCyclePhase", 0);
+  batteryCycle.boot = esp_random();
+  if (batteryCycle.enabled) strlcpy(batteryCycle.status, "Resuming after restart", sizeof(batteryCycle.status));
   loadInterfaceSettings();
   applyFontMode();
   Serial.println("[boot] init screen");

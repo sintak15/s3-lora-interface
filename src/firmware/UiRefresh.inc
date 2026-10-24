@@ -16,7 +16,8 @@ static void printFirmwareIdentity() {
 
 static void formatBatteryRuntime(char* out, size_t size) {
   if (!localBattery.gaugePresent) strlcpy(out, "unavailable (no gauge)", size);
-  else if (localBattery.charging) strlcpy(out, "charging", size);
+  else if (!localBattery.chargeRateValid) strlcpy(out, "Battery: Unavailable", size);
+  else if (localBattery.charging) strlcpy(out, "Battery: Increasing", size);
   else if (batteryRuntime.minutes() < 0) strlcpy(out, "estimating...", size);
   else {
     int32_t minutes = FieldStatus::roundedRuntimeMinutes(batteryRuntime.minutes());
@@ -85,7 +86,7 @@ static void refreshDashboardLabels() {
     lv_obj_set_style_text_color(lblHomePower, lv_color_hex(color), 0);
     if (lblHomePowerDetail) {
       if (!localBattery.gaugePresent) strlcpy(line, "No gauge", sizeof(line));
-      else if (localBattery.charging) strlcpy(line, "Charging", sizeof(line));
+      else if (localBattery.charging) strlcpy(line, "Battery: Increasing", sizeof(line));
       else if (localBattery.batteryCritical) strlcpy(line, "Charge soon", sizeof(line));
       else if (localBattery.batteryLow) strlcpy(line, "Battery low", sizeof(line));
       else formatBatteryRuntime(line, sizeof(line));
@@ -569,7 +570,7 @@ static void refreshScreenUi() {
   }
 
   if (currentPage == pageBattery && lblBatteryStats) {
-    char batteryText[1100];
+    char batteryText[1400];
     char runtimeText[48];
     formatBatteryRuntime(runtimeText, sizeof(runtimeText));
     uint32_t gaugeAge = localBattery.lastGaugeMs ? (millis() - localBattery.lastGaugeMs) / 1000 : 0;
@@ -581,15 +582,15 @@ static void refreshScreenUi() {
                "Remaining: %s\n"
                "Alert: %s\n"
                "Displayed source: %s\n"
-               "Gauge SOC: %.1f%%  raw 0x%04X\n"
+               "Sensor level: %.1f%%  raw 0x%04X\n"
                "Pack filtered: %.3f V\n"
                "Pack raw: %.3f V\n"
                "Voltage filter: %s  rejected %lu\n"
                "Voltage low/critical: %s/%s\n"
-               "Charge rate: %.1f%%/hr\n"
+               "Level change: %.1f%%/hour\n"
                "Last change: %ld mV\n"
                "Voltage trend: %.1f mV/min\n"
-               "Charging: %s\n"
+               "Battery: %s\n"
                "Discharge: %.1f%%/hr\n"
                "Saved discharge: %.1f%%/hr\n"
                "Updated: %lu s ago\n\n"
@@ -606,7 +607,7 @@ static void refreshScreenUi() {
                localBattery.percentSource,
                localBattery.gaugeSoc,
                localBattery.rawGaugeSoc,
-               localBattery.batteryMv / 1000.0f,
+               localBattery.filteredPackMv / 1000.0f,
                localBattery.rawPackMv / 1000.0f,
                localBattery.voltageUnstable ? "settling" : "stable",
                (unsigned long)localBattery.voltageRejectedSamples,
@@ -615,7 +616,7 @@ static void refreshScreenUi() {
                localBattery.chargeRateValid ? localBattery.chargeRatePercentHr : 0.0f,
                (long)localBattery.instantDeltaMv,
                localBattery.deltaMvPerMinTenths / 10.0f,
-               localBattery.charging ? "yes" : "no",
+               Max17048::trendLabel(localBattery.chargeRateValid, localBattery.chargeRatePercentHr),
                batteryRuntime.percentPerHour(),
                localBattery.savedDischargeRate,
                (unsigned long)gaugeAge,
@@ -643,6 +644,11 @@ static void refreshScreenUi() {
                (unsigned long)(ESP.getMinFreeHeap() / 1024),
                (unsigned long)(ESP.getFreePsram() / 1024));
     }
+    size_t used = strlen(batteryText);
+    snprintf(batteryText + used, sizeof(batteryText) - used, "\n\nCycle log: %s\nMarked phase: %s\nRows/errors: %lu/%lu\nVoltage span/SD: %lu/%.1f mV\nMax sample step: %lu mV\nMAX read errors: %lu\n1 Hz samples; not RF noise.",
+             batteryCycle.status, batteryCyclePhase(), (unsigned long)batteryCycle.rows, (unsigned long)batteryCycle.errors,
+             (unsigned long)batteryCycle.lastSpanMv, batteryCycle.lastStdDevMv,
+             (unsigned long)batteryCycle.lastStepMv, (unsigned long)localBattery.readErrors);
     setReadoutText(lblBatteryStats, batteryText);
   }
 
@@ -918,6 +924,7 @@ static void serviceScreen() {
   processDeferredWifiAction();
   pollWifiScan();
   sampleLocalBattery();
+  sampleBatteryCycle();
   refreshScreenUi();
   lv_timer_handler();
 }

@@ -73,8 +73,14 @@ async function testRendering() {
   assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryRuntimeMinutes:NaN})', context), 'Estimating remaining time');
   assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryRuntimeMinutes:Infinity})', context), 'Estimating remaining time');
   assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryRuntimeMinutes:125,batteryRuntimeBasis:"<img>"})', context), '~2h 5m');
-  assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryCharging:true,batteryRuntimeMinutes:125})', context), 'Charging');
+  assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryCharging:true,batteryRuntimeMinutes:125})', context), 'Battery: Increasing');
+  assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryChargeRateValid:false})', context), 'Battery: Unavailable');
+  assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryGaugeTrend:"rising",batteryCharging:false})', context), 'Battery: Increasing');
   assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:false})', context), 'Unavailable (no gauge)');
+  for (const [direction,label] of [['rising','Increasing'],['falling','Decreasing'],['steady','Steady'],['unavailable','Unavailable']]) {
+    context.batteryDirection=direction;
+    assert.equal(vm.runInContext('batteryTrendLabel({batteryGaugeTrend:batteryDirection})',context),label);
+  }
   assert.equal(vm.runInContext('refreshDelay', context), 1000);
 }
 
@@ -135,6 +141,29 @@ async function testRetryRequests() {
   context.fetch = async () => { throw new Error('offline'); };
   await vm.runInContext('retryMessage(123)', context);
   assert(elements.txRetryStatus.textContent.includes('result unknown'));
+}
+
+async function testBatteryCycleControls(){
+  let calls=0,finish;
+  context.fetch=(url,options)=>{
+    calls++;
+    assert.equal(url,'/battery/cycle');
+    assert.equal(options.method,'POST');
+    assert.equal(new URLSearchParams(options.body).get('action'),'charging');
+    return new Promise(resolve=>{finish=resolve;});
+  };
+  const first=vm.runInContext("batteryCycleAction('charging')",context);
+  await vm.runInContext("batteryCycleAction('charging')",context);
+  assert.equal(calls,1,'Duplicate taps must not emit multiple markers');
+  finish({ok:true,text:async()=> 'Recording to SD'});
+  await first;
+  assert.equal(elements.batteryCycleStatus.textContent,'Recording to SD');
+  context.fetch=async()=>({ok:false,text:async()=> 'SD unavailable'});
+  await vm.runInContext("batteryCycleAction('start')",context);
+  assert.equal(elements.batteryCycleStatus.textContent,'Action failed: SD unavailable');
+  context.fetch=async()=>{throw new Error('offline');};
+  await vm.runInContext("batteryCycleAction('stop')",context);
+  assert(elements.batteryCycleStatus.textContent.includes('result unknown'));
 }
 
 async function testSavedMessageTone(){
@@ -213,6 +242,7 @@ function testBundledMapAssets(){
   await testRequestTimeout();
   await testRetryRequests();
   await testSavedMessageTone();
+  await testBatteryCycleControls();
   testOfflineCoverage();
   testImperialMapScale();
   testBundledMapAssets();

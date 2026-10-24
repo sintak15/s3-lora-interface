@@ -1933,9 +1933,14 @@ static void buildScreenUi() {
 
   makePageTitle(pageBattery, "Battery");
   makePageScrollable(pageBattery);
+  makeSmallButton(pageBattery, "Start log", 0, 24, 110, [](lv_event_t*) { controlBatteryCycle("start"); });
+  makeSmallButton(pageBattery, "Stop log", 120, 24, 110, [](lv_event_t*) { controlBatteryCycle("stop"); });
+  makeSmallButton(pageBattery, "Charge", 0, 60, 74, [](lv_event_t*) { controlBatteryCycle("charging"); });
+  makeSmallButton(pageBattery, "Discharge", 78, 60, 74, [](lv_event_t*) { controlBatteryCycle("discharging"); });
+  makeSmallButton(pageBattery, "Rest", 156, 60, 74, [](lv_event_t*) { controlBatteryCycle("resting"); });
   lv_obj_t* batteryPanel = makePanel(pageBattery);
-  lv_obj_set_size(batteryPanel, SCREEN_W - 12, 470);
-  lv_obj_align(batteryPanel, LV_ALIGN_TOP_MID, 0, 24);
+  lv_obj_set_size(batteryPanel, SCREEN_W - 12, 660);
+  lv_obj_align(batteryPanel, LV_ALIGN_TOP_MID, 0, 108);
   lblBatteryStats = lv_label_create(batteryPanel);
   setReadoutText(lblBatteryStats, "Reading S3 battery...");
   styleBoundedLabel(lblBatteryStats, lv_pct(100), COLOR_TEXT, LV_LABEL_LONG_WRAP);

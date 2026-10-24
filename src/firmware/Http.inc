@@ -64,6 +64,22 @@ static void appendTileCacheStatusJson(String& json) {
   }
 }
 
+static void appendBatteryCycleStatusJson(String& json) {
+  json += "\"batteryCycleEnabled\":" + String(batteryCycle.enabled ? "true" : "false") + ",";
+  json += "\"batteryCyclePhase\":\"" + String(batteryCyclePhase()) + "\",";
+  json += "\"batteryCycleStatus\":\"" + jsonEscape(batteryCycle.status) + "\",";
+  json += "\"batteryVoltageSpanMv\":" + String(batteryCycle.lastSpanMv) + ",";
+  json += "\"batteryVoltageStdDevMv\":" + String(batteryCycle.lastStdDevMv, 2) + ",";
+  json += "\"batteryVoltageLargestStepMv\":" + String(batteryCycle.lastStepMv) + ",";
+  json += "\"batteryVoltageWindowSamples\":" + String(batteryCycle.lastSamples) + ",";
+  json += "\"batteryGaugeReadAttempts\":" + String(localBattery.readAttempts) + ",";
+  json += "\"batteryGaugeReadErrors\":" + String(localBattery.readErrors) + ",";
+  json += "\"batteryCycleRows\":" + String(batteryCycle.rows) + ",";
+  json += "\"batteryCycleErrors\":" + String(batteryCycle.errors) + ",";
+  json += "\"batteryCycleBusyDeferrals\":" + String(batteryCycle.busyDeferrals) + ",";
+  json += "\"batteryCycleSdUnavailableDeferrals\":" + String(batteryCycle.unavailableDeferrals) + ",";
+}
+
 static void appendBatteryStatusJson(String& json) {
   json += "\"battery\":" + String(localBattery.percent) + ",";
   json += "\"voltage\":" + String(localBattery.batteryMv / 1000.0f, 2) + ",";
@@ -95,6 +111,10 @@ static void appendBatteryStatusJson(String& json) {
   json += "\"batteryChargeRatePercentHr\":" + String(localBattery.chargeRatePercentHr, 1) + ",";
   json += "\"batteryChargeRateValid\":" + String(localBattery.chargeRateValid ? "true" : "false") + ",";
   json += "\"batteryCharging\":" + String(localBattery.charging ? "true" : "false") + ",";
+  json += "\"batteryGaugeTrend\":\"" + String(Max17048::trend(localBattery.gaugePresent && localBattery.chargeRateValid, localBattery.chargeRatePercentHr)) + "\",";
+  json += "\"batteryStateSource\":\"MAX17048 CRATE\",";
+  json += "\"batteryChargerConnected\":null,";
+  appendBatteryCycleStatusJson(json);
   uint32_t trendWindowSec = 0;
   if (localBattery.trendCount >= 2) {
     uint8_t trendWindow = sizeof(localBattery.trendMv) / sizeof(localBattery.trendMv[0]);
@@ -1027,6 +1047,17 @@ static void registerWebRoutes() {
   server.on("/", HTTP_GET, handleRoot);
   server.on("/status", HTTP_GET, handleStatus);
   server.on("/diagnostics/report", HTTP_GET, handleFieldReport);
+  server.on("/sd/power-health", HTTP_GET, []() { handleSdDownload(SD_POWER_HEALTH_PATH, "power-health.log", "text/plain"); });
+  server.on("/sd/battery-cycle", HTTP_GET, []() { handleSdDownload(SD_BATTERY_CYCLE_PATH, "battery-cycle.csv", "text/csv"); });
+  server.on("/battery/cycle", HTTP_POST, []() {
+    if (!requireWebAuth()) return;
+    const String action = server.arg("action");
+    if (action != "start" && action != "stop" && action != "charging" && action != "discharging" && action != "resting") {
+      server.send(400, "text/plain", "Unknown battery cycle action"); return;
+    }
+    const bool ok = controlBatteryCycle(action);
+    server.send(ok ? 200 : 409, "text/plain", ok ? batteryCycle.status : "Could not record action; check SD/status before continuing");
+  });
   server.on("/tx/retry", HTTP_POST, handleRetryTx);
   server.on("/tone/status", HTTP_GET, handleToneStatus);
   server.on("/i2c/probe", HTTP_POST, handleI2cProbe);

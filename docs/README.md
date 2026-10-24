@@ -34,6 +34,7 @@ print parts, earlier variants and fit coupons. The
 These retain the observations, version and limitations recorded at the time.
 Line references in dated reviews refer to that reviewed source revision.
 
+- [Heltec message/restart investigation — October 24, 2026](MESSAGE_RESTART_REVIEW_2026-10-24.md)
 - [Firmware implementation history](FIRMWARE_HISTORY.md)
 - [Project review — October 23, 2026](PROJECT_REVIEW_2026-10-23.md)
 - [Audio investigation — October 23, 2026](AUDIO_REVIEW_2026-10-23.md)

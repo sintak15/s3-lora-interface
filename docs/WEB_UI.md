@@ -1,6 +1,6 @@
 # Web UI and display
 
-Firmware v0.1.97 uses a navy/blue palette on both the CYD and its local web UI.
+Firmware uses a navy/blue palette on both the CYD and its local web UI.
 Open the CYD's IP address in a browser and use its configured web login.
 
 ## Finding settings
@@ -48,6 +48,13 @@ radio traffic/serial data, maps/cache, system resources and audio/hardware tests
 have separate expandable topics. Field reports remain directly downloadable.
 SD storage initially shows status, type, usage and capacity; saved files and
 maintenance counters have their own expandable groups.
+
+The Battery & runtime topic shows the battery level trend reported by the MAX sensor and sampled voltage
+variation, plus power-health logging controls. Start/stop logging and optionally
+mark physical charger changes; download the readable log or detailed CSV. There
+is no dedicated before/after mode. Both files continue across logging sessions
+and enabled recording resumes after restart. See [battery statistics](BATTERY_STATS.md)
+for measurement limits and file size limits. CYD controls are under System > Battery.
 
 ## CYD label/value colors
 

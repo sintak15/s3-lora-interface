@@ -211,3 +211,53 @@ Wi-Fi installation and read-only desktop/mobile browser checks passed on
 October 23, 2026. CYD preferences, cached Heltec configuration and channels
 matched the pre-update snapshot. The pre-existing GPS-sharing setup requirement
 was preserved; local GPS reception and the radio link were working.
+
+## Battery flow inference (v0.1.98)
+
+Positive MAX17048 CRATE no longer asserts charging by itself. Recent SOC and
+cell-voltage evidence selects charging/discharging, with an explicit settling
+state during transitions, abrupt model changes or missing evidence. A sustained
+unplug voltage step can establish discharge within seconds despite a stale
+positive rate. Runtime learning pauses while uncertain without erasing the
+retained discharge rate. Native/browser diagnostics distinguish inferred flow
+from the gauge's SOC-change rate. Gauge SOC remains authoritative for percentage;
+no voltage-derived SOC trim, quick-start or charger-status claim is introduced.
+
+The related [Heltec restart investigation](MESSAGE_RESTART_REVIEW_2026-10-24.md)
+records separate radio/power observations and configuration trials; a CYD
+application update does not change the installed Heltec firmware.
+
+## MAX-only battery readings and cycle recording (v0.1.99)
+
+Replaces v0.1.98's conservative flow classifier with direct MAX17048 SOC,
+VCELL and signed CRATE readings. Percentage no longer chases gauge changes
+through a display smoothing window. Both interfaces call the direction a MAX
+SOC trend; no physical charger-status input exists. Remaining time is explicitly
+a software estimate and retains its learned discharge rate across power cycles.
+
+Adds an operator-controlled SD battery/power health recorder with 10-second samples,
+raw register/validity fields, one-second voltage extrema, explicit manual phase
+marks, restart continuation, readable-log and CSV downloads. It includes sampled
+voltage span/standard deviation/largest step, MAX read failures, UART framing/
+decode errors, codec/output errors/recoveries, Wi-Fi RSSI and SD errors. It never switches
+charging or forces a deep discharge. See [battery statistics](BATTERY_STATS.md).
+
+## Plain-language battery readings (v0.1.100)
+
+Changes screen/web/readable-log state wording to Battery: Increasing, Battery:
+Decreasing, Battery: Steady, or Battery: Unavailable. Level change shows the rate
+per hour. Underlying MAX-only readings, runtime estimates and logging remain
+as in v0.1.99; detailed CSV/API fields keep their register terminology.
+
+Recording delays caused by an SD lock or unavailable card are counted separately
+from failed log writes. Retry attempts are limited to once per second and sampled
+voltage statistics remain available for the next successful record.
+
+Wi-Fi installation and live desktop/mobile browser checks passed on October 24,
+2026. Direct SD checks verified readable/CSV downloads, raw register agreement,
+manual markers, start/stop, idempotent Start and restart continuation with all
+previous bytes preserved. Logging remains enabled. The installed application is
+1,884,640 bytes with SHA-256
+`fb94d1fb3dadd3e98ff46808e1971a5a89ed8b1e0c60425a6cf6242c389eb406`.
+A full physical charge/discharge cycle and oscilloscope/EMI measurements remain
+outside these software checks. See the [investigation](MESSAGE_RESTART_REVIEW_2026-10-24.md).

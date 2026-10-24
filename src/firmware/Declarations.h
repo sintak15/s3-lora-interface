@@ -114,9 +114,7 @@ static uint32_t filterBatteryVoltage(uint32_t rawMv, bool chargeRateValid, float
 static bool batteryVoltageQualified();
 static const char* batteryAlertLabel();
 static void updateBatteryAlertState(int displayedPercent, uint32_t packMv, bool charging, uint32_t nowMs);
-static int smoothDisplayedBatteryPercent(int targetPercent, bool charging);
 static void updateBatteryTrend(uint32_t packMv, uint32_t nowMs);
-static bool decideBatteryCharging(bool chargeRateValid, float chargeRate, uint32_t packMv, uint32_t nowMs);
 static void saveBatteryRuntimeLearning(uint32_t nowMs);
 static bool sampleMax17048();
 static void sampleLocalBattery();

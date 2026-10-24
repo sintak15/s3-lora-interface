@@ -69,6 +69,10 @@ queue-result matching, retry cadence, timer wrap, UTC timestamps, units and
 preservation of unrelated Heltec position settings.
 Display formatting checks cover separate label/value colors, multiple readings
 on a line, MAC/time colons, literal hash characters and bounded output.
+MAX17048 checks cover register units, signed CRATE, fractional/zero SOC and
+failed rate reads. Voltage-variation checks cover known sample statistics,
+window resets and steps across record boundaries. Web checks cover single
+logging requests, explicit SD failures and uncertain connection-loss outcomes.
 
 Host-side USB protocol tests run without connecting to a device:
 
@@ -120,7 +124,7 @@ Use the scripts to refresh this identity before building after source changes.
   Charging and unreliable readings pause estimation without erasing the learned
   rate. The UI identifies previous use, gauge trend and current use, with time
   rounded to five minutes. See [battery statistics](BATTERY_STATS.md) for learning,
-  persistence, charging inference and measurement limitations.
+  persistence, gauge trend, SD power logging and measurement limitations.
 - At USB **115200 baud**, send `version` followed by a newline for firmware,
   full source commit, modified-source flag, build date/time and active partition.
   Send `diagnostics` for a single-line JSON health report among the usual logs.
@@ -181,6 +185,7 @@ Implementation lives in `src/firmware/`:
 | `Runtime.inc` | Runtime buffer allocation |
 | `Storage.inc` | SD storage, logging, and append worker |
 | `Gps.inc`, `Battery.inc` | Local GPS, fuel gauge, and diagnostics |
+| `BatteryCycle.inc` | Battery/power health recorder and SD cycle controls |
 | `GpsRelay.inc` | GPS sharing over Protobuf UART and verified Heltec setup |
 | `GpsUi.inc` | GPS Config and Adv pages, shared draft and confirmed-setting display |
 | `Network.inc` | Event logs, preferences, WiFi, and scanning |
