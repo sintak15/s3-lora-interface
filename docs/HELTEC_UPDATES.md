@@ -33,6 +33,41 @@ Readback still reported **2.7.15.567b8ea**. Device settings, module settings and
 all eight channel slots exactly matched the pre-attempt backup. The Heltec was
 not updated.
 
+## Bluetooth retry — October 23, 2026
+
+The official release API still identified **2.7.26.54e0d8d Beta** as the latest
+regular release. A new private backup confirmed HELTEC_V3, firmware 2.7.15,
+external GPS mode and eight channel slots. The application image was checked
+against its manifest size/MD5 and the release archive's published SHA256.
+
+A Windows BLE client connected to the matching radio, verified the legacy OTA
+service and characteristics, subscribed to notifications and negotiated an ATT
+MTU of 517. It sent `OTA_SIZE:<application bytes>`, followed by one application
+block. Neither a 512-byte attempt nor a fresh 128-byte attempt received the
+expected first-block acknowledgement within 30 seconds. No later blocks were
+sent after an unacknowledged write. The user power-cycled the Heltec between
+attempts; the second attempt disconnected and normal HTTP/TCP access recovered.
+
+Readback still reported **2.7.15.567b8ea**. Device configuration, module
+configuration and all eight channels exactly matched the new backup. Fresh
+LOC_EXTERNAL positions confirmed that CYD GPS sharing resumed. USB enumeration
+still showed no Heltec data port. This retry did not complete a firmware update.
+
+There is a possible partition-label incompatibility: the legacy loader source
+searches OTA_0 for the exact label `app` and asserts if it is absent, whereas
+the installed firmware's 8 MB partition definition names that slot `app0`.
+That could explain failure on the first data block and a return to normal
+operation. This is an inference from source and observed behavior, not a
+confirmed crash diagnosis; the installed loader binary and serial panic log
+were not read back. Repeating the same wireless transfer is not a reliable
+recovery path. A working USB data connection or access to ROM UART0 is needed
+to install firmware and a compatible updater.
+
+Retry scripts, transfer status and private before/after configuration captures
+remain ignored under `build/heltec-update/` (`retry_*.py`,
+`retry-transfer-progress.json`, `retry-pre-update-config.json` and
+`retry-after-config.json`). They must not be committed with private settings.
+
 ## Available paths
 
 | Path | Requirement |
@@ -54,6 +89,8 @@ normal Meshtastic TCP port.
 
 Sources: [installed main-firmware OTA command](https://github.com/meshtastic/firmware/blob/567b8ea/src/modules/AdminModule.cpp),
 [legacy Bluetooth loader](https://github.com/meshtastic/firmware-ota/blob/master/src/main.cpp),
+[legacy loader partition lookup](https://github.com/meshtastic/firmware-ota/blob/87f0f2f41bbbe446db1c2bba48c30eb3469a97cb/src/main.cpp),
+[installed 8 MB partition definition](https://github.com/meshtastic/firmware/blob/567b8ea/partition-table-8MB.csv),
 [legacy Wi-Fi loader](https://github.com/meshtastic/firmware-ota-wifi),
 [unified OTA protocol](https://github.com/meshtastic/esp32-unified-ota),
 [2.7.26 Beta release](https://github.com/meshtastic/firmware/releases/tag/v2.7.26.54e0d8d),
