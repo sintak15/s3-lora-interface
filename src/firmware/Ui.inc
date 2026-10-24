@@ -68,12 +68,12 @@ static void styleDarkBorder(lv_obj_t* obj, uint32_t color) {
 }
 
 static void styleDarkTextArea(lv_obj_t* ta) {
-  styleDarkObject(ta, COLOR_INPUT, 0xE8FFF5);
-  styleDarkBorder(ta, 0x2F705F);
+  styleDarkObject(ta, COLOR_INPUT, 0xE8F2FF);
+  styleDarkBorder(ta, 0x39638D);
   lv_obj_set_style_text_font(ta, UI_FONT_SMALL, 0);
   lv_obj_set_style_text_line_space(ta, 1, 0);
   lv_obj_set_style_text_color(ta, lv_color_hex(COLOR_MUTED), LV_PART_TEXTAREA_PLACEHOLDER);
-  lv_obj_set_style_bg_color(ta, lv_color_hex(0x16342C), LV_PART_SELECTED);
+  lv_obj_set_style_bg_color(ta, lv_color_hex(0x1B3656), LV_PART_SELECTED);
   lv_obj_set_style_text_color(ta, lv_color_hex(COLOR_TEXT), LV_PART_SELECTED);
 }
 
@@ -83,6 +83,27 @@ static void styleBoundedLabel(lv_obj_t* label, lv_coord_t width, uint32_t color,
   lv_label_set_long_mode(label, mode);
   lv_obj_set_style_text_color(label, lv_color_hex(color), 0);
   lv_obj_set_style_text_font(label, UI_FONT_SMALL, 0);
+}
+
+// Shared by label/value readouts, never editable fields or message/log bodies.
+static char readoutTextBuffer[4096];
+static void setReadoutText(lv_obj_t* label, const char* text) {
+  if (!label) return;
+  const bool colored = DiagnosticText::format(readoutTextBuffer, sizeof(readoutTextBuffer), text);
+  if (lv_label_get_recolor(label) != colored) lv_label_set_recolor(label, colored);
+  if (lv_obj_get_style_text_color(label, 0).full != lv_color_hex(COLOR_TEXT).full)
+    lv_obj_set_style_text_color(label, lv_color_hex(COLOR_TEXT), 0);
+  const char* display = colored ? readoutTextBuffer : text;
+  if (strcmp(lv_label_get_text(label), display) != 0) lv_label_set_text(label, display);
+}
+
+static void setReadoutArea(lv_obj_t* area, const char* text) {
+  if (!area) return;
+  const bool colored = DiagnosticText::format(readoutTextBuffer, sizeof(readoutTextBuffer), text);
+  lv_obj_t* label = lv_textarea_get_label(area);
+  lv_label_set_recolor(label, colored);
+  lv_obj_set_style_text_color(label, lv_color_hex(COLOR_TEXT), 0);
+  lv_textarea_set_text(area, colored ? readoutTextBuffer : text);
 }
 
 static lv_obj_t* makePanel(lv_obj_t* parent) {
@@ -115,7 +136,7 @@ static void buildStatusBar(lv_obj_t* screen) {
   statusBar = lv_obj_create(screen);
   lv_obj_set_size(statusBar, SCREEN_W, STATUS_BAR_H);
   lv_obj_align(statusBar, LV_ALIGN_TOP_MID, 0, 0);
-  styleDarkObject(statusBar, 0x080D0B, COLOR_MUTED);
+  styleDarkObject(statusBar, 0x081523, COLOR_MUTED);
   lv_obj_set_style_border_color(statusBar, lv_color_hex(COLOR_BORDER), 0);
   lv_obj_set_style_border_side(statusBar, LV_BORDER_SIDE_BOTTOM, 0);
   lv_obj_set_style_border_width(statusBar, 1, 0);
@@ -191,8 +212,8 @@ static void showPage(lv_obj_t* target, bool remember) {
     if (home) lv_obj_add_flag(btnNavHome, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_clear_flag(btnNavHome, LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_style_radius(btnNavBack, home ? 10 : 6, 0);
-    lv_obj_set_style_bg_color(btnNavBack, lv_color_hex(home ? 0x18362B : 0x111A18), 0);
-    lv_obj_set_style_border_color(btnNavBack, lv_color_hex(home ? 0x345346 : 0x315B50), 0);
+    lv_obj_set_style_bg_color(btnNavBack, lv_color_hex(home ? 0x193753 : 0x102238), 0);
+    lv_obj_set_style_border_color(btnNavBack, lv_color_hex(home ? 0x34577C : 0x365B82), 0);
     lv_obj_set_style_text_font(lv_obj_get_child(btnNavBack, 0), home ? &lv_font_montserrat_14 : UI_FONT_SMALL, 0);
   }
   if (target == pagePublicChat) unreadPublic = 0;
@@ -232,7 +253,7 @@ static void invalidateMapView() {
   lastMapUiRefreshMs = 0;
   forcePageRefresh = true;
   if (mapLayer) lv_obj_set_pos(mapLayer, 0, 0);
-  if (mapCanvas) lv_canvas_fill_bg(mapCanvas, lv_color_hex(0x07100D), LV_OPA_COVER);
+  if (mapCanvas) lv_canvas_fill_bg(mapCanvas, lv_color_hex(0x09182A), LV_OPA_COVER);
   for (auto* dot : mapDots) if (dot) lv_obj_add_flag(dot, LV_OBJ_FLAG_HIDDEN);
   if (mapScale) lv_obj_add_flag(mapScale, LV_OBJ_FLAG_HIDDEN);
 }
@@ -469,7 +490,7 @@ static lv_obj_t* makeActionButton(lv_obj_t* parent, const char* text, int y, lv_
   lv_obj_set_size(btn, UI_ACTION_W, UI_ACTION_H);
   lv_obj_align(btn, LV_ALIGN_TOP_MID, 0, y);
   styleDarkObject(btn, COLOR_PANEL);
-  styleDarkBorder(btn, 0x2F705F);
+  styleDarkBorder(btn, 0x39638D);
   lv_obj_set_style_radius(btn, 8, 0);
   lv_obj_set_style_shadow_width(btn, 0, 0);
   lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
@@ -491,7 +512,7 @@ static lv_obj_t* makeSmallButton(lv_obj_t* parent, const char* text, int x, int 
   lv_obj_set_size(btn, w, 22);
   lv_obj_align(btn, LV_ALIGN_TOP_LEFT, x, y);
   styleDarkObject(btn, COLOR_PANEL);
-  styleDarkBorder(btn, 0x2F705F);
+  styleDarkBorder(btn, 0x39638D);
   lv_obj_set_style_radius(btn, 6, 0);
   lv_obj_set_style_shadow_width(btn, 0, 0);
   lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
@@ -518,7 +539,7 @@ static lv_obj_t* makeSystemTile(lv_obj_t* parent, const char* text, int col, int
   lv_obj_set_size(btn, tileW, tileH);
   lv_obj_align(btn, LV_ALIGN_TOP_LEFT, x, y);
   styleDarkObject(btn, COLOR_PANEL);
-  styleDarkBorder(btn, 0x2F705F);
+  styleDarkBorder(btn, 0x39638D);
   lv_obj_set_style_radius(btn, 6, 0);
   lv_obj_set_style_shadow_width(btn, 0, 0);
   lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
@@ -545,21 +566,21 @@ static lv_obj_t* makeHomeAction(lv_obj_t* parent, const char* title, const char*
   styleDarkBorder(button, primary ? COLOR_ACTION : COLOR_BORDER);
   lv_obj_set_style_radius(button, 8, 0);
   lv_obj_set_style_pad_all(button, 8, 0);
-  lv_obj_set_style_bg_color(button, lv_color_hex(primary ? 0x68FFC0 : 0x24483E), LV_STATE_PRESSED);
+  lv_obj_set_style_bg_color(button, lv_color_hex(primary ? 0x85BFFF : 0x294766), LV_STATE_PRESSED);
   lv_obj_add_event_cb(button, cb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* heading = lv_label_create(button);
   lv_obj_set_width(heading, w - 18);
   lv_label_set_long_mode(heading, LV_LABEL_LONG_DOT);
   lv_label_set_text(heading, title);
   lv_obj_set_style_text_font(heading, UI_FONT_READABLE, 0);
-  lv_obj_set_style_text_color(heading, lv_color_hex(primary ? 0x001B12 : COLOR_TEXT), 0);
+  lv_obj_set_style_text_color(heading, lv_color_hex(primary ? 0x04192E : COLOR_TEXT), 0);
   lv_obj_align(heading, LV_ALIGN_TOP_LEFT, 0, -2);
   lv_obj_t* subtitle = lv_label_create(button);
   lv_obj_set_width(subtitle, w - 18);
   lv_label_set_long_mode(subtitle, LV_LABEL_LONG_DOT);
   lv_label_set_text(subtitle, detail);
   lv_obj_set_style_text_font(subtitle, UI_FONT_SMALL, 0);
-  lv_obj_set_style_text_color(subtitle, lv_color_hex(primary ? 0x003526 : COLOR_MUTED), 0);
+  lv_obj_set_style_text_color(subtitle, lv_color_hex(primary ? 0x0D2D4C : COLOR_MUTED), 0);
   lv_obj_align(subtitle, LV_ALIGN_BOTTOM_LEFT, 0, 2);
   return button;
 }
@@ -593,8 +614,8 @@ static lv_obj_t* makeNavButton(lv_obj_t* parent, const char* text, lv_align_t al
   lv_obj_t* btn = lv_btn_create(parent);
   lv_obj_set_size(btn, 92, 30);
   lv_obj_align(btn, align, x, 0);
-  styleDarkObject(btn, 0x111A18);
-  styleDarkBorder(btn, 0x315B50);
+  styleDarkObject(btn, 0x102238);
+  styleDarkBorder(btn, 0x365B82);
   lv_obj_set_style_radius(btn, 6, 0);
   lv_obj_set_style_shadow_width(btn, 0, 0);
   lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
@@ -615,7 +636,7 @@ static void buildNavBar(lv_obj_t* screen) {
   navBar = lv_obj_create(screen);
   lv_obj_set_size(navBar, SCREEN_W, NAV_BAR_H);
   lv_obj_align(navBar, LV_ALIGN_BOTTOM_MID, 0, 0);
-  styleDarkObject(navBar, 0x080D0B);
+  styleDarkObject(navBar, 0x081523);
   lv_obj_set_style_border_color(navBar, lv_color_hex(COLOR_BORDER), 0);
   lv_obj_set_style_border_side(navBar, LV_BORDER_SIDE_TOP, 0);
   lv_obj_set_style_border_width(navBar, 1, 0);
@@ -747,15 +768,15 @@ static const char* nodeStatusLabel(const NodeRecord& node, uint32_t nowMs) {
 }
 
 static uint32_t nodeRowBg(const NodeRecord& node, uint32_t nowMs) {
-  if (nodeAgeSeconds(node, nowMs) > 900) return 0x0B100F;
+  if (nodeAgeSeconds(node, nowMs) > 900) return 0x0B1726;
   if (node.snr < -10.0f) return 0x1D1810;
-  return 0x10201B;
+  return 0x102B45;
 }
 
 static uint32_t nodeRowBorder(const NodeRecord& node, uint32_t nowMs) {
-  if (nodeAgeSeconds(node, nowMs) > 900) return 0x2A3A35;
+  if (nodeAgeSeconds(node, nowMs) > 900) return 0x2B425D;
   if (node.snr < -10.0f) return 0x6F5A2E;
-  return 0x2F705F;
+  return 0x39638D;
 }
 
 static bool nodeMatchesFilter(const NodeRecord& node, uint32_t nowMs) {
@@ -896,8 +917,8 @@ static void refreshNodeList(bool force) {
       lv_obj_t* row = lv_obj_create(listNodes);
       lv_obj_set_width(row, lv_pct(100));
       lv_obj_set_height(row, 30);
-      styleDarkObject(row, node.isFavorite ? 0x132A22 : 0x0B1210);
-      styleDarkBorder(row, node.isFavorite ? COLOR_ACCENT : 0x203B35);
+      styleDarkObject(row, node.isFavorite ? 0x143653 : 0x0C1B2D);
+      styleDarkBorder(row, node.isFavorite ? COLOR_ACCENT : 0x27445F);
       lv_obj_set_style_border_width(row, node.isFavorite ? 1 : 0, LV_PART_MAIN);
       lv_obj_set_style_radius(row, node.isFavorite ? 4 : 2, 0);
       lv_obj_set_style_pad_all(row, 3, 0);
@@ -1033,7 +1054,7 @@ static void refreshNodeDetailFavoriteButton() {
   bool fav = node && node->isFavorite;
   lv_label_set_text(lblNodeFavorite, fav ? "Unfav" : "Fav");
   styleDarkObject(btnNodeFavorite, fav ? 0x5A3D15 : COLOR_PANEL);
-  styleDarkBorder(btnNodeFavorite, fav ? 0xC28C2C : 0x2F705F);
+  styleDarkBorder(btnNodeFavorite, fav ? 0xC28C2C : 0x39638D);
 }
 
 static void toggleSelectedNodeFavorite() {
@@ -1172,7 +1193,7 @@ static void ensureWifiLocalPage() {
   lv_obj_t* btnScanWifi = lv_btn_create(localWifiPanel);
   lv_obj_set_size(btnScanWifi, SCREEN_W - 40, 40);
   lv_obj_align(btnScanWifi, LV_ALIGN_TOP_MID, 0, 8);
-  styleDarkObject(btnScanWifi, 0x2F705F, 0xFFFFFF);
+  styleDarkObject(btnScanWifi, 0x39638D, 0xFFFFFF);
   lv_obj_t* lblScanWifi = lv_label_create(btnScanWifi);
   lv_label_set_text(lblScanWifi, "Scan WiFi");
   styleBoundedLabel(lblScanWifi, SCREEN_W - 56, 0xFFFFFF);
@@ -1208,7 +1229,7 @@ static void ensureWifiLocalPage() {
   styleDarkObject(btnSaveWifi, COLOR_ACTION, 0xFFFFFF);
   lv_obj_t* lblSaveWifi = lv_label_create(btnSaveWifi);
   lv_label_set_text(lblSaveWifi, "Connect");
-  styleBoundedLabel(lblSaveWifi, SCREEN_W - 56, 0x001B12);
+  styleBoundedLabel(lblSaveWifi, SCREEN_W - 56, 0x04192E);
   lv_obj_center(lblSaveWifi);
   lv_obj_add_event_cb(btnSaveWifi, [](lv_event_t*) {
     saveWifiCredentials();
@@ -1227,10 +1248,10 @@ static void ensureWifiScanPage() {
   lv_obj_t* btnRefreshScan = lv_btn_create(pageWifiScan);
   lv_obj_set_size(btnRefreshScan, 86, 30);
   lv_obj_align(btnRefreshScan, LV_ALIGN_TOP_RIGHT, -8, 20);
-  styleDarkObject(btnRefreshScan, COLOR_ACTION, 0x001B12);
+  styleDarkObject(btnRefreshScan, COLOR_ACTION, 0x04192E);
   lv_obj_t* lblRefreshScan = lv_label_create(btnRefreshScan);
   lv_label_set_text(lblRefreshScan, "Refresh");
-  styleBoundedLabel(lblRefreshScan, 74, 0x001B12);
+  styleBoundedLabel(lblRefreshScan, 74, 0x04192E);
   lv_obj_center(lblRefreshScan);
   lv_obj_add_event_cb(btnRefreshScan, [](lv_event_t*) { requestWifiScan(); }, LV_EVENT_CLICKED, nullptr);
   listWifiScan = lv_list_create(pageWifiScan);
@@ -1277,9 +1298,9 @@ static void buildLandscapeKeyboardScreen() {
   lv_obj_set_size(landscapeKeyboard, SCREEN_H, 156);
   lv_obj_align(landscapeKeyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
   styleDarkObject(landscapeKeyboard, COLOR_PANEL);
-  lv_obj_set_style_bg_color(landscapeKeyboard, lv_color_hex(0x111A18), LV_PART_ITEMS);
+  lv_obj_set_style_bg_color(landscapeKeyboard, lv_color_hex(0x102238), LV_PART_ITEMS);
   lv_obj_set_style_text_color(landscapeKeyboard, lv_color_hex(COLOR_TEXT), LV_PART_ITEMS);
-  lv_obj_set_style_border_color(landscapeKeyboard, lv_color_hex(0x315B50), LV_PART_ITEMS);
+  lv_obj_set_style_border_color(landscapeKeyboard, lv_color_hex(0x365B82), LV_PART_ITEMS);
   lv_obj_set_style_border_width(landscapeKeyboard, 1, LV_PART_ITEMS);
   lv_obj_add_event_cb(landscapeKeyboard, landscapeKeyboardEvent, LV_EVENT_READY, nullptr);
   lv_obj_add_event_cb(landscapeKeyboard, landscapeKeyboardEvent, LV_EVENT_CANCEL, nullptr);
@@ -1389,7 +1410,7 @@ static void buildScreenUi() {
   lv_obj_set_size(listNodes, SCREEN_W - 12, 188);
   lv_obj_align(listNodes, LV_ALIGN_TOP_MID, 0, 62);
   styleDarkObject(listNodes, COLOR_PANEL);
-  styleDarkBorder(listNodes, 0x2F705F);
+  styleDarkBorder(listNodes, 0x39638D);
   lv_obj_set_style_pad_all(listNodes, 4, 0);
   lv_obj_set_style_pad_row(listNodes, 6, 0);
 
@@ -1399,7 +1420,7 @@ static void buildScreenUi() {
   lv_obj_set_size(btnNodeFavorite, 72, 22);
   lv_obj_align(btnNodeFavorite, LV_ALIGN_TOP_LEFT, 6, 214);
   styleDarkObject(btnNodeFavorite, COLOR_PANEL);
-  styleDarkBorder(btnNodeFavorite, 0x2F705F);
+  styleDarkBorder(btnNodeFavorite, 0x39638D);
   lv_obj_set_style_radius(btnNodeFavorite, 6, 0);
   lv_obj_set_style_shadow_width(btnNodeFavorite, 0, 0);
   lv_obj_add_flag(btnNodeFavorite, LV_OBJ_FLAG_CLICKABLE);
@@ -1418,7 +1439,7 @@ static void buildScreenUi() {
   lv_obj_set_size(meshHealthPanel, SCREEN_W - 12, 392);
   lv_obj_align(meshHealthPanel, LV_ALIGN_TOP_MID, 0, 24);
   lblMeshHealth = lv_label_create(meshHealthPanel);
-  lv_label_set_text(lblMeshHealth, "Waiting for radio health...");
+  setReadoutText(lblMeshHealth, "Waiting for radio health...");
   styleBoundedLabel(lblMeshHealth, lv_pct(100), COLOR_TEXT, LV_LABEL_LONG_WRAP);
 
   makePageTitle(pagePacketInspector, "Packets");
@@ -1433,7 +1454,7 @@ static void buildScreenUi() {
 
   lblPublicChatTitle = makePageTitle(pagePublicChat, "Primary Chat");
   lblPublicChannelStats = lv_label_create(pagePublicChat);
-  lv_label_set_text(lblPublicChannelStats, "Ch 0: primary");
+  setReadoutText(lblPublicChannelStats, "Ch 0: primary");
   styleBoundedLabel(lblPublicChannelStats, SCREEN_W - 12, COLOR_MUTED);
   lv_obj_align(lblPublicChannelStats, LV_ALIGN_TOP_LEFT, 2, 18);
 
@@ -1452,19 +1473,19 @@ static void buildScreenUi() {
   lv_obj_t* publicSendBtn = lv_btn_create(pagePublicChat);
   lv_obj_set_size(publicSendBtn, 56, 38);
   lv_obj_align(publicSendBtn, LV_ALIGN_TOP_RIGHT, -6, 192);
-  styleDarkObject(publicSendBtn, COLOR_ACTION, 0x001B12);
+  styleDarkObject(publicSendBtn, COLOR_ACTION, 0x04192E);
   lv_obj_set_style_shadow_width(publicSendBtn, 0, 0);
   lv_obj_add_event_cb(publicSendBtn, [](lv_event_t*) { sendFromInput(taPublicInput, PUBLIC_CHANNEL_INDEX); }, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_flag(publicSendBtn, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_t* publicSendLbl = lv_label_create(publicSendBtn);
   lv_label_set_text(publicSendLbl, "Send");
-  lv_obj_set_style_text_color(publicSendLbl, lv_color_hex(0x001B12), 0);
+  lv_obj_set_style_text_color(publicSendLbl, lv_color_hex(0x04192E), 0);
   lv_obj_center(publicSendLbl);
   lv_obj_move_foreground(publicSendBtn);
 
   lblPrivateChatTitle = makePageTitle(pagePrivateChat, "Channel 1 Chat");
   lblPrivateChannelStats = lv_label_create(pagePrivateChat);
-  lv_label_set_text(lblPrivateChannelStats, "Ch 1");
+  setReadoutText(lblPrivateChannelStats, "Ch 1");
   styleBoundedLabel(lblPrivateChannelStats, SCREEN_W - 12, COLOR_MUTED);
   lv_obj_align(lblPrivateChannelStats, LV_ALIGN_TOP_LEFT, 2, 18);
 
@@ -1483,18 +1504,18 @@ static void buildScreenUi() {
   lv_obj_t* privateSendBtn = lv_btn_create(pagePrivateChat);
   lv_obj_set_size(privateSendBtn, 56, 38);
   lv_obj_align(privateSendBtn, LV_ALIGN_TOP_RIGHT, -6, 192);
-  styleDarkObject(privateSendBtn, COLOR_ACTION, 0x001B12);
+  styleDarkObject(privateSendBtn, COLOR_ACTION, 0x04192E);
   lv_obj_set_style_shadow_width(privateSendBtn, 0, 0);
   lv_obj_add_event_cb(privateSendBtn, [](lv_event_t*) { sendFromInput(taFamilyInput, privateChannelIndex >= 0 ? privateChannelIndex : 1); }, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_flag(privateSendBtn, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_t* privateSendLbl = lv_label_create(privateSendBtn);
   lv_label_set_text(privateSendLbl, "Send");
-  lv_obj_set_style_text_color(privateSendLbl, lv_color_hex(0x001B12), 0);
+  lv_obj_set_style_text_color(privateSendLbl, lv_color_hex(0x04192E), 0);
   lv_obj_center(privateSendLbl);
   lv_obj_move_foreground(privateSendBtn);
 
   lblPrivateChannelHint = lv_label_create(pagePrivateChat);
-  lv_label_set_text(lblPrivateChannelHint, "Radio ch: not loaded");
+  setReadoutText(lblPrivateChannelHint, "Radio ch: not loaded");
   styleBoundedLabel(lblPrivateChannelHint, SCREEN_W - 12, COLOR_MUTED);
   lv_obj_align(lblPrivateChannelHint, LV_ALIGN_TOP_LEFT, 2, 236);
 
@@ -1522,13 +1543,13 @@ static void buildScreenUi() {
   lv_obj_t* directSendBtn = lv_btn_create(pageDirectChat);
   lv_obj_set_size(directSendBtn, 56, 38);
   lv_obj_align(directSendBtn, LV_ALIGN_TOP_RIGHT, -6, 198);
-  styleDarkObject(directSendBtn, COLOR_ACTION, 0x001B12);
+  styleDarkObject(directSendBtn, COLOR_ACTION, 0x04192E);
   lv_obj_set_style_shadow_width(directSendBtn, 0, 0);
   lv_obj_add_event_cb(directSendBtn, [](lv_event_t*) { sendDirectFromInput(taDirectTo, taDirectInput); }, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_flag(directSendBtn, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_t* directSendLbl = lv_label_create(directSendBtn);
   lv_label_set_text(directSendLbl, "Send");
-  lv_obj_set_style_text_color(directSendLbl, lv_color_hex(0x001B12), 0);
+  lv_obj_set_style_text_color(directSendLbl, lv_color_hex(0x04192E), 0);
   lv_obj_center(directSendLbl);
   lv_obj_move_foreground(directSendBtn);
 
@@ -1539,7 +1560,7 @@ static void buildScreenUi() {
   lv_obj_align(msgDiagPanel, LV_ALIGN_TOP_MID, 0, 24);
 
   lblMsgDiagStatus = lv_label_create(msgDiagPanel);
-  lv_label_set_text(lblMsgDiagStatus, msgDiagStatus);
+  setReadoutText(lblMsgDiagStatus, msgDiagStatus);
   styleBoundedLabel(lblMsgDiagStatus, lv_pct(100), COLOR_TEXT, LV_LABEL_LONG_WRAP);
   lv_obj_align(lblMsgDiagStatus, LV_ALIGN_TOP_LEFT, 2, 4);
 
@@ -1552,7 +1573,7 @@ static void buildScreenUi() {
   lv_obj_set_size(dropdownMsgDiagA, SCREEN_W - 36, 34);
   lv_obj_align(dropdownMsgDiagA, LV_ALIGN_TOP_MID, 0, 62);
   styleDarkObject(dropdownMsgDiagA, COLOR_INPUT, COLOR_TEXT);
-  styleDarkBorder(dropdownMsgDiagA, 0x2F705F);
+  styleDarkBorder(dropdownMsgDiagA, 0x39638D);
   lv_obj_set_style_radius(dropdownMsgDiagA, 6, 0);
   lv_obj_add_event_cb(dropdownMsgDiagA, messageDiagDropdownEvent, LV_EVENT_VALUE_CHANGED, nullptr);
 
@@ -1565,7 +1586,7 @@ static void buildScreenUi() {
   lv_obj_set_size(dropdownMsgDiagB, SCREEN_W - 36, 34);
   lv_obj_align(dropdownMsgDiagB, LV_ALIGN_TOP_MID, 0, 124);
   styleDarkObject(dropdownMsgDiagB, COLOR_INPUT, COLOR_TEXT);
-  styleDarkBorder(dropdownMsgDiagB, 0x2F705F);
+  styleDarkBorder(dropdownMsgDiagB, 0x39638D);
   lv_obj_set_style_radius(dropdownMsgDiagB, 6, 0);
   lv_obj_add_event_cb(dropdownMsgDiagB, messageDiagDropdownEvent, LV_EVENT_VALUE_CHANGED, nullptr);
 
@@ -1588,7 +1609,7 @@ static void buildScreenUi() {
   makeSmallButton(msgDiagPanel, "Swap", 154, 252, 68, messageDiagSwapEvent);
 
   lblMsgDiagDetail = lv_label_create(msgDiagPanel);
-  lv_label_set_text(lblMsgDiagDetail, msgDiagDetail);
+  setReadoutText(lblMsgDiagDetail, msgDiagDetail);
   styleBoundedLabel(lblMsgDiagDetail, lv_pct(100), COLOR_TEXT, LV_LABEL_LONG_WRAP);
   lv_obj_align(lblMsgDiagDetail, LV_ALIGN_TOP_LEFT, 2, 292);
 
@@ -1641,7 +1662,7 @@ static void buildScreenUi() {
   if (mapCanvasBuf) {
     mapCanvas = lv_canvas_create(mapLayer);
     lv_canvas_set_buffer(mapCanvas, mapCanvasBuf, MAP_PLOT_W, MAP_PLOT_H, LV_IMG_CF_TRUE_COLOR);
-    lv_canvas_fill_bg(mapCanvas, lv_color_hex(0x07100D), LV_OPA_COVER);
+    lv_canvas_fill_bg(mapCanvas, lv_color_hex(0x09182A), LV_OPA_COVER);
     lv_obj_set_pos(mapCanvas, 0, 0);
     lv_obj_clear_flag(mapCanvas, LV_OBJ_FLAG_CLICKABLE);
   }
@@ -1701,7 +1722,7 @@ static void buildScreenUi() {
   lv_obj_clear_flag(lblMapCoverage, LV_OBJ_FLAG_CLICKABLE);
   lblMapStats = lv_label_create(pageGps);
   styleBoundedLabel(lblMapStats, 230, COLOR_MUTED);
-  lv_label_set_text(lblMapStats, "Waiting for location");
+  setReadoutText(lblMapStats, "Waiting for location");
   lv_obj_set_pos(lblMapStats, 0, 236);
   updateMapControls();
 
@@ -1743,7 +1764,7 @@ static void buildScreenUi() {
   lv_obj_set_size(interfacePanel, SCREEN_W - 12, 330);
   lv_obj_align(interfacePanel, LV_ALIGN_TOP_MID, 0, 24);
   lblSystemInterface = lv_label_create(interfacePanel);
-  lv_label_set_text(lblSystemInterface, "Interface ready");
+  setReadoutText(lblSystemInterface, "Interface ready");
   styleBoundedLabel(lblSystemInterface, lv_pct(100), COLOR_TEXT, LV_LABEL_LONG_WRAP);
 
   makePageTitle(pageSystemSerial, "Serial Link");
@@ -1752,7 +1773,7 @@ static void buildScreenUi() {
   lv_obj_set_size(serialPanel, SCREEN_W - 12, 300);
   lv_obj_align(serialPanel, LV_ALIGN_TOP_MID, 0, 24);
   lblSystemSerial = lv_label_create(serialPanel);
-  lv_label_set_text(lblSystemSerial, "Serial ready");
+  setReadoutText(lblSystemSerial, "Serial ready");
   styleBoundedLabel(lblSystemSerial, lv_pct(100), COLOR_TEXT, LV_LABEL_LONG_WRAP);
 
   makePageTitle(pageSystemRadio, "Radio Stats");
@@ -1761,7 +1782,7 @@ static void buildScreenUi() {
   lv_obj_set_size(radioPanel, SCREEN_W - 12, 300);
   lv_obj_align(radioPanel, LV_ALIGN_TOP_MID, 0, 24);
   lblSystemRadio = lv_label_create(radioPanel);
-  lv_label_set_text(lblSystemRadio, "Radio ready");
+  setReadoutText(lblSystemRadio, "Radio ready");
   styleBoundedLabel(lblSystemRadio, lv_pct(100), COLOR_TEXT, LV_LABEL_LONG_WRAP);
 
   makePageTitle(pageSystemGps, "GPS");
@@ -1772,7 +1793,7 @@ static void buildScreenUi() {
   lv_obj_set_size(gpsPanel, SCREEN_W - 12, 430);
   lv_obj_align(gpsPanel, LV_ALIGN_TOP_MID, 0, 84);
   lblGpsStats = lv_label_create(gpsPanel);
-  lv_label_set_text(lblGpsStats, "Waiting for CYD GPS UART...");
+  setReadoutText(lblGpsStats, "Waiting for CYD GPS UART...");
   styleBoundedLabel(lblGpsStats, lv_pct(100), COLOR_TEXT, LV_LABEL_LONG_WRAP);
   buildGpsConfigUi();
 
@@ -1804,7 +1825,7 @@ static void buildScreenUi() {
   }, LV_EVENT_VALUE_CHANGED, nullptr);
 
   lblWifiState = lv_label_create(wifiPanel);
-  lv_label_set_text(lblWifiState, "WiFi starting...");
+  setReadoutText(lblWifiState, "WiFi starting...");
   styleBoundedLabel(lblWifiState, lv_pct(100), COLOR_MUTED, LV_LABEL_LONG_WRAP);
   lv_obj_align(lblWifiState, LV_ALIGN_TOP_LEFT, 2, 80);
   makeActionButton(pageWifi, "Local Network", 170, [](lv_event_t*) {
@@ -1818,7 +1839,7 @@ static void buildScreenUi() {
   lv_obj_set_size(wifiStatsPanel, SCREEN_W - 12, 330);
   lv_obj_align(wifiStatsPanel, LV_ALIGN_TOP_MID, 0, 24);
   lblWifiStats = lv_label_create(wifiStatsPanel);
-  lv_label_set_text(lblWifiStats, "WiFi stats unavailable");
+  setReadoutText(lblWifiStats, "WiFi stats unavailable");
   styleBoundedLabel(lblWifiStats, lv_pct(100), COLOR_TEXT, LV_LABEL_LONG_WRAP);
 
   makePageTitle(pageBacklight, "Display");
@@ -1827,7 +1848,7 @@ static void buildScreenUi() {
   lv_obj_set_size(backlightPanel, SCREEN_W - 12, 206);
   lv_obj_align(backlightPanel, LV_ALIGN_TOP_MID, 0, 30);
   lblBacklight = lv_label_create(backlightPanel);
-  lv_label_set_text(lblBacklight, "Brightness: 10%");
+  setReadoutText(lblBacklight, "Brightness: 10%");
   styleBoundedLabel(lblBacklight, lv_pct(100), COLOR_TEXT, LV_LABEL_LONG_WRAP);
   lv_obj_align(lblBacklight, LV_ALIGN_TOP_LEFT, 2, 4);
   sliderBacklight = lv_slider_create(backlightPanel);
@@ -1835,7 +1856,7 @@ static void buildScreenUi() {
   lv_obj_align(sliderBacklight, LV_ALIGN_TOP_MID, 0, 54);
   lv_slider_set_range(sliderBacklight, 10, 100);
   lv_slider_set_value(sliderBacklight, backlightPercent, LV_ANIM_OFF);
-  lv_obj_set_style_bg_color(sliderBacklight, lv_color_hex(0x16342C), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(sliderBacklight, lv_color_hex(0x1B3656), LV_PART_MAIN);
   lv_obj_set_style_bg_color(sliderBacklight, lv_color_hex(COLOR_ACTION), LV_PART_INDICATOR);
   lv_obj_set_style_bg_color(sliderBacklight, lv_color_hex(COLOR_TEXT), LV_PART_KNOB);
   lv_obj_add_event_cb(sliderBacklight, backlightSliderEvent, LV_EVENT_VALUE_CHANGED, nullptr);
@@ -1864,7 +1885,7 @@ static void buildScreenUi() {
   lv_obj_set_size(soundPanel, SCREEN_W - 12, 292);
   lv_obj_align(soundPanel, LV_ALIGN_TOP_MID, 0, 30);
   lblToneVolume = lv_label_create(soundPanel);
-  lv_label_set_text(lblToneVolume, "Volume: 50%  Starting audio\nMsg: Bell  DM: Bell");
+  setReadoutText(lblToneVolume, "Volume: 50%  Starting audio\nMsg: Bell  DM: Bell");
   styleBoundedLabel(lblToneVolume, lv_pct(100), COLOR_TEXT, LV_LABEL_LONG_WRAP);
   lv_obj_align(lblToneVolume, LV_ALIGN_TOP_LEFT, 2, 4);
   sliderToneVolume = lv_slider_create(soundPanel);
@@ -1872,7 +1893,7 @@ static void buildScreenUi() {
   lv_obj_align(sliderToneVolume, LV_ALIGN_TOP_MID, 0, 74);
   lv_slider_set_range(sliderToneVolume, 0, 100);
   lv_slider_set_value(sliderToneVolume, toneVolumePercent, LV_ANIM_OFF);
-  lv_obj_set_style_bg_color(sliderToneVolume, lv_color_hex(0x16342C), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(sliderToneVolume, lv_color_hex(0x1B3656), LV_PART_MAIN);
   lv_obj_set_style_bg_color(sliderToneVolume, lv_color_hex(COLOR_ACTION), LV_PART_INDICATOR);
   lv_obj_set_style_bg_color(sliderToneVolume, lv_color_hex(COLOR_TEXT), LV_PART_KNOB);
   lv_obj_add_event_cb(sliderToneVolume, toneVolumeSliderEvent, LV_EVENT_VALUE_CHANGED, nullptr);
@@ -1886,7 +1907,7 @@ static void buildScreenUi() {
   lv_obj_set_size(dropdownToneMessage, SCREEN_W - 42, 34);
   lv_obj_align(dropdownToneMessage, LV_ALIGN_TOP_MID, 0, 130);
   styleDarkObject(dropdownToneMessage, COLOR_INPUT, COLOR_TEXT);
-  styleDarkBorder(dropdownToneMessage, 0x2F705F);
+  styleDarkBorder(dropdownToneMessage, 0x39638D);
   lv_obj_set_style_radius(dropdownToneMessage, 6, 0);
   lv_obj_add_event_cb(dropdownToneMessage, toneMessageDropdownEvent, LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_t* lblDirectTone = lv_label_create(soundPanel);
@@ -1899,7 +1920,7 @@ static void buildScreenUi() {
   lv_obj_set_size(dropdownToneDirect, SCREEN_W - 42, 34);
   lv_obj_align(dropdownToneDirect, LV_ALIGN_TOP_MID, 0, 194);
   styleDarkObject(dropdownToneDirect, COLOR_INPUT, COLOR_TEXT);
-  styleDarkBorder(dropdownToneDirect, 0x2F705F);
+  styleDarkBorder(dropdownToneDirect, 0x39638D);
   lv_obj_set_style_radius(dropdownToneDirect, 6, 0);
   lv_obj_add_event_cb(dropdownToneDirect, toneDirectDropdownEvent, LV_EVENT_VALUE_CHANGED, nullptr);
   makeSmallButton(soundPanel, "Test Msg", 8, 248, 106, [](lv_event_t*) {
@@ -1916,7 +1937,7 @@ static void buildScreenUi() {
   lv_obj_set_size(batteryPanel, SCREEN_W - 12, 470);
   lv_obj_align(batteryPanel, LV_ALIGN_TOP_MID, 0, 24);
   lblBatteryStats = lv_label_create(batteryPanel);
-  lv_label_set_text(lblBatteryStats, "Reading S3 battery...");
+  setReadoutText(lblBatteryStats, "Reading S3 battery...");
   styleBoundedLabel(lblBatteryStats, lv_pct(100), COLOR_TEXT, LV_LABEL_LONG_WRAP);
 
   buildNavBar(screen);
@@ -1926,9 +1947,9 @@ static void buildScreenUi() {
   lv_obj_set_size(keyboard, SCREEN_W, 132);
   lv_obj_align(keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
   styleDarkObject(keyboard, COLOR_PANEL);
-  lv_obj_set_style_bg_color(keyboard, lv_color_hex(0x111A18), LV_PART_ITEMS);
+  lv_obj_set_style_bg_color(keyboard, lv_color_hex(0x102238), LV_PART_ITEMS);
   lv_obj_set_style_text_color(keyboard, lv_color_hex(COLOR_TEXT), LV_PART_ITEMS);
-  lv_obj_set_style_border_color(keyboard, lv_color_hex(0x315B50), LV_PART_ITEMS);
+  lv_obj_set_style_border_color(keyboard, lv_color_hex(0x365B82), LV_PART_ITEMS);
   lv_obj_set_style_border_width(keyboard, 1, LV_PART_ITEMS);
   lv_obj_add_flag(keyboard, LV_OBJ_FLAG_HIDDEN);
   refreshChannelUiLabels();

@@ -67,6 +67,8 @@ or mismatched settings, command timeouts, save masks and rate/output/power order
 GPS sharing checks cover stale/invalid fixes, local-only packet destinations,
 queue-result matching, retry cadence, timer wrap, UTC timestamps, units and
 preservation of unrelated Heltec position settings.
+Display formatting checks cover separate label/value colors, multiple readings
+on a line, MAC/time colons, literal hash characters and bounded output.
 
 Host-side USB protocol tests run without connecting to a device:
 
@@ -75,12 +77,13 @@ python -m pip install pyserial Pillow pyshp
 python -m unittest discover -s tests -p "test_*.py"
 ```
 
-The optional full offline-map browser exercise additionally requires Playwright
-and its Chromium runtime:
+The optional browser checks for settings/navigation and offline maps additionally
+require Playwright and its Chromium runtime:
 
 ```powershell
 python -m pip install playwright
 python -m playwright install chromium
+python tests/test_web_navigation.py
 python tests/test_web_offline_map.py
 ```
 

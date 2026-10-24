@@ -1,7 +1,8 @@
-# Home dashboard (v0.1.89)
+# Home dashboard
 
-The touchscreen Home page uses a charcoal-to-green background, quiet rounded
-cards, a restrained mint accent and a consistent Montserrat type hierarchy.
+The touchscreen Home page uses navy backgrounds, rounded blue panels,
+light blue accents and a consistent Montserrat type hierarchy. The layout was
+introduced in v0.1.89; v0.1.97 aligns it with the [shared blue theme](WEB_UI.md).
 The heading introduces a status overview, with a full-width radio card, two
 larger battery/node readings, and a full-width message preview. Cards share
 the same surface, border, corner radius, chevron and press feedback. Messages

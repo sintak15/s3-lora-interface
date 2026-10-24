@@ -42,6 +42,7 @@
 #include "src/GpsUbx.h"
 #include "src/GpsConfig.h"
 #include "src/GpsRelay.h"
+#include "src/DiagnosticText.h"
 
 #ifdef FIRMWARE_RUN_TESTS
 #include "src/tests/ReliabilityTests.h"
@@ -53,6 +54,7 @@
 #include "src/tests/GpsUbxTests.h"
 #include "src/tests/GpsConfigTests.h"
 #include "src/tests/GpsRelayTests.h"
+#include "src/tests/DiagnosticTextTests.h"
 #include "src/tests/NotificationSoundTests.h"
 #endif
 

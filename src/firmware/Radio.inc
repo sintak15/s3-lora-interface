@@ -69,17 +69,17 @@ static void refreshChannelUiLabels() {
   }
   if (lblPublicChannelStats) {
     snprintf(text, sizeof(text), "Ch %u: %s", (unsigned)PUBLIC_CHANNEL_INDEX, publicName);
-    lv_label_set_text(lblPublicChannelStats, text);
+    setReadoutText(lblPublicChannelStats, text);
   }
   if (lblPrivateChannelStats) {
     uint8_t privateIndex = privateChannelIndex >= 0 ? (uint8_t)privateChannelIndex : 1;
     snprintf(text, sizeof(text), "Ch %u: %s", (unsigned)privateIndex, privateName);
-    lv_label_set_text(lblPrivateChannelStats, text);
+    setReadoutText(lblPrivateChannelStats, text);
   }
   if (lblPrivateChannelHint) {
     uint8_t privateIndex = privateChannelIndex >= 0 ? (uint8_t)privateChannelIndex : 1;
     snprintf(text, sizeof(text), "Ch %u on radio: %s", (unsigned)privateIndex, privateName);
-    lv_label_set_text(lblPrivateChannelHint, text);
+    setReadoutText(lblPrivateChannelHint, text);
   }
   if (taPublicInput) {
     formatChannelPrompt(publicName, text, sizeof(text));
@@ -798,16 +798,16 @@ static void refreshMessageDiagView() {
            bLabel,
            txText);
 
-  if (lblMsgDiagStatus) lv_label_set_text(lblMsgDiagStatus, msgDiagStatus);
-  if (lblMsgDiagDetail) lv_label_set_text(lblMsgDiagDetail, msgDiagDetail);
+  if (lblMsgDiagStatus) setReadoutText(lblMsgDiagStatus, msgDiagStatus);
+  if (lblMsgDiagDetail) setReadoutText(lblMsgDiagDetail, msgDiagDetail);
 }
 
 static bool sendMessageDiagTo(uint32_t nodeNum, const char* targetName) {
   if (!isDirectAddress(nodeNum)) {
     strlcpy(msgDiagStatus, "Select a valid favorite node.", sizeof(msgDiagStatus));
     strlcpy(msgDiagDetail, "No direct target selected.", sizeof(msgDiagDetail));
-    if (lblMsgDiagStatus) lv_label_set_text(lblMsgDiagStatus, msgDiagStatus);
-    if (lblMsgDiagDetail) lv_label_set_text(lblMsgDiagDetail, msgDiagDetail);
+    if (lblMsgDiagStatus) setReadoutText(lblMsgDiagStatus, msgDiagStatus);
+    if (lblMsgDiagDetail) setReadoutText(lblMsgDiagDetail, msgDiagDetail);
     return false;
   }
   const char* text = taMsgDiagMessage ? lv_textarea_get_text(taMsgDiagMessage) : nullptr;
@@ -825,8 +825,8 @@ static bool sendMessageDiagTo(uint32_t nodeNum, const char* targetName) {
     snprintf(msgDiagStatus, sizeof(msgDiagStatus), "Send failed to %s", targetName && targetName[0] ? targetName : "favorite");
   }
   formatMessageDiagReadout(msgDiagDetail, sizeof(msgDiagDetail));
-  if (lblMsgDiagStatus) lv_label_set_text(lblMsgDiagStatus, msgDiagStatus);
-  if (lblMsgDiagDetail) lv_label_set_text(lblMsgDiagDetail, msgDiagDetail);
+  if (lblMsgDiagStatus) setReadoutText(lblMsgDiagStatus, msgDiagStatus);
+  if (lblMsgDiagDetail) setReadoutText(lblMsgDiagDetail, msgDiagDetail);
   return ok;
 }
 

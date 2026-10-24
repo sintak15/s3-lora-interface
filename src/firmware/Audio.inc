@@ -137,7 +137,7 @@ static void updateToneVolumeLabel() {
   char text[176];
   snprintf(text, sizeof(text), "Volume: %u%%  %s\nMsg: %s  DM: %s",
            toneVolumePercent, toneAudioStateLabel(), toneStyleName(toneMessageStyle), toneStyleName(toneDirectStyle));
-  lv_label_set_text(lblToneVolume, text);
+  setReadoutText(lblToneVolume, text);
 }
 
 static void toneVolumeSliderEvent(lv_event_t* e) {

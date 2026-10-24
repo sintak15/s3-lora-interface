@@ -223,7 +223,7 @@ static void renderWifiScanResults(int16_t status) {
     lv_obj_t* btn = lv_btn_create(listWifiScan);
     lv_obj_set_size(btn, lv_pct(100), 42);
     styleDarkObject(btn, COLOR_PANEL);
-    styleDarkBorder(btn, 0x2F705F);
+    styleDarkBorder(btn, 0x39638D);
     lv_obj_t* label = lv_label_create(btn);
     char itemText[64];
     snprintf(itemText, sizeof(itemText), "%s  %ld dBm", wifiScanSsids[i], (long)wifiScanRssi[i]);
@@ -264,7 +264,7 @@ static void renderStoredWifiScanResults(int16_t status) {
     lv_obj_t* btn = lv_btn_create(listWifiScan);
     lv_obj_set_size(btn, lv_pct(100), 42);
     styleDarkObject(btn, COLOR_PANEL);
-    styleDarkBorder(btn, 0x2F705F);
+    styleDarkBorder(btn, 0x39638D);
     lv_obj_t* label = lv_label_create(btn);
     char itemText[64];
     snprintf(itemText, sizeof(itemText), "%s  %ld dBm", wifiScanSsids[i], (long)wifiScanRssi[i]);

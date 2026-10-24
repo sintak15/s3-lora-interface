@@ -61,7 +61,7 @@ static void refreshDashboardLabels() {
   if (lblHomeGps) {
     bool fresh = MapNavigation::fresh(gpsStats.valid, gpsStats.lastUpdateMs, millis());
     lv_label_set_text(lblHomeGps, fresh ? "GPS ready" : (gpsSatsPresent() ? "Finding GPS" : "GPS waiting"));
-    lv_obj_set_style_text_color(lblHomeGps, lv_color_hex(fresh ? 0xA9D4B7 : 0xA8BCB0), 0);
+    lv_obj_set_style_text_color(lblHomeGps, lv_color_hex(fresh ? 0x85BFFF : 0xA1B5CE), 0);
   }
   if (lblHomeNodes) {
     snprintf(line, sizeof(line), "%u", (unsigned)nodeCount);
@@ -81,7 +81,7 @@ static void refreshDashboardLabels() {
     if (!localBattery.gaugePresent) strlcpy(line, "--", sizeof(line));
     else snprintf(line, sizeof(line), "%d%%", localBattery.percent);
     lv_label_set_text(lblHomePower, line);
-    uint32_t color = !localBattery.gaugePresent ? 0xA8BCB0 : localBattery.batteryCritical ? 0xF29A91 : localBattery.batteryLow ? 0xE2C17E : 0xEDF5EF;
+    uint32_t color = !localBattery.gaugePresent ? 0xA1B5CE : localBattery.batteryCritical ? 0xF29A91 : localBattery.batteryLow ? 0xE2C17E : 0xF4F8FF;
     lv_obj_set_style_text_color(lblHomePower, lv_color_hex(color), 0);
     if (lblHomePowerDetail) {
       if (!localBattery.gaugePresent) strlcpy(line, "No gauge", sizeof(line));
@@ -95,7 +95,7 @@ static void refreshDashboardLabels() {
       if (localBattery.gaugePresent) lv_obj_clear_flag(homePowerBar, LV_OBJ_FLAG_HIDDEN);
       else lv_obj_add_flag(homePowerBar, LV_OBJ_FLAG_HIDDEN);
       lv_bar_set_value(homePowerBar, constrain(localBattery.percent, 0, 100), LV_ANIM_OFF);
-      lv_obj_set_style_bg_color(homePowerBar, lv_color_hex(localBattery.batteryLow || localBattery.batteryCritical ? color : 0x8DCEAA), LV_PART_INDICATOR);
+      lv_obj_set_style_bg_color(homePowerBar, lv_color_hex(localBattery.batteryLow || localBattery.batteryCritical ? color : 0x65B0FF), LV_PART_INDICATOR);
     }
   }
   if (lblMsgPublic) {
@@ -234,7 +234,7 @@ static void refreshScreenUi() {
              (unsigned)SD_APPEND_QUEUE_DEPTH,
              (unsigned long)sdAppendFallbacks,
              (unsigned long)framesDecoded);
-    lv_label_set_text(lblSystemInterface, interfaceText);
+    setReadoutText(lblSystemInterface, interfaceText);
   }
 
   if (currentPage == pageSystemSerial && lblSystemSerial) {
@@ -272,7 +272,7 @@ static void refreshScreenUi() {
              (unsigned long)heartbeatCount,
              (unsigned long)apiResyncCount,
              serialPeek);
-    lv_label_set_text(lblSystemSerial, serialText);
+    setReadoutText(lblSystemSerial, serialText);
   }
 
   if (currentPage == pageSystemRadio && lblSystemRadio) {
@@ -298,7 +298,7 @@ static void refreshScreenUi() {
              (unsigned long)otherFrames,
              (unsigned long)encryptedPackets,
              (unsigned long)lastPortNum);
-    lv_label_set_text(lblSystemRadio, radioText);
+    setReadoutText(lblSystemRadio, radioText);
   }
 
   if (currentPage == pageNodes && (pageForce || isUiDirty(UI_DIRTY_NODES))) {
@@ -374,7 +374,7 @@ static void refreshScreenUi() {
     bool textChanged = strcmp(nodeDetailLastText, detailText) != 0;
     lv_coord_t scrollY = resetScroll ? 0 : lv_obj_get_scroll_y(taNodeDetail);
     if (textChanged) {
-      lv_textarea_set_text(taNodeDetail, detailText);
+      setReadoutArea(taNodeDetail, detailText);
       strlcpy(nodeDetailLastText, detailText, sizeof(nodeDetailLastText));
     }
     if (textChanged || resetScroll) {
@@ -474,7 +474,7 @@ static void refreshScreenUi() {
              weakest ? weakest->snr : 0.0f,
              stats.channelUtilization,
              stats.airUtilTx);
-    lv_label_set_text(lblMeshHealth, healthText);
+    setReadoutText(lblMeshHealth, healthText);
   }
 
   if (swWifiEnabled) {
@@ -498,7 +498,7 @@ static void refreshScreenUi() {
              wifiState,
              wifiEnabled ? (wifiApMode ? interfaceApSsid : wifiLocalSsid) : "-",
              wifiIp.c_str());
-    lv_label_set_text(lblWifiState, wifiStateText);
+    setReadoutText(lblWifiState, wifiStateText);
   }
 
   if (currentPage == pageWifiStats && lblWifiStats) {
@@ -537,7 +537,7 @@ static void refreshScreenUi() {
              (unsigned long)wifiAge,
              (unsigned long)wifiToggleCount,
              wifiEnabled ? "listening" : "stopped");
-    lv_label_set_text(lblWifiStats, wifiStatsText);
+    setReadoutText(lblWifiStats, wifiStatsText);
   }
 
   if (sliderBacklight && (uint8_t)lv_slider_get_value(sliderBacklight) != backlightPercent) {
@@ -557,7 +557,7 @@ static void refreshScreenUi() {
              "Brightness: %u%%\nPWM: %s",
              backlightPercent,
              backlightPwmReady ? "LEDC" : "analog fallback");
-    lv_label_set_text(lblBacklight, backlightText);
+    setReadoutText(lblBacklight, backlightText);
   }
 
   if (currentPage == pageSound && lblToneVolume) {
@@ -643,7 +643,7 @@ static void refreshScreenUi() {
                (unsigned long)(ESP.getMinFreeHeap() / 1024),
                (unsigned long)(ESP.getFreePsram() / 1024));
     }
-    lv_label_set_text(lblBatteryStats, batteryText);
+    setReadoutText(lblBatteryStats, batteryText);
   }
 
   if (currentPage == pageSystemGps && lblGpsStats) {
@@ -758,7 +758,7 @@ static void refreshScreenUi() {
                (unsigned long)localGps.failedChecksum(),
                (unsigned long)localGps.sentencesWithFix(), visible, used);
     }
-    lv_label_set_text(lblGpsStats, gpsText);
+    setReadoutText(lblGpsStats, gpsText);
   }
 
   refreshGpsConfigUi();

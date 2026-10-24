@@ -80,15 +80,15 @@ static void refreshGpsConfigUi() {
   char text[96];
   if (current.has(Field::Rate)) snprintf(text, sizeof(text), "Update rate\nCurrent: %.1f Hz", 1000.0 / current.period());
   else strlcpy(text, "Update rate\nCurrent: unknown", sizeof(text));
-  lv_label_set_text(gpsConfigCurrentLabels[0], text);
+  setReadoutText(gpsConfigCurrentLabels[0], text);
   snprintf(text, sizeof(text), "Navigation mode\nCurrent: %s", current.has(Field::Navigation) ? modelName(current.navigation[2]) : "unknown");
-  lv_label_set_text(gpsConfigCurrentLabels[1], text);
+  setReadoutText(gpsConfigCurrentLabels[1], text);
   snprintf(text, sizeof(text), "SBAS assistance\nCurrent: %s", current.has(Field::Sbas) ? ((current.sbas[0] & 1) ? "Enabled" : "Disabled") : "unknown");
-  lv_label_set_text(gpsConfigCurrentLabels[2], text);
+  setReadoutText(gpsConfigCurrentLabels[2], text);
   snprintf(text, sizeof(text), "Power mode\nCurrent: %s", current.has(Field::Power) ? powerName(current.power[1]) : "unknown");
-  lv_label_set_text(gpsConfigCurrentLabels[3], text);
+  setReadoutText(gpsConfigCurrentLabels[3], text);
   snprintf(text, sizeof(text), "NMEA output\nCurrent: %s", profileName(current.profile()));
-  lv_label_set_text(gpsConfigCurrentLabels[4], text);
+  setReadoutText(gpsConfigCurrentLabels[4], text);
   for (auto* dropdown : gpsConfigDropdowns) setGpsControlEnabled(dropdown, !gpsConfig.busy());
   setGpsControlEnabled(btnGpsConfigRead, !gpsConfig.busy());
   for (auto* button : gpsConfigApplyButtons) setGpsControlEnabled(button, !gpsConfig.busy() && validation == Error::None);
@@ -106,7 +106,7 @@ static void refreshGpsConfigUi() {
              gpsRelaySetupBusy() ? "Checking Heltec settings..." :
              gpsRelaySetupError()[0] ? gpsRelaySetupError() : GpsRelay::stateText(gpsRelayState()),
              (unsigned long)gpsRelay.queued, (unsigned long)gpsRelay.accepted);
-    lv_label_set_text(lblGpsRelay, shareText);
+    setReadoutText(lblGpsRelay, shareText);
   }
 }
 

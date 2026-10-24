@@ -500,7 +500,7 @@ static void serviceMapRenderWorker() {
     cachedMapTileFound = false;
     mapCanvasCached = false;
     if (mapCanvas) {
-      lv_canvas_fill_bg(mapCanvas, lv_color_hex(0x07100D), LV_OPA_COVER);
+      lv_canvas_fill_bg(mapCanvas, lv_color_hex(0x09182A), LV_OPA_COVER);
       lv_obj_invalidate(mapCanvas);
     }
     strlcpy(mapCacheStatus, result.status[0] ? result.status : "render failed", sizeof(mapCacheStatus));
@@ -524,7 +524,7 @@ static bool renderOfflineTileMap(double lat, double lon, int zoom, char* centerP
   int actual = checked ? MapCoverage::choose(mapCoverage, zoom) : -1;
   if (checked && actual < 0) {
     mapCanvasCached = false;
-    lv_canvas_fill_bg(mapCanvas, lv_color_hex(0x07100D), LV_OPA_COVER);
+    lv_canvas_fill_bg(mapCanvas, lv_color_hex(0x09182A), LV_OPA_COVER);
     strlcpy(mapCacheStatus, "no usable coverage", sizeof(mapCacheStatus));
     return false;
   }

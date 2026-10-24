@@ -32,7 +32,7 @@ static void runHomeUiTests() {
     if (!lv_obj_has_flag(card, LV_OBJ_FLAG_CLICKABLE)) continue;
     ++cards; lv_area_t area; lv_obj_get_coords(card, &area);
     bounds &= lv_obj_get_height(card) >= 44 && area.x1 >= page.x1 && area.x2 <= page.x2 && area.y1 >= page.y1 && area.y2 <= page.y2;
-    uniform &= lv_obj_get_style_bg_color(card, LV_PART_MAIN).full == lv_color_hex(0x111E1B).full;
+    uniform &= lv_obj_get_style_bg_color(card, LV_PART_MAIN).full == lv_color_hex(0x102238).full;
     for (uint32_t j=0; j<lv_obj_get_child_cnt(card); ++j) {
       lv_area_t child; lv_obj_get_coords(lv_obj_get_child(card,j), &child);
       bounds &= child.x1 >= area.x1 && child.x2 <= area.x2 && child.y1 >= area.y1 && child.y2 <= area.y2;

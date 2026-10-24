@@ -4,8 +4,13 @@ A touchscreen and local web interface for a Heltec Meshtastic radio, built on
 an ESP32-S3 CYD. Read messages, check radio and battery status, browse nodes,
 and use offline maps without depending on internet access.
 
-**Current firmware: v0.1.96.** The CYD runs this firmware; the Heltec runs
+**Current firmware: v0.1.97.** The CYD runs this firmware; the Heltec runs
 Meshtastic and handles the LoRa radio connection.
+
+Both interfaces use a blue theme. Web Settings opens to five searchable
+categories and one editor at a time; Health and SD storage keep detailed
+readings under expandable topics. CYD label/value readouts use light blue
+labels and white measurements. See the [web UI and display guide](docs/WEB_UI.md).
 
 ## Pin mapping — quick reference
 

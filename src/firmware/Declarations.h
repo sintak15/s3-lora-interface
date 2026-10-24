@@ -47,6 +47,8 @@ static void rebuildScreenUi(lv_obj_t* targetPage = nullptr);
 static void styleDarkObject(lv_obj_t* obj, uint32_t bg, uint32_t text = COLOR_TEXT);
 static void styleDarkBorder(lv_obj_t* obj, uint32_t color = COLOR_BORDER);
 static void styleBoundedLabel(lv_obj_t* label, lv_coord_t width, uint32_t color = COLOR_TEXT, lv_label_long_mode_t mode = LV_LABEL_LONG_DOT);
+static void setReadoutText(lv_obj_t* label, const char* text);
+static void setReadoutArea(lv_obj_t* area, const char* text);
 static void showPage(lv_obj_t* target, bool remember = true);
 static void ensureWifiScanPage();
 static void detectMapTileRoot(bool logResult = false);

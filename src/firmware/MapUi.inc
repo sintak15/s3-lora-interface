@@ -53,14 +53,14 @@ static void refreshMapUi() {
   char status[80];
   if (selected && !selected->hasPosition) strlcpy(status, "Selected node has no GPS", sizeof(status));
   else snprintf(status, sizeof(status), "%s | %s", source, mapView.follow ? "Following" : "Paused");
-  lv_label_set_text(lblMapStats, status);
+  setReadoutText(lblMapStats, status);
   for (auto* dot : mapDots) if (dot) lv_obj_add_flag(dot, LV_OBJ_FLAG_HIDDEN);
 
   const char* notice = nullptr;
   if (!located) {
     notice = "Waiting for GPS\nor a saved location";
     mapCanvasCached = false;
-    if (mapCanvas) lv_canvas_fill_bg(mapCanvas, lv_color_hex(0x07100D), LV_OPA_COVER);
+    if (mapCanvas) lv_canvas_fill_bg(mapCanvas, lv_color_hex(0x09182A), LV_OPA_COVER);
   } else if (!sdStorage.available || !mapTileRootFound) {
     notice = mapCanvasCached ? "Saved map\nSD tiles unavailable" : "SD map tiles unavailable";
   } else if (mapNavigationTesting) {
@@ -78,11 +78,11 @@ static void refreshMapUi() {
     for (size_t i = 0; i < nodeCount; ++i) {
       if (!nodes[i].hasPosition) continue;
       bool isSelected = selected && nodes[i].num == selected->num;
-      lv_color_t color = lv_color_hex(nodes[i].num == stats.myNodeNum ? 0x00C985 : (isSelected ? 0xFFD166 : 0x68FFC0));
+      lv_color_t color = lv_color_hex(nodes[i].num == stats.myNodeNum ? 0x3B9DFF : (isSelected ? 0xFFD166 : 0x85BFFF));
       placeMapDot(i, cachedMapLat, cachedMapLon, nodes[i].latitude, nodes[i].longitude, cachedMapZoom, color, isSelected ? 14 : 8);
     }
     if (MapNavigation::fresh(gpsStats.valid, gpsStats.lastUpdateMs, millis()))
-      placeMapDot(MAP_DOT_COUNT - 1, cachedMapLat, cachedMapLon, gpsStats.latitude, gpsStats.longitude, cachedMapZoom, lv_color_hex(0x00C985), 10);
+      placeMapDot(MAP_DOT_COUNT - 1, cachedMapLat, cachedMapLon, gpsStats.latitude, gpsStats.longitude, cachedMapZoom, lv_color_hex(0x3B9DFF), 10);
   }
   updateMapScale();
   updateMapCoverageUi();

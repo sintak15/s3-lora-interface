@@ -6,12 +6,12 @@ static void updateMapCoverageUi() {
   if (displayed) snprintf(shown, sizeof(shown), "%d", cachedMapZoom);
   else strlcpy(shown, "--", sizeof(shown));
   snprintf(text, sizeof(text), "At this map center\nRequested %d | View %s", mapView.zoom, shown);
-  lv_label_set_text(lblMapCoverageSummary, text);
+  setReadoutText(lblMapCoverageSummary, text);
   for (int i = 0; i < MapCoverage::levels; ++i) {
     const auto& level = mapCoverage.zooms[i];
     if (valid) snprintf(text, sizeof(text), "Zoom %d: %s (%u/%u)", i + MAP_TILE_MIN_ZOOM, MapCoverage::status(level), level.available(), (unsigned)level.area.count);
     else snprintf(text, sizeof(text), "Zoom %d: %s", i + MAP_TILE_MIN_ZOOM, mapView.hasCenter && sdStorage.available ? "Checking" : "Not checked");
-    lv_label_set_text(lblMapCoverageRows[i], text);
+    setReadoutText(lblMapCoverageRows[i], text);
   }
   if (!mapView.hasCenter) strlcpy(text, "Coverage: location needed", sizeof(text));
   else if (!sdStorage.available || !mapTileRootFound) strlcpy(text, "Coverage: SD unavailable", sizeof(text));
@@ -22,6 +22,6 @@ static void updateMapCoverageUi() {
     if (!actual.complete()) snprintf(text, sizeof(text), "View %d | Partial %u/%u", cachedMapZoom, actual.available(), (unsigned)actual.area.count);
     else snprintf(text, sizeof(text), "View %d | %s", cachedMapZoom, cachedMapZoom < mapView.zoom ? "Coarser map" : "Full area");
   }
-  lv_label_set_text(lblMapCoverage, text);
+  setReadoutText(lblMapCoverage, text);
   lv_obj_move_foreground(lblMapCoverage);
 }

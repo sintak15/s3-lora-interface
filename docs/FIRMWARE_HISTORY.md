@@ -191,3 +191,23 @@ retains its configured mesh position broadcast policy. See [GPS sharing](GPS_SHA
 Wi-Fi installation and one-request migration were verified on October 23, 2026.
 Independent Heltec readback confirmed a fresh external position; its firmware,
 unrelated configuration and channels were preserved.
+
+## Blue theme and focused settings (v0.1.97)
+
+Web Settings moves into the main navigation and opens to five searchable
+categories with 22 individual editors. Existing fields and API operations are
+retained; advanced groups open when a matching search result needs them.
+Drafts and pending passwords survive navigation and background refreshes.
+Health initially shows eight essential readings, with detailed topics folded
+below. Storage similarly separates usage from files and maintenance.
+
+The CYD and browser share navy/blue styling. Structured CYD readouts render
+labels and colons in light blue and readings in white, including battery charge
+rate, GPS, Wi-Fi, radio/serial diagnostics, node details and settings readouts.
+Literal text remains literal under recoloring, and existing amber/red warning
+indicators remain. See the [web UI and display guide](WEB_UI.md).
+
+Wi-Fi installation and read-only desktop/mobile browser checks passed on
+October 23, 2026. CYD preferences, cached Heltec configuration and channels
+matched the pre-update snapshot. The pre-existing GPS-sharing setup requirement
+was preserved; local GPS reception and the radio link were working.
