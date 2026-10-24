@@ -41,6 +41,7 @@
 #include "src/BuildIdentity.h"
 #include "src/GpsUbx.h"
 #include "src/GpsConfig.h"
+#include "src/GpsRelay.h"
 
 #ifdef FIRMWARE_RUN_TESTS
 #include "src/tests/ReliabilityTests.h"
@@ -51,6 +52,7 @@
 #include "src/tests/MapCoverageTests.h"
 #include "src/tests/GpsUbxTests.h"
 #include "src/tests/GpsConfigTests.h"
+#include "src/tests/GpsRelayTests.h"
 #include "src/tests/NotificationSoundTests.h"
 #endif
 
@@ -70,6 +72,7 @@
 #include "src/firmware/UsbTiles.inc"
 #include "src/firmware/UiRefresh.inc"
 #include "src/firmware/Radio.inc"
+#include "src/firmware/GpsRelay.inc"
 #include "src/firmware/Http.inc"
 
 void setup() {
@@ -91,6 +94,7 @@ void setup() {
   SerialGPS.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
   Serial.println("[boot] prefs");
   prefs.begin("s3-lora", false);
+  gpsRelay.enabled = prefs.getBool("gpsShare", false);
   mapView.zoom = MapNavigation::clampZoom(prefs.getUChar("mapZoom", MAP_TILE_MAX_ZOOM));
   wifiApMode = prefs.getBool("wifiApMode", true);
   readableTextMode = prefs.getBool("readableText", false);
@@ -166,6 +170,7 @@ void loop() {
   pollLoRa();
   serviceRadioApiKeepalive();
   serviceConfigRequests();
+  serviceGpsRelay();
   serviceOneTimeChannelProvision();
   if (wifiEnabled) server.handleClient();
   serviceSdDownload();

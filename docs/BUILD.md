@@ -64,6 +64,9 @@ sound-selection previews. Sound checks preserve numeric preference IDs and
 verify bounded pitches, duration and envelopes.
 GPS checks cover UBX framing, read/ACK/readback sequences, partial reads, rejected
 or mismatched settings, command timeouts, save masks and rate/output/power ordering.
+GPS sharing checks cover stale/invalid fixes, local-only packet destinations,
+queue-result matching, retry cadence, timer wrap, UTC timestamps, units and
+preservation of unrelated Heltec position settings.
 
 Host-side USB protocol tests run without connecting to a device:
 
@@ -175,6 +178,7 @@ Implementation lives in `src/firmware/`:
 | `Runtime.inc` | Runtime buffer allocation |
 | `Storage.inc` | SD storage, logging, and append worker |
 | `Gps.inc`, `Battery.inc` | Local GPS, fuel gauge, and diagnostics |
+| `GpsRelay.inc` | GPS sharing over Protobuf UART and verified Heltec setup |
 | `GpsUi.inc` | GPS Config and Adv pages, shared draft and confirmed-setting display |
 | `Network.inc` | Event logs, preferences, WiFi, and scanning |
 | `DisplaySettings.inc`, `Audio.inc` | Display settings and notification audio |
@@ -196,6 +200,8 @@ are explicit, rather than depending on Arduino-generated prototypes.
 `src/NotificationSound.h` owns sound IDs, labels, patterns and rounded envelopes.
 `src/GpsConfig.h` owns the portable GPS command state machine and validation;
 `src/GpsUbx.h` builds and decodes bounded UBX packets.
+`src/GpsRelay.h` owns GPS sharing freshness/cadence, local packet construction,
+position conversion and bounded setup timing.
 The sketch-level `pb*.h` forwarding headers select the vendored nanopb runtime
 for both application code and generated Meshtastic headers.
 

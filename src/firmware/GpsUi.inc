@@ -94,6 +94,20 @@ static void refreshGpsConfigUi() {
   for (auto* button : gpsConfigApplyButtons) setGpsControlEnabled(button, !gpsConfig.busy() && validation == Error::None);
   for (auto* button : gpsConfigSaveButtons)
     setGpsControlEnabled(button, !gpsConfig.busy() && gpsConfig.canSave && !gpsConfigDraft.any());
+  if (switchGpsRelay) {
+    if (gpsRelay.enabled) lv_obj_add_state(switchGpsRelay, LV_STATE_CHECKED);
+    else lv_obj_clear_state(switchGpsRelay, LV_STATE_CHECKED);
+    setGpsControlEnabled(switchGpsRelay, !gpsRelaySetupBusy());
+  }
+  setGpsControlEnabled(btnGpsRelaySetup, !gpsRelaySetupBusy());
+  if (lblGpsRelay) {
+    char shareText[200];
+    snprintf(shareText, sizeof(shareText), "%s\nQueued: %lu  Accepted: %lu",
+             gpsRelaySetupBusy() ? "Checking Heltec settings..." :
+             gpsRelaySetupError()[0] ? gpsRelaySetupError() : GpsRelay::stateText(gpsRelayState()),
+             (unsigned long)gpsRelay.queued, (unsigned long)gpsRelay.accepted);
+    lv_label_set_text(lblGpsRelay, shareText);
+  }
 }
 
 static lv_obj_t* makeGpsConfigButton(lv_obj_t* parent, const char* title, int x, int y, int width, lv_event_cb_t callback) {
@@ -146,7 +160,7 @@ static void buildGpsConfigUi() {
   makePageTitle(pageGpsAdvanced, "GPS Adv");
   makePageScrollable(pageGpsAdvanced);
   panel = makePanel(pageGpsAdvanced);
-  lv_obj_set_size(panel, SCREEN_W - 12, 470);
+  lv_obj_set_size(panel, SCREEN_W - 12, 825);
   lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 26);
   gpsConfigStatusLabels[1] = lv_label_create(panel);
   styleBoundedLabel(gpsConfigStatusLabels[1], lv_pct(100), COLOR_TEXT, LV_LABEL_LONG_WRAP);
@@ -159,5 +173,26 @@ static void buildGpsConfigUi() {
   lv_obj_align(advancedHint, LV_ALIGN_TOP_LEFT, 2, 278);
   gpsConfigApplyButtons[1] = makeGpsConfigButton(panel, "Apply", 2, 408, 98, applyGpsConfigDraft);
   gpsConfigSaveButtons[1] = makeGpsConfigButton(panel, "Save", 106, 408, 98, saveGpsConfig);
+  lv_obj_t* shareTitle = lv_label_create(panel);
+  lv_label_set_text(shareTitle, "Share GPS\nto Heltec");
+  styleBoundedLabel(shareTitle, 132, COLOR_TEXT, LV_LABEL_LONG_WRAP);
+  lv_obj_align(shareTitle, LV_ALIGN_TOP_LEFT, 2, 480);
+  switchGpsRelay = lv_switch_create(panel);
+  lv_obj_set_size(switchGpsRelay, 52, 30);
+  lv_obj_align(switchGpsRelay, LV_ALIGN_TOP_RIGHT, -2, 480);
+  lv_obj_add_event_cb(switchGpsRelay, [](lv_event_t* event) {
+    setGpsRelayEnabled(lv_obj_has_state(lv_event_get_target(event), LV_STATE_CHECKED));
+    forcePageRefresh = true;
+  }, LV_EVENT_VALUE_CHANGED, nullptr);
+  lblGpsRelay = lv_label_create(panel);
+  styleBoundedLabel(lblGpsRelay, lv_pct(100), COLOR_MUTED, LV_LABEL_LONG_WRAP);
+  lv_obj_align(lblGpsRelay, LV_ALIGN_TOP_LEFT, 2, 530);
+  btnGpsRelaySetup = makeGpsConfigButton(panel, "Use CYD GPS", 2, 640, SCREEN_W - 38, [](lv_event_t*) {
+    prepareGpsRelay(); forcePageRefresh = true;
+  });
+  lv_obj_t* shareHint = lv_label_create(panel);
+  lv_label_set_text(shareHint, "Setup switches Heltec to external GPS, verifies settings, then enables sharing. Heltec may restart; retry setup if needed. Remove the GPS-to-Heltec wire after verification. Sharing needs the CYD running.");
+  styleBoundedLabel(shareHint, lv_pct(100), COLOR_MUTED, LV_LABEL_LONG_WRAP);
+  lv_obj_align(shareHint, LV_ALIGN_TOP_LEFT, 2, 700);
   syncGpsConfigDraft();
 }

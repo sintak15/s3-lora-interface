@@ -294,6 +294,7 @@ static void cacheHeltecConfig(const meshtastic_Config& config) {
     case meshtastic_Config_position_tag:
       heltecConfig.position = config.payload_variant.position;
       heltecConfig.hasPosition = true;
+      onGpsRelayConfig(true);
       appendPacketEvent("[config] position config cached\n");
       break;
     case meshtastic_Config_power_tag:
@@ -338,6 +339,7 @@ static void cacheHeltecModuleConfig(const meshtastic_ModuleConfig& moduleConfig)
     case meshtastic_ModuleConfig_serial_tag:
       heltecConfig.serial = moduleConfig.payload_variant.serial;
       heltecConfig.hasSerial = true;
+      onGpsRelayConfig(false);
       appendPacketEvent("[config] serial module cached\n");
       break;
     case meshtastic_ModuleConfig_external_notification_tag:
@@ -990,7 +992,7 @@ static bool sendConfigRequest() {
   uint8_t out[64];
   pb_ostream_t stream = pb_ostream_from_buffer(out, sizeof(out));
   if (!pb_encode(&stream, meshtastic_ToRadio_fields, &toRadio)) return false;
-  writeStreamFrame(out, stream.bytes_written);
+  if (!writeStreamFrame(out, stream.bytes_written)) return false;
   lastConfigRequestMs = millis();
   if (configRequestCount < 255) configRequestCount++;
   appendLine(eventLog, LOG_SIZE, "[local] requested Heltec config\n");
@@ -1142,8 +1144,7 @@ static bool sendLocalAdmin(const meshtastic_AdminMessage& admin) {
   uint8_t out[512];
   pb_ostream_t stream = pb_ostream_from_buffer(out, sizeof(out));
   if (!pb_encode(&stream, meshtastic_ToRadio_fields, &toRadio)) return false;
-  writeStreamFrame(out, stream.bytes_written);
-  return true;
+  return writeStreamFrame(out, stream.bytes_written);
 }
 
 static bool sendHeltecReboot(uint8_t seconds) {
@@ -2013,6 +2014,7 @@ static void decodeFromRadio(const uint8_t* payload, size_t len) {
   if (fromRadio.which_payload_variant == meshtastic_FromRadio_packet_tag) {
     handleDecodedPacket(fromRadio.packet);
   } else if (fromRadio.which_payload_variant == meshtastic_FromRadio_my_info_tag) {
+    if (stats.myNodeNum && stats.myNodeNum != fromRadio.my_info.my_node_num) resetGpsRelayLink();
     stats.myNodeNum = fromRadio.my_info.my_node_num;
     char line[96];
     snprintf(line, sizeof(line), "[radio] connected as !%08lX\n", (unsigned long)stats.myNodeNum);
@@ -2066,6 +2068,7 @@ static void decodeFromRadio(const uint8_t* payload, size_t len) {
     appendPacketEvent(line);
   } else if (fromRadio.which_payload_variant == meshtastic_FromRadio_queueStatus_tag) {
     const auto& queue = fromRadio.queueStatus;
+    if (gpsRelay.queueResult(queue.mesh_packet_id, queue.res)) forcePageRefresh = true;
     TxRecord* record = findTxRecord(queue.mesh_packet_id);
     if (record && record->delivery != FieldStatus::Delivery::Acknowledged && record->delivery != FieldStatus::Delivery::Failed) {
       record->delivery = FieldStatus::queueResult(record->delivery, queue.res);
@@ -2094,7 +2097,12 @@ static void decodeFromRadio(const uint8_t* payload, size_t len) {
       cacheHeltecModuleConfig(fromRadio.moduleConfig);
     } else {
       appendPacketEvent("[config] received config complete\n");
+      onGpsRelayConfigComplete(fromRadio.config_complete_id);
     }
+  } else if (fromRadio.which_payload_variant == meshtastic_FromRadio_rebooted_tag && fromRadio.rebooted) {
+    resetGpsRelayLink();
+    stats.myNodeNum = 0;
+    sendConfigRequest();
   } else {
     otherFrames++;
     appendPacketEvent("[radio] other FromRadio frame\n");

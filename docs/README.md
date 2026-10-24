@@ -10,6 +10,7 @@ historical.
 - [Notification boops, pops and audio diagnostics](AUDIO.md)
 - [Battery percentage, learning and runtime estimates](BATTERY_STATS.md)
 - [GPS Config and Adv settings](GPS_CONFIG.md)
+- [CYD GPS sharing and removing the split wire](GPS_SHARING.md)
 - [GPS wiring, diagnostics and USB control](GPS_DIAGNOSTICS.md)
 - [Heltec firmware updates and installed-loader limits](HELTEC_UPDATES.md)
 - [Home dashboard](HOME_DASHBOARD.md)

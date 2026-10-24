@@ -180,3 +180,14 @@ See [GPS configuration and installation](GPS_CONFIG.md). The production build
 was flashed on October 23, 2026; USB identity and a full ten-field receiver read
 passed without changing GPS settings. Touchscreen Apply/Save and persistence
 after receiver power removal remain untested.
+
+## CYD GPS sharing (v0.1.96)
+
+The CYD can provide external positions over the existing Heltec Protobuf UART,
+removing the need to split GPS TX. GPS Config > Adv adds verified Heltec setup
+and a persisted sharing switch. Only fresh fixes are forwarded, at most once
+per 15 seconds, addressed locally rather than directly broadcast. The Heltec
+retains its configured mesh position broadcast policy. See [GPS sharing](GPS_SHARING.md).
+Wi-Fi installation and one-request migration were verified on October 23, 2026.
+Independent Heltec readback confirmed a fresh external position; its firmware,
+unrelated configuration and channels were preserved.

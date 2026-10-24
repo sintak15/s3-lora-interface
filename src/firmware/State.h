@@ -14,6 +14,11 @@ TFT_eSPI tft;
 TinyGPSPlus localGps;
 TinyGPSCustom gpsGpInView(localGps, "GPGSV", 3);
 TinyGPSCustom gpsGnInView(localGps, "GNGSV", 3);
+TinyGPSCustom gpsGpStatus(localGps, "GPRMC", 2), gpsGnStatus(localGps, "GNRMC", 2);
+TinyGPSCustom gpsGpQuality(localGps, "GPGGA", 6), gpsGnQuality(localGps, "GNGGA", 6);
+TinyGPSCustom gpsGpFixType(localGps, "GPGSA", 2), gpsGnFixType(localGps, "GNGSA", 2);
+static GpsRelay::Fix gpsRelayFix;
+static GpsRelay::Controller gpsRelay;
 
 struct NodeRecord {
   uint32_t num = 0;
@@ -635,6 +640,9 @@ static lv_obj_t* gpsConfigDropdowns[5] = {};
 static lv_obj_t* gpsConfigApplyButtons[2] = {};
 static lv_obj_t* gpsConfigSaveButtons[2] = {};
 static lv_obj_t* btnGpsConfigRead = nullptr;
+static lv_obj_t* switchGpsRelay = nullptr;
+static lv_obj_t* lblGpsRelay = nullptr;
+static lv_obj_t* btnGpsRelaySetup = nullptr;
 static lv_obj_t* pageWifi = nullptr;
 static lv_obj_t* pageWifiStats = nullptr;
 static lv_obj_t* pageWifiLocal = nullptr;

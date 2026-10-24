@@ -37,6 +37,16 @@ static void serviceGpsConfig() {
 }
 
 static bool handleGpsControlCommand(const char* command) {
+  if (strcmp(command, "gps share on") == 0 || strcmp(command, "gps share off") == 0) {
+    bool ok = setGpsRelayEnabled(strcmp(command, "gps share on") == 0);
+    Serial.println(ok ? "[GPS] sharing preference saved" : "[GPS] sharing preference could not be saved");
+    return true;
+  }
+  if (strcmp(command, "gps share setup") == 0) {
+    bool ok = prepareGpsRelay();
+    Serial.println(ok ? "[GPS] reading Heltec settings before setup" : String("[GPS] ") + gpsRelaySetupError());
+    return true;
+  }
   bool readAll = strcmp(command, "gps config") == 0;
   bool save = strcmp(command, "gps save") == 0;
   bool rate = strcmp(command, "gps rate") == 0 || strncmp(command, "gps rate ", 9) == 0;
@@ -73,6 +83,62 @@ static int localGpsSatellitesInView() {
   return value ? atoi(value->value()) : -1;
 }
 
+static TinyGPSCustom* recentGpsField(TinyGPSCustom& gp, TinyGPSCustom& gn, uint32_t maxAge) {
+  TinyGPSCustom* field = gp.isValid() && gp.age() <= maxAge ? &gp : nullptr;
+  if (gn.isValid() && gn.age() <= maxAge && (!field || gn.age() < field->age())) field = &gn;
+  return field;
+}
+
+static bool readGpsFixStatus() {
+  // TinyGPS commits these custom fields only after a checksum-valid sentence.
+  // Invalid sentences do not clear TinyGPS's previous location.isValid().
+  TinyGPSCustom* fields[] = {&gpsGpStatus, &gpsGnStatus, &gpsGpQuality, &gpsGnQuality, &gpsGpFixType, &gpsGnFixType};
+  bool usableSentence = true;
+  for (uint8_t i = 0; i < 6; ++i) {
+    if (!fields[i]->isUpdated()) continue;
+    const char* value = fields[i]->value();
+    if (!GpsRelay::usableStatus(i / 2, value)) { gpsRelayFix.valid = false; usableSentence = false; }
+  }
+  return usableSentence;
+}
+
+static void captureGpsRelayFix() {
+  GpsRelay::Fix fix;
+  const double latitude = localGps.location.lat(), longitude = localGps.location.lng();
+  TinyGPSCustom* quality = recentGpsField(gpsGpQuality, gpsGnQuality, GpsRelay::FIX_MAX_AGE_MS);
+  TinyGPSCustom* type = recentGpsField(gpsGpFixType, gpsGnFixType, GpsRelay::FIX_MAX_AGE_MS);
+  // A later RMC 'A' must not revive a fix that a recent GGA/GSA rejected.
+  if ((quality && !GpsRelay::usableStatus(1, quality->value())) ||
+      (type && !GpsRelay::usableStatus(2, type->value()))) { gpsRelayFix.valid = false; return; }
+  if (!isfinite(latitude) || !isfinite(longitude) || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+    gpsRelayFix.valid = false; return;
+  }
+  fix.valid = true; fix.capturedMs = millis(); fix.sequence = gpsRelayFix.sequence + 1;
+  if (!fix.sequence) fix.sequence = 1;
+  fix.latitude = (int32_t)lround(latitude * 10000000.0);
+  fix.longitude = (int32_t)lround(longitude * 10000000.0);
+  if (localGps.date.isValid() && localGps.time.isValid() &&
+      localGps.date.age() <= GpsRelay::FIX_MAX_AGE_MS && localGps.time.age() <= GpsRelay::FIX_MAX_AGE_MS) {
+    fix.epoch = GpsRelay::utcEpoch(localGps.date.year(), localGps.date.month(), localGps.date.day(),
+                                 localGps.time.hour(), localGps.time.minute(), localGps.time.second());
+  }
+  if (localGps.altitude.isValid() && localGps.altitude.age() <= GpsRelay::FIX_MAX_AGE_MS) {
+    fix.hasAltitude = true; fix.altitude = (int32_t)lround(localGps.altitude.meters());
+  }
+  if (localGps.speed.isValid() && localGps.speed.age() <= GpsRelay::FIX_MAX_AGE_MS) {
+    fix.hasSpeed = true; fix.speed = (uint32_t)lround(localGps.speed.kmph());
+  }
+  if (localGps.course.isValid() && localGps.course.age() <= GpsRelay::FIX_MAX_AGE_MS && localGps.course.value() < 36000) {
+    fix.hasTrack = true; fix.track = localGps.course.value() * 1000U;
+  }
+  if (localGps.hdop.isValid() && localGps.hdop.age() <= GpsRelay::FIX_MAX_AGE_MS) fix.hdop = localGps.hdop.value();
+  if (quality) fix.quality = (uint32_t)atoi(quality->value());
+  if (type) { const int value = atoi(type->value()); if (value == 2 || value == 3) fix.type = value; }
+  const int inView = localGpsSatellitesInView();
+  if (inView >= 0) fix.satellitesInView = inView;
+  gpsRelayFix = fix;
+}
+
 static void appendLocalGpsHealthJson(String& json) {
   bool usedKnown = localGps.satellites.isValid() && localGps.satellites.age() <= 30000;
   int inView = localGpsSatellitesInView();
@@ -96,7 +162,14 @@ static void appendLocalGpsHealthJson(String& json) {
   json += "\"localGpsSentences\":" + String(localGps.sentencesWithFix()) + ",";
   json += "\"localGpsSatsUsed\":" + (usedKnown ? String(localGps.satellites.value()) : String("null")) + ",";
   json += "\"localGpsSatsInView\":" + (inView >= 0 ? String(inView) : String("null")) + ",";
-  json += "\"localGpsFreshFix\":" + String(localGps.location.isValid() && localGps.location.age() <= 30000 ? "true" : "false") + ",";
+  json += "\"localGpsFreshFix\":" + String(gpsRelayFix.fresh(millis()) ? "true" : "false") + ",";
+  json += "\"gpsShareEnabled\":" + String(gpsRelay.enabled ? "true" : "false") + ",";
+  json += "\"gpsShareState\":\"" + String(GpsRelay::stateText(gpsRelayState())) + "\",";
+  json += "\"gpsShareSetupBusy\":" + String(gpsRelaySetupBusy() ? "true" : "false") + ",";
+  json += "\"gpsShareSetupError\":\"" + String(gpsRelaySetupError()) + "\",";
+  json += "\"gpsShareQueued\":" + String(gpsRelay.queued) + ",\"gpsShareAccepted\":" + String(gpsRelay.accepted) + ",";
+  json += "\"gpsShareRejected\":" + String(gpsRelay.rejected) + ",\"gpsShareTimeouts\":" + String(gpsRelay.timeouts) + ",";
+  json += "\"gpsShareWriteFailures\":" + String(gpsRelay.writeFailures) + ",";
 }
 
 static void printLocalGpsDiagnostics() {
@@ -110,6 +183,8 @@ static void printLocalGpsDiagnostics() {
 
 static void updateLocalGpsStats() {
   if (!localGps.location.isValid()) return;
+  captureGpsRelayFix();
+  if (!gpsRelayFix.valid) return;
 
   localGpsHasFix = true;
   gpsStats.valid = true;
@@ -123,10 +198,10 @@ static void updateLocalGpsStats() {
     gpsStats.sats = localGps.satellites.value();
     gpsStats.hasSats = true;
   }
-  gpsStats.fixQuality = 1;
-  gpsStats.hasFixQuality = true;
-  gpsStats.fixType = gpsStats.hasSats && gpsStats.sats >= 4 ? 3 : 2;
-  gpsStats.hasFixType = true;
+  gpsStats.fixQuality = gpsRelayFix.quality;
+  gpsStats.hasFixQuality = gpsRelayFix.quality != 0;
+  gpsStats.fixType = gpsRelayFix.type;
+  gpsStats.hasFixType = gpsRelayFix.type != 0;
   if (localGps.hdop.isValid()) {
     gpsStats.hdop = localGps.hdop.value();
     gpsStats.hasHdop = true;
@@ -176,8 +251,12 @@ static void pollLocalGps() {
     gpsUbxByteMs=millis();
     if(gpsUbx.ready) serviceGpsUbxReply();
     if(binary) continue;
-    if (localGps.encode(c) && localGps.location.isUpdated()) {
-      updateLocalGpsStats();
+    if (localGps.encode(c)) {
+      const bool usableSentence = readGpsFixStatus();
+      if (localGps.location.isUpdated()) {
+        if (usableSentence) updateLocalGpsStats();
+        else localGps.location.lat(); // consume a rejected update, never revive it on a later GSV
+      }
     }
   }
   serviceGpsConfig();

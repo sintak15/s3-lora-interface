@@ -353,6 +353,7 @@ static void clearUiObjectPointers() {
   pageSystemGps = nullptr;
   pageGpsConfig = pageGpsAdvanced = nullptr;
   btnGpsConfigRead = nullptr;
+  switchGpsRelay = lblGpsRelay = btnGpsRelaySetup = nullptr;
   for (auto& object : gpsConfigStatusLabels) object = nullptr;
   for (auto& object : gpsConfigCurrentLabels) object = nullptr;
   for (auto& object : gpsConfigDropdowns) object = nullptr;

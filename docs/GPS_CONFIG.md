@@ -27,6 +27,10 @@ The **Adv** submenu contains:
 | Power mode | Maximum performance, Eco, Power save; Eco and Power save require 1 Hz in this UI |
 | NMEA output | Normal or Compact; applies only to the connected GPS UART |
 
+Adv also contains **Share GPS to Heltec** and **Use CYD GPS**. These control
+CYD forwarding and Heltec configuration, separately from receiver Apply/Save.
+See [GPS sharing and wiring migration](GPS_SHARING.md).
+
 Normal requests GGA, GLL, GSA, GSV, RMC and VTG every navigation cycle. Compact
 keeps GGA and RMC every cycle, disables redundant GLL/VTG, and requests GSA/GSV
 at most once per five seconds. The latter reduces satellite-detail traffic;

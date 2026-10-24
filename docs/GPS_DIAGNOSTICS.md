@@ -24,8 +24,12 @@ does not change Heltec settings or GPS module configuration.
 
 ## GPS wiring and control ownership
 
-The intended wiring is one GPS output feeding two listeners, with only the
-CYD allowed to send GPS configuration commands:
+With v0.1.96 GPS sharing enabled and verified, connect GPS TX only to CYD GPIO3.
+The CYD supplies positions over its existing Heltec Protobuf UART. See
+[GPS sharing](GPS_SHARING.md) before removing the old branch. Only the CYD
+sends receiver configuration commands.
+
+The earlier split-wire layout remains supported when sharing is off:
 
 ```text
 NEO-6M TX ----+---- CYD GPIO3 (GPS RX)
@@ -58,6 +62,8 @@ UART logic, independently of the breakout's 5V power connection.
 | `gps rate 2` | Request 500 ms measurement period (2 Hz) |
 | `gps rate 5` | Request 200 ms measurement period (5 Hz) |
 | `gps save` | Request receiver storage after a complete read or verified apply |
+| `gps share setup` | Read Heltec settings, select external GPS, verify and enable sharing |
+| `gps share on` / `gps share off` | Save CYD sharing preference without changing Heltec settings |
 
 Rate changes use UBX-CFG-RATE with navigation rate 1, preserving time alignment,
 following the [u-blox 6 protocol specification, section 31.17](https://content.u-blox.com/sites/default/files/products/documents/u-blox6_ReceiverDescrProtSpec_%28GPS.G6-SW-10018%29_Public.pdf).

@@ -1036,6 +1036,17 @@ static void registerWebRoutes() {
   server.on("/send", HTTP_POST, handleSend);
   server.on("/serial_cmd", HTTP_POST, handleSerialCmd);
   server.on("/firmware", HTTP_POST, handleFirmwareUpdateDone, handleFirmwareUpload);
+  server.on("/gps/share", HTTP_POST, []() {
+    if (!requireWebAuth()) return;
+    const String action = server.arg("action");
+    if (action != "setup" && action != "on" && action != "off") {
+      server.send(400, "text/plain", "action must be setup, on or off"); return;
+    }
+    if (gpsRelaySetupBusy()) { server.send(409, "text/plain", "GPS sharing setup is busy"); return; }
+    const bool ok = action == "setup" ? prepareGpsRelay() : setGpsRelayEnabled(action == "on");
+    server.send(ok ? (action == "setup" ? 202 : 200) : 409, "text/plain",
+                ok ? "GPS sharing request accepted; read /status for current state" : gpsRelaySetupError());
+  });
   server.on("/interface", HTTP_POST, []() {
     if (!requireWebAuth()) return;
     String newPass = server.arg("webPass");

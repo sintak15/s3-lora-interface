@@ -4,7 +4,7 @@ A touchscreen and local web interface for a Heltec Meshtastic radio, built on
 an ESP32-S3 CYD. Read messages, check radio and battery status, browse nodes,
 and use offline maps without depending on internet access.
 
-**Current firmware: v0.1.95.** The CYD runs this firmware; the Heltec runs
+**Current firmware: v0.1.96.** The CYD runs this firmware; the Heltec runs
 Meshtastic and handles the LoRa radio connection.
 
 ## Pin mapping — quick reference
@@ -17,7 +17,7 @@ All modules share a common ground; UART and I²C signals use 3.3 V logic.
 | --- | --- | --- |
 | **GPIO14 — RX** | **Heltec GPIO39 — TX** | Heltec → CYD, 115200 baud |
 | **GPIO21 — TX** | **Heltec GPIO38 — RX** | CYD → Heltec, 115200 baud |
-| **GPIO3 — GPS RX** | **GPS TX**; split that same GPS TX wire to **Heltec GPIO5 — GPS RX** | GPS → both boards, 9600 baud |
+| **GPIO3 — GPS RX** | **GPS TX** | GPS → CYD, 9600 baud; positions can be shared over the existing Heltec link |
 | **GPIO2 — GPS TX** | **GPS RX** | CYD → GPS configuration, 9600 baud |
 | **GPIO16 — SDA** | **MAX17048 SDA** | Shared I²C data; gauge address `0x36`; also used by built-in touch and audio codec |
 | **GPIO15 — SCL** | **MAX17048 SCL** | Shared I²C clock |
@@ -27,7 +27,10 @@ All modules share a common ground; UART and I²C signals use 3.3 V logic.
 
 **Leave Heltec GPIO4 disconnected from GPS RX.** Only CYD GPIO2 drives that
 wire. Enable the Heltec Serial module in **PROTO / Protobuf** mode at
-**115200 baud**, with **RX 38 / TX 39**. Enable GPS with **GPS RX 5**.
+**115200 baud**, with **RX 38 / TX 39**. For CYD GPS sharing, use
+**System > GPS > Config > Adv > Use CYD GPS** before removing the old GPS TX
+branch to Heltec GPIO5. See [GPS sharing](docs/GPS_SHARING.md). With sharing
+off, the earlier split-wire setup still requires Heltec GPS RX5 enabled.
 See [detailed wiring and battery connections](#wiring) below.
 
 These built-in CYD connections are already routed on the board:
@@ -182,17 +185,20 @@ In the Meshtastic serial module, set **Enabled**, **PROTO / Protobuf** mode,
 
 ### GPS
 
-Split GPS TX to both receivers. Only the CYD drives GPS RX to configure the
-receiver while the Heltec only listens:
+For CYD GPS sharing, connect the receiver only to the CYD. The CYD sends fresh
+positions over its existing Protobuf serial connection to the Heltec:
 
 | GPS module | Connect to |
 | --- | --- |
-| TX | Heltec GPIO5 **and** CYD GPIO3 |
+| TX | CYD GPIO3; retain the Heltec GPIO5 branch until sharing is verified |
 | RX | CYD GPIO2 (GPS TX) |
 | VCC | Boosted 5V rail for the GY-NEO6MV2 breakout |
 | GND | Common ground |
 
-Enable GPS in Meshtastic Position settings and set **GPS RX pin 5**.
+**Use CYD GPS** reads the Heltec's current settings, selects **GPS Not present**
+and turns fixed position off, then enables sharing after verified readback.
+Sharing defaults to off for existing split-wire installations. With sharing
+off, enable Heltec GPS RX5 and retain the GPS TX branch to GPIO5 instead.
 **Leave Heltec GPIO4 disconnected from GPS RX**; never tie both boards' TX
 outputs to the GPS RX wire. An existing Heltec TX-pin setting does not change
 this receive-only physical wiring.
