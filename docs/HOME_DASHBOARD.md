@@ -3,6 +3,8 @@
 The touchscreen Home page uses navy backgrounds, rounded blue panels,
 light blue accents and a consistent Montserrat type hierarchy. The layout was
 introduced in v0.1.89; v0.1.97 aligns it with the [shared blue theme](WEB_UI.md).
+v0.1.104 adds bundled Material Symbols Rounded to card headers and navigation,
+with a separate unread-count badge. Icons retain the cards' visible labels.
 The heading introduces a status overview, with a full-width radio card, two
 larger battery/node readings, and a full-width message preview. Cards share
 the same surface, border, corner radius, chevron and press feedback. Messages
@@ -20,8 +22,9 @@ detail screen retains the estimate basis and full gauge readings.
 All four cards open their corresponding detail page and support Back to Home.
 The Menu button remains the main launcher; System still contains Health. The
 home layout remains within the existing 240×320 portrait display, with card
-touch targets at least 44 pixels tall. Other pages keep their current layouts
-and font settings.
+touch targets at least 44 pixels tall. The five main-menu tiles remain visible
+together. System menus place icons above their labels and scroll when needed;
+the existing font preferences remain available.
 
 The verification firmware's USB `test-home` exercises missing sensors, charging,
 critical battery, stale radio/GPS, long previews, maximum node count, card

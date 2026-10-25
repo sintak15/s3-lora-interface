@@ -57,7 +57,7 @@ static void refreshDashboardLabels() {
       }
       lv_label_set_text(lblHomeLinkDetail, line);
     }
-    if (homeLinkIcon) lv_obj_set_style_text_color(homeLinkIcon, lv_color_hex(radioResponseSeen ? loraStatusColor() : 0xCDB681), 0);
+    if (homeLinkIcon) lv_obj_set_style_img_recolor(lv_obj_get_child(homeLinkIcon,0), lv_color_hex(radioResponseSeen ? loraStatusColor() : 0xCDB681), 0);
   }
   if (lblHomeGps) {
     bool fresh = MapNavigation::fresh(gpsStats.valid, gpsStats.lastUpdateMs, millis());
@@ -75,6 +75,8 @@ static void refreshDashboardLabels() {
       if (unreadTotal) snprintf(line, sizeof(line), "%u new", unreadTotal);
       else line[0] = 0;
       lv_label_set_text(lblHomeUnread, line);
+      if (unreadTotal) lv_obj_clear_flag(lblHomeUnread,LV_OBJ_FLAG_HIDDEN);
+      else lv_obj_add_flag(lblHomeUnread,LV_OBJ_FLAG_HIDDEN);
     }
   }
   if (lblHomeMessages) lv_label_set_text(lblHomeMessages, previewLatest[0] ? previewLatest : "No messages yet");

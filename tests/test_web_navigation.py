@@ -61,9 +61,23 @@ def main():
             page.route('**/*', route)
             page.goto('http://mesh.test/')
             page.wait_for_selector('#stats .stat')
+            # The theme must preserve readable controls and offline operation.
+            assert page.locator('#tabs button[data-page]>svg.uiIcon').count() == 10
+            assert page.locator('#toolsLabel>svg.uiIcon').count() == 1
+            assert page.locator('svg.uiIcon:not([aria-hidden="true"])').count() == 0
+            assert page.get_by_role('button', name='Messages', exact=True).count() == 1
+            icon_overflow = page.locator('#tabs>button,#toolsLabel').evaluate_all('''elements => elements.filter(element => {
+                const box=element.getBoundingClientRect(), icon=element.querySelector('svg').getBoundingClientRect();
+                return icon.left<box.left || icon.right>box.right || icon.top<box.top || icon.bottom>box.bottom || element.scrollWidth>element.clientWidth;
+            }).map(element=>element.textContent)''')
+            assert not icon_overflow, icon_overflow
+            page.emulate_media(reduced_motion='reduce')
+            assert page.locator('#tabs>button').first.evaluate('element=>getComputedStyle(element).transitionDuration') == '0s'
+            page.emulate_media(reduced_motion='no-preference')
             assert '▾' in page.locator('#toolsLabel').evaluate("e=>getComputedStyle(e,'::after').content")
             page.locator('#tabs>[data-page="config"]').click()
             assert page.locator('[data-settings-group]').count() == 5
+            assert page.locator('[data-settings-group] .choiceIcon>svg').count() == 5
             assert page.locator('.settingsPanel:visible').count() == 0
             assert page.locator('#config input:visible').count() == 1, 'Settings opens with search, not a wall of controls'
             assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')

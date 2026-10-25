@@ -71,6 +71,8 @@ static bool uiReadInteractionActive() {
   return false;
 }
 
+#include "UiTheme.inc"
+
 static void styleDarkObject(lv_obj_t* obj, uint32_t bg, uint32_t text) {
   // Touch focus must not pull a button and its scrollable ancestors into view.
   lv_obj_clear_flag(obj, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
@@ -84,6 +86,7 @@ static void styleDarkObject(lv_obj_t* obj, uint32_t bg, uint32_t text) {
   lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_text_color(obj, lv_color_hex(text), LV_PART_MAIN);
   lv_obj_set_style_shadow_width(obj, 0, LV_PART_MAIN);
+  styleThemeControl(obj);
 }
 
 static void styleDarkBorder(lv_obj_t* obj, uint32_t color) {
@@ -135,7 +138,7 @@ static lv_obj_t* makePanel(lv_obj_t* parent) {
   lv_obj_t* panel = lv_obj_create(parent);
   styleDarkObject(panel, COLOR_PANEL);
   styleDarkBorder(panel);
-  lv_obj_set_style_radius(panel, 6, 0);
+  lv_obj_set_style_radius(panel, 10, 0);
   lv_obj_set_style_pad_all(panel, 5, 0);
   // The page owns scrolling; decorative panels must not catch a drag.
   lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
@@ -243,10 +246,15 @@ static void showPage(lv_obj_t* target, bool remember) {
     bool home = target == pageLauncher;
     lv_label_set_text(lv_obj_get_child(btnNavBack, 0), home ? "Menu" : "Back");
     lv_obj_set_width(btnNavBack, home ? 220 : 92);
-    lv_obj_set_width(lv_obj_get_child(btnNavBack, 0), home ? 200 : 80);
+    auto* navLabel = lv_obj_get_child(btnNavBack, 0);
+    lv_obj_set_width(navLabel, home ? 50 : 56);
+    lv_obj_align(navLabel, LV_ALIGN_LEFT_MID, home ? 100 : 30, 0);
+    auto* navIcon = lv_obj_get_child(btnNavBack, 1);
+    lv_img_set_src(navIcon, UiIcons::image(home ? UiIcons::Id::Menu : UiIcons::Id::Back));
+    lv_obj_align(navIcon, LV_ALIGN_LEFT_MID, home ? 73 : 6, 0);
     if (home) lv_obj_add_flag(btnNavHome, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_clear_flag(btnNavHome, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_style_radius(btnNavBack, home ? 10 : 6, 0);
+    lv_obj_set_style_radius(btnNavBack, 10, 0);
     lv_obj_set_style_bg_color(btnNavBack, lv_color_hex(home ? 0x193753 : 0x102238), 0);
     lv_obj_set_style_border_color(btnNavBack, lv_color_hex(home ? 0x34577C : 0x365B82), 0);
     lv_obj_set_style_text_font(lv_obj_get_child(btnNavBack, 0), home ? &montserrat_15 : UI_FONT_SMALL, 0);
@@ -578,7 +586,8 @@ static lv_obj_t* makeSystemTile(lv_obj_t* parent, const char* text, int col, int
   lv_obj_align(btn, LV_ALIGN_TOP_LEFT, x, y);
   styleDarkObject(btn, COLOR_PANEL);
   styleDarkBorder(btn, 0x39638D);
-  lv_obj_set_style_radius(btn, 6, 0);
+  lv_obj_set_style_radius(btn, 10, 0);
+  lv_obj_set_style_pad_all(btn, 0, 0);
   lv_obj_set_style_shadow_width(btn, 0, 0);
   lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, nullptr);
@@ -590,39 +599,34 @@ static lv_obj_t* makeSystemTile(lv_obj_t* parent, const char* text, int col, int
   lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_text_font(label, UI_FONT_DEFAULT, 0);
   lv_obj_set_height(label, (UI_FONT_DEFAULT)->line_height);
-  lv_obj_center(label);
+  lv_obj_align(label, LV_ALIGN_BOTTOM_MID, 0, -4);
+  auto* icon = makeThemeIcon(btn, parent==pageOperate && row==0 ? UiIcons::Id::Channels : navigationIcon(text));
+  lv_obj_align(icon, LV_ALIGN_TOP_MID, 0, 4);
   lv_obj_move_foreground(btn);
   return btn;
 }
 
-// Home actions use separate title/subtitle labels and fixed, finger-sized bounds.
-static lv_obj_t* makeHomeAction(lv_obj_t* parent, const char* title, const char* detail,
-                               int x, int y, int w, int h, bool primary, lv_event_cb_t cb) {
+// Main navigation keeps its icon and complete label inside a fixed touch target.
+static lv_obj_t* makeMenuTile(lv_obj_t* parent, const char* title, int x, int y, lv_event_cb_t cb) {
   lv_obj_t* button = lv_btn_create(parent);
-  lv_obj_set_size(button, w, h);
+  lv_obj_set_size(button, 106, 62);
   lv_obj_align(button, LV_ALIGN_TOP_LEFT, x, y);
-  styleDarkObject(button, primary ? COLOR_ACTION : COLOR_PANEL);
-  styleDarkBorder(button, primary ? COLOR_ACTION : COLOR_BORDER);
-  lv_obj_set_style_radius(button, 8, 0);
-  lv_obj_set_style_pad_all(button, 8, 0);
-  lv_obj_set_style_bg_color(button, lv_color_hex(primary ? 0x85BFFF : 0x294766), LV_STATE_PRESSED);
+  styleDarkObject(button, COLOR_PANEL);
+  styleDarkBorder(button, COLOR_BORDER);
+  lv_obj_set_style_radius(button, 12, 0);
+  lv_obj_set_style_pad_all(button, 0, 0);
   lv_obj_add_event_cb(button, cb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* heading = lv_label_create(button);
-  lv_obj_set_width(heading, w - 18);
+  lv_obj_set_width(heading, 94);
   lv_label_set_long_mode(heading, LV_LABEL_LONG_DOT);
   lv_label_set_text(heading, title);
   lv_obj_set_style_text_font(heading, UI_FONT_READABLE, 0);
   lv_obj_set_height(heading, (UI_FONT_READABLE)->line_height);
-  lv_obj_set_style_text_color(heading, lv_color_hex(primary ? 0x04192E : COLOR_TEXT), 0);
-  lv_obj_align(heading, LV_ALIGN_TOP_LEFT, 0, -2);
-  lv_obj_t* subtitle = lv_label_create(button);
-  lv_obj_set_width(subtitle, w - 18);
-  lv_label_set_long_mode(subtitle, LV_LABEL_LONG_DOT);
-  lv_label_set_text(subtitle, detail);
-  lv_obj_set_style_text_font(subtitle, UI_FONT_SMALL, 0);
-  lv_obj_set_height(subtitle, (UI_FONT_SMALL)->line_height);
-  lv_obj_set_style_text_color(subtitle, lv_color_hex(primary ? 0x0D2D4C : COLOR_MUTED), 0);
-  lv_obj_align(subtitle, LV_ALIGN_BOTTOM_LEFT, 0, 2);
+  lv_obj_set_style_text_color(heading, lv_color_hex(COLOR_TEXT), 0);
+  lv_obj_set_style_text_align(heading,LV_TEXT_ALIGN_CENTER,0);
+  lv_obj_align(heading, LV_ALIGN_BOTTOM_MID, 0, -4);
+  auto* icon = makeThemeIcon(button,navigationIcon(title),24);
+  lv_obj_align(icon,LV_ALIGN_TOP_MID,0,5);
   return button;
 }
 
@@ -644,12 +648,14 @@ static lv_obj_t* makeDashboardLabel(lv_obj_t* parent, int x, int y, int w, int h
 static lv_obj_t* makePageTitle(lv_obj_t* parent, const char* text) {
   lv_obj_t* title = lv_label_create(parent);
   lv_label_set_text(title, text);
-  lv_obj_set_width(title, SCREEN_W - 12);
+  lv_obj_set_width(title, SCREEN_W - 40);
   lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_ACCENT), 0);
   lv_obj_set_style_text_font(title, UI_FONT_DEFAULT, 0);
   lv_obj_set_height(title, (UI_FONT_DEFAULT)->line_height);
-  lv_obj_align(title, LV_ALIGN_TOP_LEFT, 2, 0);
+  lv_obj_align(title, LV_ALIGN_TOP_LEFT, 28, 0);
+  auto* icon = makeThemeIcon(parent,pageThemeIcon(parent));
+  lv_obj_align(icon,LV_ALIGN_TOP_LEFT,2,0);
   return title;
 }
 
@@ -659,19 +665,22 @@ static lv_obj_t* makeNavButton(lv_obj_t* parent, const char* text, lv_align_t al
   lv_obj_align(btn, align, x, 0);
   styleDarkObject(btn, 0x102238);
   styleDarkBorder(btn, 0x365B82);
-  lv_obj_set_style_radius(btn, 6, 0);
+  lv_obj_set_style_radius(btn, 10, 0);
+  lv_obj_set_style_pad_all(btn, 0, 0);
   lv_obj_set_style_shadow_width(btn, 0, 0);
   lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* label = lv_label_create(btn);
   lv_label_set_text(label, text);
-  lv_obj_set_width(label, 80);
+  lv_obj_set_width(label, 56);
   lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
-  lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
   lv_obj_set_style_text_color(label, lv_color_hex(COLOR_TEXT), 0);
   lv_obj_set_style_text_font(label, UI_FONT_SMALL, 0);
   lv_obj_set_height(label, (UI_FONT_SMALL)->line_height);
-  lv_obj_center(label);
+  lv_obj_align(label,LV_ALIGN_LEFT_MID,30,0);
+  auto* icon = makeThemeIcon(btn,strcmp(text,"Home")==0 ? UiIcons::Id::Home : UiIcons::Id::Back);
+  lv_obj_align(icon,LV_ALIGN_LEFT_MID,6,0);
   lv_obj_move_foreground(btn);
   return btn;
 }
@@ -1460,17 +1469,17 @@ static void buildScreenUi() {
   buildHomeUi();
 
   makePageTitle(pageFunctions, "Menu");
-  makeHomeAction(pageFunctions, "Messages", "Chat & direct", 6, 24, 106, 62, false,
+  makeMenuTile(pageFunctions, "Messages", 6, 24,
                  [](lv_event_t*) { showPage(pageOperate); });
-  makeHomeAction(pageFunctions, "Nodes", "Nearby radios", 118, 24, 106, 62, false, [](lv_event_t*) {
+  makeMenuTile(pageFunctions, "Nodes", 118, 24, [](lv_event_t*) {
     refreshNodeList(true);
     showPage(pageNodes);
   });
-  makeHomeAction(pageFunctions, "Map", "Location & GPS", 6, 94, 106, 62, false,
+  makeMenuTile(pageFunctions, "Map", 6, 94,
                  [](lv_event_t*) { showPage(pageGps); });
-  makeHomeAction(pageFunctions, "TX Log", "Delivery & retry", 118, 94, 106, 62, false,
+  makeMenuTile(pageFunctions, "TX Log", 118, 94,
                  [](lv_event_t*) { showPage(pageTxHistory); });
-  makeHomeAction(pageFunctions, "System", "Device settings", 6, 164, 106, 62, false,
+  makeMenuTile(pageFunctions, "System", 6, 164,
                  [](lv_event_t*) { showPage(pageSystem); });
 
   makePageTitle(pageOperate, "Messages");
@@ -1481,9 +1490,9 @@ static void buildScreenUi() {
   lblTilePrivate = lv_obj_get_child(privateTile, 0);
   makeSystemTile(pageOperate, "Direct", 0, 1, [](lv_event_t*) { showPage(pageDirectChat); });
   makeSystemTile(pageOperate, "TX Log", 1, 1, [](lv_event_t*) { showPage(pageTxHistory); });
-  lblMsgPublic = makeDashboardLabel(pageOperate, 6, 120, 228, 34);
-  lblMsgFamily = makeDashboardLabel(pageOperate, 6, 160, 228, 34);
-  lblMsgDirect = makeDashboardLabel(pageOperate, 6, 200, 228, 34);
+  lblMsgPublic = makeDashboardLabel(pageOperate, 6, 152, 228, 34);
+  lblMsgFamily = makeDashboardLabel(pageOperate, 6, 192, 228, 34);
+  lblMsgDirect = makeDashboardLabel(pageOperate, 6, 232, 228, 34);
 
   makePageTitle(pageDiagnose, "Health");
   makePageScrollable(pageDiagnose);
@@ -2166,6 +2175,8 @@ static void initScreen() {
   dispDrv.flush_cb = lvFlush;
   dispDrv.draw_buf = &drawBuf;
   display = lv_disp_drv_register(&dispDrv);
+  lv_disp_set_theme(display,lv_theme_default_init(display,lv_color_hex(COLOR_ACTION),
+                                                lv_color_hex(COLOR_ACCENT),true,UI_FONT_DEFAULT));
 
   static lv_indev_drv_t indevDrv;
   lv_indev_drv_init(&indevDrv);

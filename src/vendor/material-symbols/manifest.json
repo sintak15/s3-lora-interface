@@ -1,0 +1,119 @@
+{
+  "repository": "https://github.com/google/material-design-icons",
+  "commit": "10ecc14790612ca8fd164e3f4ffe9c16fc50d5b7",
+  "style": "Material Symbols Rounded, 24px, default weight/fill",
+  "icons": {
+    "home": {
+      "path": "symbols/web/home/materialsymbolsrounded/home_24px.svg",
+      "sha256": "b29e5deb4467a06ec02ac358516fd8e5955c0d704fba8776f055b638cfbab607"
+    },
+    "menu": {
+      "path": "symbols/web/grid_view/materialsymbolsrounded/grid_view_24px.svg",
+      "sha256": "8c3937acee82f64fc66f6221d9103d0e5d69a71f5979fedb8c5e5d74a0727dc9"
+    },
+    "messages": {
+      "path": "symbols/web/chat_bubble/materialsymbolsrounded/chat_bubble_24px.svg",
+      "sha256": "5323668b977357f7b5379fd1e8b073375b0a5d12c6351e10694308d4c2d5c9d7"
+    },
+    "nodes": {
+      "path": "symbols/web/hub/materialsymbolsrounded/hub_24px.svg",
+      "sha256": "2943c260885f3777145671f4d5f449bdb5fc791996943276a23392d460e91175"
+    },
+    "map": {
+      "path": "symbols/web/map/materialsymbolsrounded/map_24px.svg",
+      "sha256": "7fdccab6fe79c538a2efc2a96c9ee74cd0983c88fc16d0c5d0c333ede9af3adc"
+    },
+    "settings": {
+      "path": "symbols/web/settings/materialsymbolsrounded/settings_24px.svg",
+      "sha256": "6cd47de90647ece6b00922f497f8c4ea9c1649548cf15828d1df9d78d5bdf30d"
+    },
+    "battery": {
+      "path": "symbols/web/battery_5_bar/materialsymbolsrounded/battery_5_bar_24px.svg",
+      "sha256": "f06fe4d6acfd7b1fdddb8953cfda3bb7499cf6512e7ddee13b98a5668c27e14f"
+    },
+    "gps": {
+      "path": "symbols/web/satellite_alt/materialsymbolsrounded/satellite_alt_24px.svg",
+      "sha256": "08218241e55619a7b0f8c235ed869e9e279496f9c638418c3da7f6f2783ee144"
+    },
+    "wifi": {
+      "path": "symbols/web/wifi/materialsymbolsrounded/wifi_24px.svg",
+      "sha256": "f7c825d97360b22a97e7b5636fbf68ef08fab3de679811553d3eb07590163488"
+    },
+    "health": {
+      "path": "symbols/web/monitor_heart/materialsymbolsrounded/monitor_heart_24px.svg",
+      "sha256": "aa06a99f426db44be42358464fbd44625377b233513c935bc3e0d422ed5ba52c"
+    },
+    "radio": {
+      "path": "symbols/web/cell_tower/materialsymbolsrounded/cell_tower_24px.svg",
+      "sha256": "d46f5764f34b0a89c75e1db620869311d206cf0ed566931f02e11990b37659d5"
+    },
+    "delivery": {
+      "path": "symbols/web/outgoing_mail/materialsymbolsrounded/outgoing_mail_24px.svg",
+      "sha256": "1997ef919a43793964ebb9a1d8fa3af084fc5d93b85f5a7010bef3f2223eef79"
+    },
+    "serial": {
+      "path": "symbols/web/terminal/materialsymbolsrounded/terminal_24px.svg",
+      "sha256": "ba924a0c39561794685040e624daa32ac86a130323eeec67093611518cf03560"
+    },
+    "display": {
+      "path": "symbols/web/brightness_6/materialsymbolsrounded/brightness_6_24px.svg",
+      "sha256": "7f5e04720f52d8b66dc5e17daebd85eca736ff64923ee7c38a6efcedb77cb259"
+    },
+    "sound": {
+      "path": "symbols/web/volume_up/materialsymbolsrounded/volume_up_24px.svg",
+      "sha256": "0f4b215717e8153c0bd9d84f10fa3313453fd74895da8e7c474383d841079df6"
+    },
+    "storage": {
+      "path": "symbols/web/sd_card/materialsymbolsrounded/sd_card_24px.svg",
+      "sha256": "b381a314985db0952dc02f415f9f6b66bc6853463033afa95c902341073a79f9"
+    },
+    "logs": {
+      "path": "symbols/web/description/materialsymbolsrounded/description_24px.svg",
+      "sha256": "d7f08af6f115402dc19125e81da70209b53f5a830f5f14b04e16b0ddf569be7f"
+    },
+    "back": {
+      "path": "symbols/web/arrow_back/materialsymbolsrounded/arrow_back_24px.svg",
+      "sha256": "b9b58d54e13e0e3693a10d997c1001ec270c12eaa935f993cee1d8c916236ceb"
+    },
+    "next": {
+      "path": "symbols/web/chevron_right/materialsymbolsrounded/chevron_right_24px.svg",
+      "sha256": "8cb67ac33f0e21e96a13b2274f21d27e96312097fea0c5260bf979ffea396140"
+    },
+    "refresh": {
+      "path": "symbols/web/refresh/materialsymbolsrounded/refresh_24px.svg",
+      "sha256": "9287665cb15b61441487cb2d579ba5630f9b249dbcaa5991e7028aa6f925edf8"
+    },
+    "download": {
+      "path": "symbols/web/download/materialsymbolsrounded/download_24px.svg",
+      "sha256": "af215e8e4960234aec60127e3819718a972f4d2a90b3c617602134681bad557f"
+    },
+    "send": {
+      "path": "symbols/web/send/materialsymbolsrounded/send_24px.svg",
+      "sha256": "e31d6774dc5caee174d057253e10993cce89127dd33343e9cc1b0dbb478e8e9b"
+    },
+    "channels": {
+      "path": "symbols/web/forum/materialsymbolsrounded/forum_24px.svg",
+      "sha256": "eb3fba353589673c75af32ad8048a4a177dde570c8b8606aad9eb150e4af6299"
+    },
+    "bluetooth": {
+      "path": "symbols/web/bluetooth/materialsymbolsrounded/bluetooth_24px.svg",
+      "sha256": "3736a6c4fb26629b36b2ca6e2f28e5a61a72a4419c1ad18bfcf66bac4490e2de"
+    },
+    "sensors": {
+      "path": "symbols/web/sensors/materialsymbolsrounded/sensors_24px.svg",
+      "sha256": "719a52d1305b40bc5830c89d11d69d2f9f3450b43959eb364136d65c324454ee"
+    },
+    "power": {
+      "path": "symbols/web/power_settings_new/materialsymbolsrounded/power_settings_new_24px.svg",
+      "sha256": "a36801d7d46cf5583da72b93856b3f27a2ca7194df1150fb77bdc9b072bc3d41"
+    },
+    "search": {
+      "path": "symbols/web/search/materialsymbolsrounded/search_24px.svg",
+      "sha256": "8d12ac6ba27a23ccf0e57794c28481ce9c978efcb2f80ba6d2979ccdf238c993"
+    },
+    "check": {
+      "path": "symbols/web/check_circle/materialsymbolsrounded/check_circle_24px.svg",
+      "sha256": "5c90d9aaa77eacf87ed8a5cedb6f9a1b7eba6ef41e6fbf7c9a1eb221ad59d2c9"
+    }
+  }
+}

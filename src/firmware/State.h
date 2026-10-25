@@ -438,7 +438,7 @@ static constexpr int UI_ACTION_H = 36;
 static constexpr int UI_ACTION_W = SCREEN_W - 18;
 static constexpr int UI_INPUT_H = 38;
 static constexpr int UI_TILE_W = 106;
-static constexpr int UI_TILE_H = 42;
+static constexpr int UI_TILE_H = 56;
 
 static char* eventLog = nullptr;
 static char* packetLog = nullptr;

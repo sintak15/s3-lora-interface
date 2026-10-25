@@ -3,6 +3,31 @@
 Firmware uses a navy/blue palette on both the CYD and its local web UI.
 Open the CYD's IP address in a browser and use its configured web login.
 
+## Theme and icons
+
+v0.1.104 adds Material Symbols Rounded to the home dashboard, main navigation,
+system menus and page headings, with matching icons in web navigation, Settings
+categories, status cards and diagnostic topics. Every navigation control keeps
+its text label. The CYD main menu keeps all five destinations on one screen;
+denser system menus scroll to accommodate an icon above each full-width label.
+
+Cards, panels and buttons share rounded corners and blue pressed/selected states.
+CYD press feedback changes colors without enlarging touch targets. Browser
+transitions respect the operating system's reduced-motion preference. The larger
+text modes, blue diagnostic labels/white readings, amber/red warnings, plain
+battery symbols and message-direction colors remain in place.
+
+Icons are bundled in firmware and work offline. The browser uses inline SVGs;
+the CYD uses 16/20/24-pixel alpha masks, so there is no runtime SVG decoder or
+external font download. Only 28 selected icons are included, using 17,248 bytes
+of pixel masks before metadata. The unchanged source SVGs, pinned upstream
+commit, hashes and Apache 2.0 license are in
+[the Material Symbols directory](../src/vendor/material-symbols/README.md).
+Regenerate both asset formats with `python tools/generate_ui_icons.py`; add
+`--check` to verify them. Generation requires Pillow, Playwright and Chromium.
+
+<img src="images/menu.png" alt="CYD main menu with rounded blue icon tiles and readable labels" width="240">
+
 ## Finding settings
 
 **Settings** is a main navigation destination. Its landing page offers five
@@ -94,6 +119,24 @@ plain text rather than truncating its measurements. Editable inputs and freeform
 message/log bodies retain ordinary text handling.
 
 ## Verification
+
+v0.1.104 passed all 74 actual-device layout cases across both text modes,
+including icon bounds, diagnostic screens, long Home states and detailed node
+rows. The native Home, navigation and scroll checks passed. Browser checks at
+390 and 1280 pixels verified icons inside their controls, accessible text labels,
+reduced-motion styling, retained edits, offline maps and diagnostic colors.
+Read-only checks against the installed device also passed at both widths, with
+no browser errors or external asset requests. Updated Home/menu images were
+captured from pixels sent to the CYD display.
+
+Production v0.1.104 was installed over Wi-Fi on October 24, 2026. The radio link
+returned responsive, continuous SD recording resumed, and gauge/radio/audio/SD
+error counters remained zero in the final check. CYD preferences and cached
+Heltec/channel configuration matched the pre-update snapshot. The installed
+HTML matched the reviewed source, and verification-only inspection routes
+returned 404. The production image is
+`dist/s3-lora-interface-rounded-theme-v0.1.104-20261024.bin` (1,928,544 bytes),
+SHA-256 `b8668ae06626f75d575dcd9201c146b72943fb7b55a61c5130b62e6191d01d28`.
 
 The original live v0.1.96 Settings page exposed 158 controls, including a single
 46-control additional-modules form. It measured 15,366 pixels tall at 390 px

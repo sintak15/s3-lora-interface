@@ -13,7 +13,7 @@ static lv_obj_t* homeLabel(lv_obj_t* parent, const char* text, int x, int y, int
   return label;
 }
 
-static lv_obj_t* homeCard(const char* title, int x, int y, int width, int height, lv_event_cb_t action, lv_obj_t** caption = nullptr) {
+static lv_obj_t* homeCard(const char* title, UiIcons::Id iconId, int x, int y, int width, int height, lv_event_cb_t action, lv_obj_t** caption = nullptr) {
   lv_obj_t* card = lv_btn_create(pageLauncher);
   lv_obj_set_pos(card, x, y); lv_obj_set_size(card, width, height);
   styleDarkObject(card, 0x102238, 0xF4F8FF);
@@ -25,9 +25,12 @@ static lv_obj_t* homeCard(const char* title, int x, int y, int width, int height
   lv_obj_set_style_shadow_width(card, 0, LV_STATE_PRESSED);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_event_cb(card, action, LV_EVENT_CLICKED, nullptr);
-  auto* label = homeLabel(card, title, 9, 6, width - 37, &montserrat_11, COLOR_ACCENT);
+  auto* label = homeLabel(card, title, 31, 6, width - 55, &montserrat_11, COLOR_ACCENT);
   if (caption) *caption = label;
-  homeLabel(card, LV_SYMBOL_RIGHT, width - 19, 4, 10, LV_FONT_DEFAULT, 0x85BFFF);
+  auto* icon = makeThemeIcon(card,iconId,16);
+  lv_obj_set_pos(icon,9,5);
+  auto* next = makeThemeIcon(card,UiIcons::Id::Next,16);
+  lv_obj_set_pos(next,width-20,5);
   return card;
 }
 
@@ -39,7 +42,7 @@ static void buildHomeUi() {
   auto* caption = homeLabel(pageLauncher, "FIELD DASHBOARD", 9, 28, 210, &montserrat_11, 0x85BFFF);
   lv_obj_set_style_text_letter_space(caption, 1, 0);
 
-  auto* radio = homeCard("RADIO LINK", 6, 48, 218, 62, [](lv_event_t*) { showPage(pageSystemRadio); });
+  auto* radio = homeCard("RADIO LINK", UiIcons::Id::Radio, 6, 48, 218, 62, [](lv_event_t*) { showPage(pageSystemRadio); });
   lblHomeLink = homeLabel(radio, "Waiting", 9, 21, 157, &lv_font_montserrat_22, 0xF4F8FF);
   lblHomeLinkDetail = homeLabel(radio, "Listening for Heltec", 10, 47, 154, &montserrat_11, 0xA1B5CE);
   homeLinkIcon = lv_obj_create(radio);
@@ -47,10 +50,9 @@ static void buildHomeUi() {
   styleDarkObject(homeLinkIcon, 0x173B5D); lv_obj_set_style_radius(homeLinkIcon, LV_RADIUS_CIRCLE, 0);
   lv_obj_set_style_border_width(homeLinkIcon, 0, 0); lv_obj_set_style_pad_all(homeLinkIcon, 0, 0);
   lv_obj_clear_flag(homeLinkIcon, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-  auto* icon = lv_label_create(homeLinkIcon); lv_label_set_text(icon, LV_SYMBOL_WIFI);
-  lv_obj_set_style_text_font(icon, LV_FONT_DEFAULT, 0); lv_obj_center(icon);
+  auto* icon = makeThemeIcon(homeLinkIcon,UiIcons::Id::Radio); lv_obj_center(icon);
 
-  auto* battery = homeCard("BATTERY", 6, 118, 105, 70, [](lv_event_t*) { showPage(pageBattery); });
+  auto* battery = homeCard("BATTERY", UiIcons::Id::Battery, 6, 118, 105, 70, [](lv_event_t*) { showPage(pageBattery); });
   lblHomePower = homeLabel(battery, "--", 9, 21, 85, &lv_font_montserrat_22, 0xF4F8FF);
   lblHomePowerDetail = homeLabel(battery, "Checking battery", 9, 47, 87, &montserrat_11, 0xA1B5CE);
   homePowerBar = lv_bar_create(battery); lv_obj_set_pos(homePowerBar, 9, 65); lv_obj_set_size(homePowerBar, 84, 2);
@@ -59,13 +61,16 @@ static void buildHomeUi() {
   lv_obj_set_style_bg_color(homePowerBar, lv_color_hex(0x65B0FF), LV_PART_INDICATOR);
   lv_obj_clear_flag(homePowerBar, LV_OBJ_FLAG_CLICKABLE);
 
-  auto* mesh = homeCard("NODES", 119, 118, 105, 70, [](lv_event_t*) { refreshNodeList(true); showPage(pageNodes); });
+  auto* mesh = homeCard("NODES", UiIcons::Id::Nodes, 119, 118, 105, 70, [](lv_event_t*) { refreshNodeList(true); showPage(pageNodes); });
   lblHomeNodes = homeLabel(mesh, "0", 9, 21, 85, &lv_font_montserrat_22, 0xF4F8FF);
   lblHomeGps = homeLabel(mesh, "GPS waiting", 9, 49, 85, &montserrat_11, 0xA1B5CE);
 
-  auto* messages = homeCard("Messages", 6, 196, 218, 48, [](lv_event_t*) { showPage(pageOperate); }, &lblHomeMessageTitle);
-  lv_obj_set_width(lblHomeMessageTitle, 104);
+  auto* messages = homeCard("Messages", UiIcons::Id::Messages, 6, 196, 218, 48, [](lv_event_t*) { showPage(pageOperate); }, &lblHomeMessageTitle);
+  lv_obj_set_width(lblHomeMessageTitle, 90);
   lblHomeUnread = homeLabel(messages, "", 123, 6, 67, &montserrat_11, 0xA1B5CE);
   lv_obj_set_style_text_align(lblHomeUnread, LV_TEXT_ALIGN_RIGHT, 0);
+  lv_obj_set_style_bg_color(lblHomeUnread,lv_color_hex(0x1C3C60),0);
+  lv_obj_set_style_bg_opa(lblHomeUnread,LV_OPA_COVER,0);
+  lv_obj_set_style_radius(lblHomeUnread,5,0);
   lblHomeMessages = homeLabel(messages, "No messages yet", 9, 23, 195, &montserrat_15, 0xF4F8FF);
 }

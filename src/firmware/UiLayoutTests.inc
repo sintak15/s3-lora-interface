@@ -26,7 +26,7 @@ static bool ancestor(lv_obj_t* parent, lv_obj_t* child) {
   return false;
 }
 static bool leaf(lv_obj_t* object) {
-  return lv_obj_check_type(object, &lv_label_class) || lv_obj_check_type(object, &lv_btn_class) ||
+    return lv_obj_check_type(object, &lv_img_class) || lv_obj_check_type(object, &lv_label_class) || lv_obj_check_type(object, &lv_btn_class) ||
          lv_obj_check_type(object, &lv_textarea_class) || lv_obj_check_type(object, &lv_dropdown_class) ||
          lv_obj_check_type(object, &lv_checkbox_class) || lv_obj_check_type(object, &lv_switch_class) ||
          lv_obj_check_type(object, &lv_slider_class) || lv_obj_check_type(object, &lv_bar_class);
