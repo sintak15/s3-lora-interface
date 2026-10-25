@@ -239,3 +239,26 @@ The verification build's USB `test-ui` command includes real LVGL scrolling
 checks for row insertion, row-height changes, a missing anchor, empty lists,
 reading older chat and following new messages at the bottom. Compiling these
 checks does not execute them on the physical touchscreen.
+
+### Inspect rendered text over Wi-Fi
+
+With the verification build installed, run the layout inspector against the
+CYD. The authentication file is a private JSON object with `username` and
+`password`; keep it under ignored `build/` and remove it when finished.
+
+```powershell
+python tools/check_display_layout.py --base-url http://192.168.1.192 --auth-file build/cyd-ota-auth.json --output build/display-layout
+```
+
+The tool checks 30 screens in both Normal and Readable modes, additional Home
+states and detailed node rows. It saves coordinates/issues and CRC-verified
+240×320 PNG captures. Single-screen checks accept `--screen home --font readable
+--case runtime`. Nonzero exit status means overlaps, clipping or truncated
+essential Home values were found. Readout pages are checked below the fold;
+nested scroll viewports and the separate navigation layer are accounted for.
+Map marker imagery is excluded from this text-layout audit.
+
+The verification loop task has additional stack space for HTTP-nested rendering.
+Production retains its normal stack and has no inspection endpoints. Install
+the production image when inspection is complete. These measurements do not
+replace touch/gesture testing.

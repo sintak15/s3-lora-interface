@@ -1,4 +1,8 @@
 #include <Arduino.h>
+#ifdef FIRMWARE_RUN_TESTS
+// HTTP layout inspection nests rendering and test fixtures inside the server.
+SET_LOOP_TASK_STACK_SIZE(16 * 1024);
+#endif
 #include <limits.h>
 #include <atomic>
 #include <errno.h>

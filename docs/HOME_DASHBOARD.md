@@ -13,9 +13,9 @@ separate last-heard age. Battery percentage has a small charge-level bar and a
 separate charging, runtime or low-battery hint. Missing fuel-gauge readings
 show `--` and hide the bar. The node card counts known nodes and reports GPS
 readiness only for a fresh local fix. Message previews remain bounded with an
-ellipsis, with unread count shown separately when present. On battery replaces
-runtime-learning detail until an estimate is available, keeping Home focused
-on the current power state.
+ellipsis, with unread count shown separately when present. Home shows a compact
+runtime once available, or a short estimating/missing-reading hint. The Battery
+detail screen retains the estimate basis and full gauge readings.
 
 All four cards open their corresponding detail page and support Back to Home.
 The Menu button remains the main launcher; System still contains Health. The
@@ -56,3 +56,28 @@ Artifact: `dist/s3-lora-interface-v0.1.89-verified-20261017.bin` (1854736 bytes)
 SHA256: `47df90ea0aea68beb3414c9fe6b8a4c4b22966b6c46eb2c628be899e487072ba`.
 Backup: `build/pre-v0.1.89-flash-metadata.bin`.
 Logs: `build/v0.1.89-home-smoke.log` and `build/v0.1.89-device-report.json`.
+
+## Text bounds after the font increase (v0.1.103)
+
+Home labels have explicit one-line heights as well as widths. The Battery hint
+uses compact remaining time such as `~4h55m`; the estimate basis remains on the
+Battery detail screen. The hint and level bar occupy separate rows. Missing
+readings, charging-trend symbols, low-battery warnings and long message previews
+keep their own bounds. Chevrons and the unread count have separate label boxes.
+
+Shared button/status labels also have explicit line heights. Compact node rows
+use separate flexible columns, while detailed rows grow to fit their wrapped
+text. Chat headers and send controls reserve room for the larger type.
+
+Verification builds expose authenticated `POST /diagnostics/ui-layout` and
+`GET /diagnostics/ui-frame`. These inspect actual LVGL coordinates and capture
+TFT-bound pixels. They are absent from production builds. Temporary font and
+sensor fixtures are restored without preference writes or simulated SD records.
+Use `tools/check_display_layout.py` as described in [BUILD.md](BUILD.md).
+
+On October 24, 2026, all 74 on-device layout checks passed across both font
+modes: 30 screens, six additional Home states, and detailed node rows per mode.
+Checks found no label clipping, control overlaps or truncated essential Home
+readings. CRC-verified TFT captures confirmed the separate Battery hint/bar
+rows, including a runtime fixture. The native Home, UI and scrolling regression
+tests also passed on the device. Production v0.1.103 was then installed over Wi-Fi.

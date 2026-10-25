@@ -1045,11 +1045,19 @@ static void handleFirmwareUpdateDone() {
 }
 
 
+#ifdef FIRMWARE_RUN_TESTS
+#include "UiLayoutTests.inc"
+#endif
+
 static void registerWebRoutes() {
   registerWebMapRoutes();
   server.on("/", HTTP_GET, handleRoot);
   server.on("/status", HTTP_GET, handleStatus);
   server.on("/diagnostics/report", HTTP_GET, handleFieldReport);
+#ifdef FIRMWARE_RUN_TESTS
+  server.on("/diagnostics/ui-layout", HTTP_POST, UiLayoutTests::handle);
+  server.on("/diagnostics/ui-frame", HTTP_GET, UiLayoutTests::frame);
+#endif
   server.on("/sd/power-health", HTTP_GET, []() { handleSdDownload(SD_POWER_HEALTH_PATH, "power-health.log", "text/plain"); });
   server.on("/sd/battery-cycle", HTTP_GET, []() { handleSdDownload(SD_BATTERY_CYCLE_PATH, "battery-cycle.csv", "text/csv"); });
   server.on("/sd/power-health/previous", HTTP_GET, []() { handleSdDownload(SD_POWER_HEALTH_PREVIOUS_PATH, "power-health-previous.log", "text/plain"); });

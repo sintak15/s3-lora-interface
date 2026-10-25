@@ -89,7 +89,12 @@ static void refreshDashboardLabels() {
       else if (localBattery.charging) strlcpy(line, "Battery: +", sizeof(line));
       else if (localBattery.batteryCritical) strlcpy(line, "Charge soon", sizeof(line));
       else if (localBattery.batteryLow) strlcpy(line, "Battery low", sizeof(line));
-      else formatBatteryRuntime(line, sizeof(line));
+      else if (!localBattery.chargeRateValid) strlcpy(line, "Reading...", sizeof(line));
+      else if (batteryRuntime.minutes() < 0) strlcpy(line, "Estimating", sizeof(line));
+      else {
+        int32_t minutes = FieldStatus::roundedRuntimeMinutes(batteryRuntime.minutes());
+        snprintf(line, sizeof(line), "~%ldh%02ldm", (long)(minutes / 60), (long)(minutes % 60));
+      }
       lv_label_set_text(lblHomePowerDetail, line);
     }
     if (homePowerBar) {
@@ -812,7 +817,7 @@ static void refreshScreenUi() {
 #ifdef FIRMWARE_RUN_TESTS
 // Exercise UI formatting/rendering only; this does not simulate battery discharge.
 #include "UiScrollTests.inc"
-static void runUiSmokeTests() {
+static bool runUiSmokeTests() {
   lv_obj_t* savedPage = currentPage;
   lv_obj_t* savedNavigation[8];
   memcpy(savedNavigation, navigationStack, sizeof(savedNavigation));
@@ -905,6 +910,7 @@ static void runUiSmokeTests() {
   showPage(savedPage, false);
   refreshScreenUi();
   Serial.printf("[test-ui] complete: %s\n", passed ? "PASS" : "FAIL");
+  return passed;
 }
 #endif
 

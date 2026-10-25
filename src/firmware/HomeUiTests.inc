@@ -1,6 +1,7 @@
 #ifdef FIRMWARE_RUN_TESTS
-static void runHomeUiTests() {
+static bool runHomeUiTests() {
   auto savedBattery = localBattery;
+  auto savedRuntime = batteryRuntime;
   auto savedGps = gpsStats;
   bool savedSeen = radioResponseSeen;
   uint32_t savedResponse = lastRadioResponseMs;
@@ -18,6 +19,15 @@ static void runHomeUiTests() {
   localBattery.gaugePresent = true; localBattery.charging = true; localBattery.percent = 100;
   refreshDashboardLabels();
   check("Connected and charging states", strcmp(lv_label_get_text(lblHomeLink), "Connected") == 0 && strcmp(lv_label_get_text(lblHomePower), "100%") == 0 && strcmp(lv_label_get_text(lblHomePowerDetail), "Battery: +") == 0 && lv_bar_get_value(homePowerBar) == 100);
+  localBattery.charging = false; localBattery.chargeRateValid = true;
+  localBattery.batteryLow = localBattery.batteryCritical = false;
+  batteryRuntime.restore(10); batteryRuntime.sample(millis(), 49, true, false);
+  refreshDashboardLabels(); lv_obj_update_layout(pageLauncher);
+  lv_area_t hint, bar;
+  lv_obj_get_coords(lblHomePowerDetail, &hint); lv_obj_get_coords(homePowerBar, &bar);
+  check("Runtime hint is one line above charge bar",
+        lv_obj_get_height(lblHomePowerDetail) == montserrat_11.line_height && hint.y2 < bar.y1 &&
+        strstr(lv_label_get_text(lblHomePowerDetail), "prior use") == nullptr);
   lastRadioResponseMs = millis() - 100000; localBattery.charging = false; localBattery.batteryLow = localBattery.batteryCritical = true; localBattery.percent = 5;
   gpsStats.valid = true; gpsStats.lastUpdateMs = millis() - 31000;
   unreadPublic = 999; nodeCount = MAX_NODES;
@@ -51,11 +61,12 @@ static void runHomeUiTests() {
     navigation &= currentPage == pageLauncher;
   }
   check("Each card opens its detail and Back returns home", navigation);
-  localBattery = savedBattery; gpsStats = savedGps; radioResponseSeen = savedSeen; lastRadioResponseMs = savedResponse;
+  localBattery = savedBattery; batteryRuntime = savedRuntime; gpsStats = savedGps; radioResponseSeen = savedSeen; lastRadioResponseMs = savedResponse;
   unreadPublic = savedUnread; nodeCount = savedNodes; memcpy(previewLatest, savedPreview, sizeof(previewLatest));
   memcpy(navigationStack, savedNavigation, sizeof(savedNavigation)); navigationDepth = savedDepth;
   showPage(savedPage, false); refreshDashboardLabels();
   Serial.printf("[test-home] complete: %s\n", all ? "PASS" : "FAIL");
+  return all;
 }
 
 // Capture the actual pixels sent to the TFT, without enabling LVGL snapshots or

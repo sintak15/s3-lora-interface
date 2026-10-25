@@ -160,7 +160,7 @@ static void buildGpsConfigUi() {
   makePageTitle(pageGpsAdvanced, "GPS Adv");
   makePageScrollable(pageGpsAdvanced);
   panel = makePanel(pageGpsAdvanced);
-  lv_obj_set_size(panel, SCREEN_W - 12, 825);
+  lv_obj_set_size(panel, SCREEN_W - 12, LV_SIZE_CONTENT);
   lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 26);
   gpsConfigStatusLabels[1] = lv_label_create(panel);
   styleBoundedLabel(gpsConfigStatusLabels[1], lv_pct(100), COLOR_TEXT, LV_LABEL_LONG_WRAP);
@@ -171,8 +171,8 @@ static void buildGpsConfigUi() {
   lv_label_set_text(advancedHint, "Compact keeps position updates and reduces satellite-detail traffic. Needed above 1 Hz.\nEco / Power save: use 1 Hz.\nApply includes edits on both pages.");
   styleBoundedLabel(advancedHint, lv_pct(100), COLOR_MUTED, LV_LABEL_LONG_WRAP);
   lv_obj_align(advancedHint, LV_ALIGN_TOP_LEFT, 2, 278);
-  gpsConfigApplyButtons[1] = makeGpsConfigButton(panel, "Apply", 2, 408, 98, applyGpsConfigDraft);
-  gpsConfigSaveButtons[1] = makeGpsConfigButton(panel, "Save", 106, 408, 98, saveGpsConfig);
+  gpsConfigApplyButtons[1] = makeGpsConfigButton(panel, "Apply", 2, 424, 98, applyGpsConfigDraft);
+  gpsConfigSaveButtons[1] = makeGpsConfigButton(panel, "Save", 106, 424, 98, saveGpsConfig);
   lv_obj_t* shareTitle = lv_label_create(panel);
   lv_label_set_text(shareTitle, "Share GPS\nto Heltec");
   styleBoundedLabel(shareTitle, 132, COLOR_TEXT, LV_LABEL_LONG_WRAP);

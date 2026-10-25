@@ -7,6 +7,7 @@ static lv_obj_t* homeLabel(lv_obj_t* parent, const char* text, int x, int y, int
   lv_obj_set_width(label, width);
   lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
   lv_obj_set_style_text_font(label, font, 0);
+  lv_obj_set_height(label, font->line_height);
   lv_obj_set_style_text_color(label, lv_color_hex(color), 0);
   lv_obj_clear_flag(label, LV_OBJ_FLAG_CLICKABLE);
   return label;
@@ -26,7 +27,7 @@ static lv_obj_t* homeCard(const char* title, int x, int y, int width, int height
   lv_obj_add_event_cb(card, action, LV_EVENT_CLICKED, nullptr);
   auto* label = homeLabel(card, title, 9, 6, width - 37, &montserrat_11, COLOR_ACCENT);
   if (caption) *caption = label;
-  homeLabel(card, LV_SYMBOL_RIGHT, width - 19, 6, 10, LV_FONT_DEFAULT, 0x85BFFF);
+  homeLabel(card, LV_SYMBOL_RIGHT, width - 19, 4, 10, LV_FONT_DEFAULT, 0x85BFFF);
   return card;
 }
 
@@ -51,8 +52,8 @@ static void buildHomeUi() {
 
   auto* battery = homeCard("BATTERY", 6, 118, 105, 70, [](lv_event_t*) { showPage(pageBattery); });
   lblHomePower = homeLabel(battery, "--", 9, 21, 85, &lv_font_montserrat_22, 0xF4F8FF);
-  lblHomePowerDetail = homeLabel(battery, "Checking battery", 9, 49, 91, &montserrat_11, 0xA1B5CE);
-  homePowerBar = lv_bar_create(battery); lv_obj_set_pos(homePowerBar, 9, 63); lv_obj_set_size(homePowerBar, 84, 2);
+  lblHomePowerDetail = homeLabel(battery, "Checking battery", 9, 47, 87, &montserrat_11, 0xA1B5CE);
+  homePowerBar = lv_bar_create(battery); lv_obj_set_pos(homePowerBar, 9, 65); lv_obj_set_size(homePowerBar, 84, 2);
   lv_bar_set_range(homePowerBar, 0, 100); lv_bar_set_value(homePowerBar, 0, LV_ANIM_OFF);
   lv_obj_set_style_bg_color(homePowerBar, lv_color_hex(0x294766), LV_PART_MAIN);
   lv_obj_set_style_bg_color(homePowerBar, lv_color_hex(0x65B0FF), LV_PART_INDICATOR);
@@ -63,6 +64,7 @@ static void buildHomeUi() {
   lblHomeGps = homeLabel(mesh, "GPS waiting", 9, 49, 85, &montserrat_11, 0xA1B5CE);
 
   auto* messages = homeCard("Messages", 6, 196, 218, 48, [](lv_event_t*) { showPage(pageOperate); }, &lblHomeMessageTitle);
+  lv_obj_set_width(lblHomeMessageTitle, 104);
   lblHomeUnread = homeLabel(messages, "", 123, 6, 67, &montserrat_11, 0xA1B5CE);
   lv_obj_set_style_text_align(lblHomeUnread, LV_TEXT_ALIGN_RIGHT, 0);
   lblHomeMessages = homeLabel(messages, "No messages yet", 9, 23, 195, &montserrat_15, 0xF4F8FF);

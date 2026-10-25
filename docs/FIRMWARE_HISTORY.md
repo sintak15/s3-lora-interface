@@ -315,3 +315,39 @@ compiled; physical touch gestures and a full 48-hour rotation were not exercised
 
 The installed application is 1,887,200 bytes with SHA-256
 `4a109fe5f262c18db0416e1933e5d6528b509ab82982ab25c38373f482c68d42`.
+
+## Bounded labels and native layout verification (v0.1.103)
+
+The larger Home Battery hint could wrap into the level bar. Home labels now
+have finite one-line heights; the hint uses compact remaining time such as
+`~4h55m`, with the estimate basis retained on the detail page. Hint, percentage,
+bar, chevron and unread-count boxes occupy separate space. Shared status/button
+labels also have explicit line heights, including the font change on Menu.
+
+Compact node rows use independent flexible columns and detailed rows grow with
+wrapped text. Chat headers, send controls and Nodes/Wi-Fi scan controls have
+additional separation. Sound test buttons fit their panel. Wi-Fi details grow
+with their text and push actions below them; GPS Advanced reserves space for
+its wrapped help and grows to contain the final instructions. Font sizes remain
+as enlarged in v0.1.102.
+
+Verification-only authenticated layout/frame endpoints inspect actual LVGL
+coordinates and export CRC-checked TFT frames. They restore transient test
+values and font selections without saving them. The verification loop has
+16 KiB stack space for HTTP-nested rendering; production retains its ordinary
+stack and excludes both endpoints. See [Home](HOME_DASHBOARD.md) and
+[build verification](BUILD.md) for the inspection tool.
+
+On-device checks passed on October 24, 2026: 74 layouts across Normal/Readable
+modes, including 30 screens, six extra Home states and detailed node rows per
+mode. No overlaps, clipped labels or truncated essential Home readings were
+reported. Captured Home pixels were visually reviewed. Native Home/UI/scrolling
+regressions and the firmware/web regression build passed. These are rendered
+geometry checks and programmed LVGL scrolling tests, not physical gesture tests.
+
+The production application is 1,887,632 bytes with SHA-256
+`ececbf47254c425e78e24c79a2717e6509753434c79e1be4bbb71c9bc796daca`.
+Wi-Fi installation returned to `app1` with a responsive radio link and mounted
+SD card. Reported preferences, cached Heltec configuration and channels were
+preserved. Continuous logging resumed with zero log/SD errors; both inspection
+endpoints returned 404 in the installed production build.
