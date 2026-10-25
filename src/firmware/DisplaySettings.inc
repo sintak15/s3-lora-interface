@@ -19,11 +19,11 @@ static void initBacklight() {
 
 static void applyFontMode() {
   if (readableTextMode) {
-    UI_FONT_SMALL = LV_FONT_DEFAULT;
+    UI_FONT_SMALL = &montserrat_15;
     UI_FONT_DEFAULT = UI_FONT_READABLE;
   } else {
-    UI_FONT_SMALL = &comic_neue_12;
-    UI_FONT_DEFAULT = &comic_neue_14;
+    UI_FONT_SMALL = &comic_neue_13;
+    UI_FONT_DEFAULT = &comic_neue_15;
   }
 }
 

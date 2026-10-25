@@ -221,3 +221,21 @@ for both application code and generated Meshtastic headers.
 Versioned UI, map, USB and GPS implementation notes are preserved in
 [FIRMWARE_HISTORY.md](FIRMWARE_HISTORY.md). Dated investigations are listed in
 the [documentation index](README.md).
+
+### UI fonts and scrolling checks
+
+The checked-in regular fonts are generated with Pillow using
+`tools/generate_lvgl_font.py`. The source TTFs and OFL licenses are under
+`src/fonts/`; missing icon glyphs fall back to the bundled LVGL Montserrat font.
+For example:
+
+```powershell
+python tools/generate_lvgl_font.py --font src/fonts/ComicNeue-Regular.ttf --size 13 --symbol comic_neue_13 --output src/fonts/comic_neue_13.c --fallback lv_font_montserrat_14
+python tools/generate_lvgl_font.py --font src/fonts/Montserrat-Medium.ttf --size 15 --symbol montserrat_15 --output src/fonts/montserrat_15.c --fallback lv_font_montserrat_14
+```
+
+Generate the other checked-in sizes with the corresponding size/symbol/output.
+The verification build's USB `test-ui` command includes real LVGL scrolling
+checks for row insertion, row-height changes, a missing anchor, empty lists,
+reading older chat and following new messages at the bottom. Compiling these
+checks does not execute them on the physical touchscreen.

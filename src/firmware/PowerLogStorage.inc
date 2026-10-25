@@ -54,13 +54,15 @@ static bool preparePowerLogStorage() {
     char tail[3072];
     loadSdTextTail(SD_POWER_HEALTH_PATH, tail, sizeof(tail));
     uint64_t savedAge = batteryCycle.restoredAgeMs;
-    const char* at = tail;
-    while ((at = strstr(at, "Current log age: "))) {
-      at += strlen("Current log age: ");
-      char* end = nullptr;
-      uint64_t seconds = strtoull(at, &end, 10);
-      if (end != at && strncmp(end, " s of powered-on recording", 25) == 0 && seconds <= UINT64_MAX / 1000) {
-        savedAge = max(savedAge, seconds * 1000);
+    for (auto marker : {"Current log age: ", "Log age: "}) {
+      const char* at = tail;
+      while ((at = strstr(at, marker))) {
+        at += strlen(marker);
+        char* end = nullptr;
+        uint64_t seconds = strtoull(at, &end, 10);
+        if (end != at && strncmp(end, " s", 2) == 0 && seconds <= UINT64_MAX / 1000) {
+          savedAge = max(savedAge, seconds * 1000);
+        }
       }
     }
     uint64_t elapsedThisBoot = batteryCycle.rotationClock.elapsed() >= batteryCycle.restoredAgeMs ?

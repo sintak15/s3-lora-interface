@@ -82,38 +82,44 @@ static bool writeBatteryCycleRow(const char* event) {
     (unsigned long)sdStorage.writeErrors, (unsigned long)batteryCycle.errors, utc);
   ok = ok && length > 0 && (size_t)length < sizeof(row) && file.print(row) == (size_t)length;
   file.close(); // Flush each row; a hard power cut can still lose the last SD write.
-  char entry[1800];
+  char battery[80], variation[48], step[32];
+  if (localBattery.gaugePresent) {
+    snprintf(battery, sizeof(battery), "%.3f V, %.1f%% (%s)", localBattery.rawPackMv / 1000.0f,
+             localBattery.gaugeSoc, Max17048::trendLabel(localBattery.chargeRateValid, localBattery.chargeRatePercentHr));
+  } else strlcpy(battery, "unavailable", sizeof(battery));
+  if (batteryCycle.lastSamples >= 2) {
+    snprintf(variation, sizeof(variation), "%lu mV", (unsigned long)batteryCycle.lastSpanMv);
+    snprintf(step, sizeof(step), "%lu mV", (unsigned long)batteryCycle.lastStepMv);
+  } else {
+    strlcpy(variation, "waiting for samples", sizeof(variation));
+    strlcpy(step, "unavailable", sizeof(step));
+  }
+  char entry[384];
   int entryLength = snprintf(entry, sizeof(entry),
-    "\nUTC %s | Uptime %lu s | session %08lx | boot %08lx | %s | firmware %s\n"
-    "  Current log age: %llu s of powered-on recording. Rotation: %s.\n"
-    "  Logging mode: %s. Battery readings are automatic.\n"
-    "  Battery sensor: %s; level %.2f%%; cell %.3f V; Battery: %s (change %.2f percentage points/hour; rate %s).\n"
-    "  Voltage since last record: %lu valid 1 Hz samples; min/max %.3f/%.3f V; span %lu mV; standard deviation %.2f mV; largest sampled step %lu mV.\n"
-    "  Errors since this boot: MAX reads %lu of %lu; UART decode %lu, timeout %lu, invalid length %lu; audio codec %lu, output writes %lu; audio recoveries %lu.\n"
-    "  Radio response seen: %s; last response %lu s ago. Wi-Fi signal: %ld dBm (0 = unavailable/AP mode).\n"
-    "  Battery warning: %s. Runtime estimate: %ld minutes (-1 = unavailable). SD write errors: %lu; failed log writes: %lu.\n"
-    "  Recording delays: SD busy %lu attempts; SD unavailable %lu attempts. Voltage samples are retained until the next successful record.\n",
-    utc, (unsigned long)(millis() / 1000), (unsigned long)batteryCycle.session, (unsigned long)batteryCycle.boot, event, FIRMWARE_VERSION,
-    (unsigned long long)(batteryCycle.rotationClock.elapsed() / 1000), batteryCycle.rotationEnabled ? "every 48 hours; current + previous retained" : "unlimited; no automatic deletion",
-    batteryCyclePhase(), localBattery.gaugePresent ? "available" : "READ FAILED; battery values stale",
-    localBattery.gaugeSoc, localBattery.rawPackMv / 1000.0f,
-    Max17048::trendLabel(localBattery.gaugePresent && localBattery.chargeRateValid, localBattery.chargeRatePercentHr),
-    localBattery.chargeRatePercentHr, localBattery.chargeRateValid ? "valid" : "unavailable; rate value stale",
-    (unsigned long)batteryCycle.lastSamples, batteryCycle.voltageWindow.minimum() / 1000.0f,
-    batteryCycle.voltageWindow.maximum() / 1000.0f, (unsigned long)batteryCycle.lastSpanMv,
-    batteryCycle.lastStdDevMv, (unsigned long)batteryCycle.lastStepMv,
-    (unsigned long)localBattery.readErrors, (unsigned long)localBattery.readAttempts,
-    (unsigned long)decodeErrors, (unsigned long)serialFrameTimeouts, (unsigned long)invalidFrameLengths,
-    (unsigned long)toneCodecIoFailures, (unsigned long)toneWriteFailures, (unsigned long)toneRecoveries,
-    radioResponseSeen ? "yes" : "no", (unsigned long)(radioResponseSeen ? (millis() - lastRadioResponseMs) / 1000 : 0),
-    (long)(wifiEnabled && !wifiApMode && WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0),
-    localBattery.gaugePresent ? batteryAlertLabel() : "unknown", (long)batteryRuntime.minutes(),
-    (unsigned long)sdStorage.writeErrors, (unsigned long)batteryCycle.errors,
-    (unsigned long)batteryCycle.busyDeferrals, (unsigned long)batteryCycle.unavailableDeferrals);
+    "\nUTC %s | Battery: %s | Variation: %s | Step: %s | Log age: %llu s\n",
+    utc, battery, variation, step, (unsigned long long)(batteryCycle.rotationClock.elapsed() / 1000));
   bool readableOk = entryLength > 0 && (size_t)entryLength < sizeof(entry) && readable.print(entry) == (size_t)entryLength;
+  if (batteryCycle.bootPending || rotated) {
+    int count = snprintf(entry, sizeof(entry),
+      "  %s | %s | boot %08lx | Rotation: %s. Variation and step use 1 Hz samples; fast spikes may be missed.\n",
+      rotated ? "New log" : "Restart", FIRMWARE_VERSION, (unsigned long)batteryCycle.boot,
+      batteryCycle.rotationEnabled ? "48 hours of use" : "unlimited");
+    readableOk = readableOk && count > 0 && (size_t)count < sizeof(entry) && readable.print(entry) == (size_t)count;
+  }
+  const uint32_t issues[] = {localBattery.readErrors, decodeErrors, serialFrameTimeouts, invalidFrameLengths,
+                             toneCodecIoFailures, toneWriteFailures, toneRecoveries, sdStorage.writeErrors, batteryCycle.errors};
+  const char* labels[] = {"battery read failures", "radio decode errors", "radio timeouts", "radio framing errors",
+                          "audio codec errors", "audio output errors", "audio recoveries", "SD write errors", "log write errors"};
+  for (unsigned i = 0; i < 9; ++i) {
+    uint32_t added = issues[i] - batteryCycle.reportedIssues[i];
+    if (!added) continue;
+    int count = snprintf(entry, sizeof(entry), "  %s: +%lu since last record\n", labels[i], (unsigned long)added);
+    readableOk = readableOk && count > 0 && (size_t)count < sizeof(entry) && readable.print(entry) == (size_t)count;
+  }
   readable.close();
   ok = ok && readableOk;
   if (ok) {
+    memcpy(batteryCycle.reportedIssues, issues, sizeof(issues));
     batteryCycle.rows++;
     sdStorage.writes++;
     batteryCycle.voltageWindow.resetWindow();

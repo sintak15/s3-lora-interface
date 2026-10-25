@@ -63,7 +63,7 @@ entries from a bounded 4 KiB tail, while web downloads provide the complete file
 The viewer refreshes on request so incoming samples do not move the text while
 it is being read. No Wi-Fi connection is needed for on-device viewing.
 
-The CYD **48h rotation** checkbox and web **Rotate logs every 48 hours of use**
+The CYD **Rotate 48h** checkbox and web **Rotate logs every 48 hours of use**
 setting control retention, not measurement. By default, each 48 hours of powered-on
 recording archives the current readable/CSV pair and starts a fresh pair. One
 previous pair is retained; the older previous pair is removed at the next
@@ -76,7 +76,8 @@ saved archive remains downloadable while rotation is disabled.
 The setting persists in NVS. Recording age is recovered from the last flushed
 readable record across restarts, including repeated short power cycles, with a
 15-minute NVS checkpoint as fallback. A hard power loss can lose the latest
-record and up to roughly 10 seconds of age. Powered-off time is not counted.
+record and normally about 10 seconds of age; an unavailable/busy SD card can
+require the older NVS checkpoint. Powered-off time is not counted.
 A persisted rotation journal and a directory rename keep both files together;
 interrupted rotation is completed safely at the next startup/attempt. Downloads
 and busy SD access defer recording/rotation. Sampled voltage statistics are
@@ -89,16 +90,18 @@ Files are under `/s3-lora/power-health/current/` and
 without overwriting newer files. Rotation deletes only the two owned files
 in the previous directory; unexpected additional files stop rotation safely.
 
-Readable records explain the following with units:
+The readable log uses a short measurement line every 10 seconds: timestamp,
+battery voltage/percentage/trend, sampled voltage variation, largest sampled
+step and recording age. Variation is the maximum minus the minimum voltage in
+the current window; step is the largest change between consecutive samples.
+Missing readings are marked unavailable instead of displaying stale values.
 
-- GPS UTC when fresh, or explicitly unavailable; session, boot, uptime and
-  recording age remain useful without GPS.
-- Battery voltage, percentage, **Battery: +**, **Battery: -**, **Battery: =**
-  or **Battery: Unavailable**, and percentage-point change per hour.
-- Valid sample count, min/max, span, standard deviation and largest observed
-  step from the normal 1 Hz voltage sampler.
-- MAX read attempts/failures, UART decode/framing errors, codec/output errors
-  and recoveries, Wi-Fi signal strength, radio response age and SD errors.
+Battery-read, radio framing/decode/timeout, audio and SD/log errors appear only
+when their counters increase, as a count added since the previous successful
+record. Audio recoveries are recorded the same way. A restart/new-log note
+identifies the firmware, boot and retention policy once. Zero counters, routine
+Wi-Fi/radio status, runtime estimates and repeated explanatory paragraphs are
+omitted from the readable log. Existing older entries remain intact.
 
 The optional CSV additionally includes raw VCELL/SOC/CRATE and read-only
 STATUS/CONFIG register snapshots with validity flags. Its legacy `phase` column
@@ -144,7 +147,7 @@ Reference: [Analog Devices MAX17048/MAX17049 datasheet](https://www.analog.com/m
 especially ModelGauge theory, voltage versus SOC, temperature compensation,
 quick-start and CRATE.
 
-From v0.1.101, the +, - and = glyphs are bold on the CYD and web UI; the
-symbols mean increasing, decreasing and steady gauge percentage. They do not
-assert physical charger presence. Detailed API/CSV fields retain their technical
+From v0.1.102, the +, - and = symbols use regular weight on the CYD and web UI.
+They mean increasing, decreasing and steady gauge percentage, and do not assert
+physical charger presence. Detailed API/CSV fields retain their technical
 SOC/CRATE names for analysis.

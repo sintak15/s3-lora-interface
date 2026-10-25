@@ -119,6 +119,8 @@ static void refreshDashboardLabels() {
 
 static void refreshScreenUi() {
   if (!lblStatus) return;
+  // Keep live updates from rebuilding content under a held finger or a fling.
+  if (uiReadInteractionActive()) return;
   bool pageForce = forcePageRefresh;
   if (!pageForce && millis() - lastUiRefreshMs < 500) return;
   forcePageRefresh = false;
@@ -776,7 +778,7 @@ static void refreshScreenUi() {
   refreshGpsConfigUi();
   refreshMapUi();
 
-  refreshChatViews(pageForce || isUiDirty(UI_DIRTY_CHAT));
+  refreshChatViews(pageForce);
   if (currentPage == pagePacketInspector && taPacketInspector && (pageForce || isUiDirty(UI_DIRTY_PACKET_LOG))) {
     setReadonlyTextStable(taPacketInspector, packetLog[0] ? packetLog : "No packets decoded yet");
     clearUiDirty(UI_DIRTY_PACKET_LOG);
@@ -809,6 +811,7 @@ static void refreshScreenUi() {
 
 #ifdef FIRMWARE_RUN_TESTS
 // Exercise UI formatting/rendering only; this does not simulate battery discharge.
+#include "UiScrollTests.inc"
 static void runUiSmokeTests() {
   lv_obj_t* savedPage = currentPage;
   lv_obj_t* savedNavigation[8];
@@ -896,6 +899,7 @@ static void runUiSmokeTests() {
   passed &= menuOk;
   Serial.printf("[test-ui] Home bounds and touch targets: %s\n", layoutOk ? "PASS" : "FAIL");
   passed &= layoutOk;
+  passed &= runUiScrollTests();
   memcpy(navigationStack, savedNavigation, sizeof(savedNavigation));
   navigationDepth = savedDepth;
   showPage(savedPage, false);

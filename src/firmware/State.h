@@ -3,8 +3,11 @@
 #include "../NotificationSound.h"
 
 // Shared runtime state; included once by the main sketch.
-LV_FONT_DECLARE(comic_neue_12);
-LV_FONT_DECLARE(comic_neue_14);
+LV_FONT_DECLARE(comic_neue_13);
+LV_FONT_DECLARE(comic_neue_15);
+LV_FONT_DECLARE(montserrat_11);
+LV_FONT_DECLARE(montserrat_15);
+LV_FONT_DECLARE(montserrat_17);
 
 HardwareSerial SerialLoRa(2);
 HardwareSerial SerialGPS(1);
@@ -426,18 +429,9 @@ static constexpr uint32_t COLOR_TEXT = 0xF4F8FF;
 static constexpr uint32_t COLOR_MUTED = 0xA1B5CE;
 static constexpr uint32_t COLOR_ACCENT = 0x85BFFF;
 static constexpr uint32_t COLOR_ACTION = 0x3B9DFF;
-extern "C" {
-  extern lv_font_t battery_symbols_10;
-  extern lv_font_t battery_symbols_12;
-  extern lv_font_t battery_symbols_14;
-}
-static const lv_font_t* UI_FONT_SMALL = &comic_neue_12;
-static const lv_font_t* UI_FONT_DEFAULT = &comic_neue_14;
-#if LV_FONT_MONTSERRAT_16
-static const lv_font_t* UI_FONT_READABLE = &lv_font_montserrat_16;
-#else
-static const lv_font_t* UI_FONT_READABLE = LV_FONT_DEFAULT;
-#endif
+static const lv_font_t* UI_FONT_SMALL = &comic_neue_13;
+static const lv_font_t* UI_FONT_DEFAULT = &comic_neue_15;
+static const lv_font_t* UI_FONT_READABLE = &montserrat_17;
 static constexpr int UI_GAP = 6;
 static constexpr int UI_PANEL_W = SCREEN_W - 12;
 static constexpr int UI_ACTION_H = 36;
@@ -499,6 +493,7 @@ struct BatteryCycleLog {
   float lastStdDevMv = 0;
   uint32_t lastStepMv = 0;
   uint32_t lastSamples = 0;
+  uint32_t reportedIssues[9] = {};
   bool bootPending = true;
   char status[64] = "Continuous logging";
 };
@@ -698,6 +693,7 @@ static lv_obj_t* taPowerLogs = nullptr;
 static lv_obj_t* lblPowerLogView = nullptr;
 static lv_obj_t* swPowerLogRotation = nullptr;
 static bool powerLogViewPrevious = false;
+static bool chatScrollToNewestPending = false;
 static lv_obj_t* pageMessageDiag = nullptr;
 static lv_obj_t* currentPage = nullptr;
 static lv_obj_t* navigationStack[8] = {};
@@ -853,6 +849,7 @@ static MapRenderJob mapRenderActiveJob;
 static uint32_t nextMapRenderJobId = 1;
 static uint32_t selectedNodeNum = 0;
 static uint32_t lastNodeListRefreshMs = 0;
+static bool nodeListScrollResetPending = false;
 static uint32_t nodeListClearedMs = 0;
 static NodeSortMode nodeSortMode = NODE_SORT_LAST_HEARD;
 static NodeFilterMode nodeFilterMode = NODE_FILTER_ALL;
@@ -873,6 +870,7 @@ static char mapCacheStatus[48] = "not checked";
 static char mapTileRoot[64] = "/s3-lora/tiles";
 static uint32_t touchSamples = 0;
 static uint32_t lastTouchMs = 0;
+static bool touchDown = false;
 static uint16_t lastTouchX = 0;
 static uint16_t lastTouchY = 0;
 static uint32_t sdLockTimeouts = 0;

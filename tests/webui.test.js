@@ -177,8 +177,8 @@ function testChatColorsAndBatterySymbols(){
   assert(rendered.includes('class="chatOther">  [fake] [me] quoted'));
   for (const symbol of ['+','-','=']) {
     context.batterySymbol=symbol;
-    assert(vm.runInContext('statValue("Battery",batterySymbol)',context).includes('<strong class="batterySymbol">'));
-    assert(vm.runInContext('statValue("Power","Battery: "+batterySymbol)',context).includes('<strong class="batterySymbol">'));
+    assert(vm.runInContext('statValue("Battery",batterySymbol)',context).includes('<span class="batterySymbol">'));
+    assert(vm.runInContext('statValue("Power","Battery: "+batterySymbol)',context).includes('<span class="batterySymbol">'));
   }
   assert(vm.runInContext('statValue("Power","<img>")',context).includes('&lt;img'));
   assert(!html.includes('Start logging') && !html.includes('Stop logging'));

@@ -43,6 +43,7 @@ static void lvTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
   uint16_t x = 0;
   uint16_t y = 0;
   if (readTouch(x, y)) {
+    touchDown = true;
     touchSamples++;
     lastTouchMs = millis();
     lastTouchX = x;
@@ -51,11 +52,34 @@ static void lvTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
     data->point.x = x;
     data->point.y = y;
   } else {
+    touchDown = false;
     data->state = LV_INDEV_STATE_REL;
   }
 }
 
+static bool uiReadInteractionActive() {
+  if (touchDown || (lastTouchMs && (uint32_t)(millis() - lastTouchMs) < 200)) return true;
+  // An open options list stays where the user left it between swipes too.
+  for (auto* dropdown : {dropdownToneMessage, dropdownToneDirect, dropdownMsgDiagA, dropdownMsgDiagB,
+                         gpsConfigDropdowns[0], gpsConfigDropdowns[1], gpsConfigDropdowns[2],
+                         gpsConfigDropdowns[3], gpsConfigDropdowns[4]}) {
+    if (dropdown && lv_dropdown_is_open(dropdown)) return true;
+  }
+  for (auto* input = lv_indev_get_next(nullptr); input; input = lv_indev_get_next(input)) {
+    if (lv_indev_get_scroll_obj(input)) return true; // Includes momentum after release.
+  }
+  return false;
+}
+
 static void styleDarkObject(lv_obj_t* obj, uint32_t bg, uint32_t text) {
+  // Touch focus must not pull a button and its scrollable ancestors into view.
+  lv_obj_clear_flag(obj, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
+  if (lv_obj_check_type(obj, &lv_dropdown_class)) {
+    lv_obj_add_event_cb(obj, [](lv_event_t* event) {
+      auto* list = lv_dropdown_get_list(lv_event_get_target(event));
+      if (list) UiScroll::vertical(list);
+    }, LV_EVENT_READY, nullptr);
+  }
   lv_obj_set_style_bg_color(obj, lv_color_hex(bg), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_text_color(obj, lv_color_hex(text), LV_PART_MAIN);
@@ -87,15 +111,6 @@ static void styleBoundedLabel(lv_obj_t* label, lv_coord_t width, uint32_t color,
 
 // Shared by label/value readouts, never editable fields or message/log bodies.
 static char readoutTextBuffer[4096];
-static const lv_font_t* batterySymbolFont(const lv_font_t* regular) {
-  lv_font_t* symbols = regular == &lv_font_montserrat_10 ? &battery_symbols_10 :
-                       regular == &comic_neue_12 ? &battery_symbols_12 : &battery_symbols_14;
-  symbols->fallback = regular;
-  symbols->line_height = regular->line_height;
-  symbols->base_line = regular->base_line;
-  return symbols;
-}
-
 static void setReadoutText(lv_obj_t* label, const char* text) {
   if (!label) return;
   const bool colored = DiagnosticText::format(readoutTextBuffer, sizeof(readoutTextBuffer), text);
@@ -121,6 +136,8 @@ static lv_obj_t* makePanel(lv_obj_t* parent) {
   styleDarkBorder(panel);
   lv_obj_set_style_radius(panel, 6, 0);
   lv_obj_set_style_pad_all(panel, 5, 0);
+  // The page owns scrolling; decorative panels must not catch a drag.
+  lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
   return panel;
 }
 
@@ -138,6 +155,7 @@ static lv_obj_t* makePage(lv_obj_t* parent) {
 
 static void makePageScrollable(lv_obj_t* page) {
   lv_obj_add_flag(page, LV_OBJ_FLAG_SCROLLABLE);
+  UiScroll::vertical(page);
   lv_obj_set_scrollbar_mode(page, LV_SCROLLBAR_MODE_AUTO);
 }
 
@@ -212,6 +230,8 @@ static void showPage(lv_obj_t* target, bool remember) {
     else lv_obj_add_flag(page, LV_OBJ_FLAG_HIDDEN);
   }
   if (keyboard) lv_obj_add_flag(keyboard, LV_OBJ_FLAG_HIDDEN);
+  if (currentPage != target && (target == pagePublicChat || target == pagePrivateChat || target == pageDirectChat))
+    chatScrollToNewestPending = true;
   currentPage = target;
   if (target == pagePowerLogs) loadPowerLogView();
   if (btnNavBack && btnNavHome) {
@@ -224,7 +244,7 @@ static void showPage(lv_obj_t* target, bool remember) {
     lv_obj_set_style_radius(btnNavBack, home ? 10 : 6, 0);
     lv_obj_set_style_bg_color(btnNavBack, lv_color_hex(home ? 0x193753 : 0x102238), 0);
     lv_obj_set_style_border_color(btnNavBack, lv_color_hex(home ? 0x34577C : 0x365B82), 0);
-    lv_obj_set_style_text_font(lv_obj_get_child(btnNavBack, 0), home ? &lv_font_montserrat_14 : UI_FONT_SMALL, 0);
+    lv_obj_set_style_text_font(lv_obj_get_child(btnNavBack, 0), home ? &montserrat_15 : UI_FONT_SMALL, 0);
   }
   if (target == pagePublicChat) unreadPublic = 0;
   if (target == pagePrivateChat) unreadFamily = 0;
@@ -519,7 +539,7 @@ static lv_obj_t* makeActionButton(lv_obj_t* parent, const char* text, int y, lv_
 
 static lv_obj_t* makeSmallButton(lv_obj_t* parent, const char* text, int x, int y, int w, lv_event_cb_t cb) {
   lv_obj_t* btn = lv_btn_create(parent);
-  lv_obj_set_size(btn, w, 22);
+  lv_obj_set_size(btn, w, 26);
   lv_obj_align(btn, LV_ALIGN_TOP_LEFT, x, y);
   styleDarkObject(btn, COLOR_PANEL);
   styleDarkBorder(btn, 0x39638D);
@@ -670,6 +690,7 @@ static lv_obj_t* makeReadonlyText(lv_obj_t* parent, int y, int h) {
   lv_obj_align(ta, LV_ALIGN_TOP_MID, 0, y);
   lv_textarea_set_cursor_click_pos(ta, false);
   lv_obj_clear_flag(ta, LV_OBJ_FLAG_CLICK_FOCUSABLE);
+  UiScroll::vertical(ta);
   styleDarkTextArea(ta);
   return ta;
 }
@@ -702,11 +723,17 @@ static bool setReadonlyTextNewest(lv_obj_t* ta, const char* text, bool forceScro
   if (!ta || !text) return false;
   const char* current = lv_textarea_get_text(ta);
   bool same = current && strcmp(current, text) == 0;
+  bool follow = forceScroll || lv_obj_get_scroll_bottom(ta) <= 4;
+  lv_coord_t scrollY = lv_obj_get_scroll_y(ta);
   if (!same) {
     lv_textarea_set_text(ta, text);
   }
   if (!same || forceScroll) {
-    scrollReadonlyTextToBottom(ta);
+    if (follow) scrollReadonlyTextToBottom(ta);
+    else {
+      lv_obj_update_layout(ta);
+      lv_obj_scroll_to_y(ta, scrollY, LV_ANIM_OFF);
+    }
   }
   return !same;
 }
@@ -880,11 +907,13 @@ static void nodeListButtonEvent(lv_event_t* e) {
 
 static void cycleNodeSort() {
   nodeSortMode = (NodeSortMode)((nodeSortMode + 1) % 4);
+  nodeListScrollResetPending = true;
   refreshNodeList(true);
 }
 
 static void cycleNodeFilter() {
   nodeFilterMode = (NodeFilterMode)((nodeFilterMode + 1) % 5);
+  nodeListScrollResetPending = true;
   refreshNodeList(true);
 }
 
@@ -899,6 +928,7 @@ static void cycleNodeListView() {
 static void clearNodeList() {
   memset(nodes, 0, sizeof(nodes));
   nodeCount = 0;
+  nodeListScrollResetPending = true;
   selectedNodeNum = 0;
   nodeSortMode = NODE_SORT_LAST_HEARD;
   nodeFilterMode = NODE_FILTER_ALL;
@@ -915,9 +945,12 @@ static void clearNodeList() {
 
 static void refreshNodeList(bool force) {
   if (!listNodes) return;
+  if (!force && uiReadInteractionActive()) return;
   uint32_t now = millis();
   if (!force && now - lastNodeListRefreshMs < 3000) return;
   lastNodeListRefreshMs = now;
+  const auto position = nodeListScrollResetPending ? UiScroll::ListPosition{} : UiScroll::capture(listNodes);
+  nodeListScrollResetPending = false;
   lv_obj_clean(listNodes);
   lv_obj_set_style_pad_all(listNodes, nodeListViewMode == NODE_LIST_VIEW_COMPACT ? 2 : 4, 0);
   lv_obj_set_style_pad_row(listNodes, nodeListViewMode == NODE_LIST_VIEW_COMPACT ? 2 : 6, 0);
@@ -947,6 +980,7 @@ static void refreshNodeList(bool force) {
     const char* emptyText = nodeCount ? "No nodes match filter" : "No nodes heard yet";
     if (!nodeCount && nodeListClearedMs) emptyText = "Node list reset; waiting for fresh packets";
     lv_list_add_text(listNodes, emptyText);
+    UiScroll::restore(listNodes, {});
     clearUiDirty(UI_DIRTY_NODES);
     return;
   }
@@ -959,6 +993,7 @@ static void refreshNodeList(bool force) {
 
     if (compactView) {
       lv_obj_t* row = lv_obj_create(listNodes);
+      lv_obj_set_user_data(row, (void*)(uintptr_t)node.num);
       lv_obj_set_width(row, lv_pct(100));
       lv_obj_set_height(row, 30);
       styleDarkObject(row, node.isFavorite ? 0x143653 : 0x0C1B2D);
@@ -1005,6 +1040,7 @@ static void refreshNodeList(bool force) {
     }
 
     lv_obj_t* row = lv_obj_create(listNodes);
+    lv_obj_set_user_data(row, (void*)(uintptr_t)node.num);
     lv_obj_set_width(row, lv_pct(100));
     lv_obj_set_height(row, 60);
     styleDarkObject(row, nodeRowBg(node, now));
@@ -1054,6 +1090,7 @@ static void refreshNodeList(bool force) {
     lv_obj_set_style_text_font(label, UI_FONT_SMALL, 0);
     lv_obj_align(label, LV_ALIGN_TOP_LEFT, 0, 16);
   }
+  UiScroll::restore(listNodes, position);
   clearUiDirty(UI_DIRTY_NODES);
 }
 
@@ -1299,6 +1336,7 @@ static void ensureWifiScanPage() {
   lv_obj_center(lblRefreshScan);
   lv_obj_add_event_cb(btnRefreshScan, [](lv_event_t*) { requestWifiScan(); }, LV_EVENT_CLICKED, nullptr);
   listWifiScan = lv_list_create(pageWifiScan);
+  UiScroll::vertical(listWifiScan);
   lv_obj_set_size(listWifiScan, SCREEN_W - 12, 180);
   lv_obj_align(listWifiScan, LV_ALIGN_TOP_MID, 0, 58);
   styleDarkObject(listWifiScan, COLOR_PANEL);
@@ -1450,10 +1488,11 @@ static void buildScreenUi() {
   lv_label_set_long_mode(lblNodeListMode, LV_LABEL_LONG_DOT);
   lv_obj_set_style_text_color(lblNodeListMode, lv_color_hex(COLOR_MUTED), 0);
   lv_obj_set_style_text_font(lblNodeListMode, UI_FONT_SMALL, 0);
-  lv_obj_align(lblNodeListMode, LV_ALIGN_TOP_LEFT, 6, 46);
+  lv_obj_align(lblNodeListMode, LV_ALIGN_TOP_LEFT, 6, 50);
   listNodes = lv_list_create(pageNodes);
-  lv_obj_set_size(listNodes, SCREEN_W - 12, 188);
-  lv_obj_align(listNodes, LV_ALIGN_TOP_MID, 0, 62);
+  UiScroll::vertical(listNodes);
+  lv_obj_set_size(listNodes, SCREEN_W - 12, 178);
+  lv_obj_align(listNodes, LV_ALIGN_TOP_MID, 0, 72);
   styleDarkObject(listNodes, COLOR_PANEL);
   styleDarkBorder(listNodes, 0x39638D);
   lv_obj_set_style_pad_all(listNodes, 4, 0);
@@ -1462,7 +1501,7 @@ static void buildScreenUi() {
   makePageTitle(pageNodeDetail, "Node Detail");
   taNodeDetail = makeReadonlyText(pageNodeDetail, 22, 184);
   btnNodeFavorite = lv_btn_create(pageNodeDetail);
-  lv_obj_set_size(btnNodeFavorite, 72, 22);
+  lv_obj_set_size(btnNodeFavorite, 72, 26);
   lv_obj_align(btnNodeFavorite, LV_ALIGN_TOP_LEFT, 6, 214);
   styleDarkObject(btnNodeFavorite, COLOR_PANEL);
   styleDarkBorder(btnNodeFavorite, 0x39638D);
@@ -1481,7 +1520,7 @@ static void buildScreenUi() {
   makePageTitle(pageMeshHealth, "Mesh Health");
   makePageScrollable(pageMeshHealth);
   lv_obj_t* meshHealthPanel = makePanel(pageMeshHealth);
-  lv_obj_set_size(meshHealthPanel, SCREEN_W - 12, 392);
+  lv_obj_set_size(meshHealthPanel, SCREEN_W - 12, LV_SIZE_CONTENT);
   lv_obj_align(meshHealthPanel, LV_ALIGN_TOP_MID, 0, 24);
   lblMeshHealth = lv_label_create(meshHealthPanel);
   setReadoutText(lblMeshHealth, "Waiting for radio health...");
@@ -1806,7 +1845,7 @@ static void buildScreenUi() {
   makePageTitle(pageSystemInterface, "Interface");
   makePageScrollable(pageSystemInterface);
   lv_obj_t* interfacePanel = makePanel(pageSystemInterface);
-  lv_obj_set_size(interfacePanel, SCREEN_W - 12, 330);
+  lv_obj_set_size(interfacePanel, SCREEN_W - 12, LV_SIZE_CONTENT);
   lv_obj_align(interfacePanel, LV_ALIGN_TOP_MID, 0, 24);
   lblSystemInterface = lv_label_create(interfacePanel);
   setReadoutText(lblSystemInterface, "Interface ready");
@@ -1815,7 +1854,7 @@ static void buildScreenUi() {
   makePageTitle(pageSystemSerial, "Serial Link");
   makePageScrollable(pageSystemSerial);
   lv_obj_t* serialPanel = makePanel(pageSystemSerial);
-  lv_obj_set_size(serialPanel, SCREEN_W - 12, 300);
+  lv_obj_set_size(serialPanel, SCREEN_W - 12, LV_SIZE_CONTENT);
   lv_obj_align(serialPanel, LV_ALIGN_TOP_MID, 0, 24);
   lblSystemSerial = lv_label_create(serialPanel);
   setReadoutText(lblSystemSerial, "Serial ready");
@@ -1824,7 +1863,7 @@ static void buildScreenUi() {
   makePageTitle(pageSystemRadio, "Radio Stats");
   makePageScrollable(pageSystemRadio);
   lv_obj_t* radioPanel = makePanel(pageSystemRadio);
-  lv_obj_set_size(radioPanel, SCREEN_W - 12, 300);
+  lv_obj_set_size(radioPanel, SCREEN_W - 12, LV_SIZE_CONTENT);
   lv_obj_align(radioPanel, LV_ALIGN_TOP_MID, 0, 24);
   lblSystemRadio = lv_label_create(radioPanel);
   setReadoutText(lblSystemRadio, "Radio ready");
@@ -1835,7 +1874,7 @@ static void buildScreenUi() {
   lv_obj_t* gpsConfigButton = makeActionButton(pageSystemGps, "Config", 28, [](lv_event_t*) { openGpsConfig(); });
   lv_obj_set_height(gpsConfigButton, 44);
   lv_obj_t* gpsPanel = makePanel(pageSystemGps);
-  lv_obj_set_size(gpsPanel, SCREEN_W - 12, 430);
+  lv_obj_set_size(gpsPanel, SCREEN_W - 12, LV_SIZE_CONTENT);
   lv_obj_align(gpsPanel, LV_ALIGN_TOP_MID, 0, 84);
   lblGpsStats = lv_label_create(gpsPanel);
   setReadoutText(lblGpsStats, "Waiting for CYD GPS UART...");
@@ -1881,7 +1920,7 @@ static void buildScreenUi() {
   makePageTitle(pageWifiStats, "WiFi Stats");
   makePageScrollable(pageWifiStats);
   lv_obj_t* wifiStatsPanel = makePanel(pageWifiStats);
-  lv_obj_set_size(wifiStatsPanel, SCREEN_W - 12, 330);
+  lv_obj_set_size(wifiStatsPanel, SCREEN_W - 12, LV_SIZE_CONTENT);
   lv_obj_align(wifiStatsPanel, LV_ALIGN_TOP_MID, 0, 24);
   lblWifiStats = lv_label_create(wifiStatsPanel);
   setReadoutText(lblWifiStats, "WiFi stats unavailable");
@@ -1978,10 +2017,10 @@ static void buildScreenUi() {
 
   makePageTitle(pageBattery, "Battery");
   makePageScrollable(pageBattery);
-  makeSmallButton(pageBattery, "View logs", 0, 24, 110, [](lv_event_t*) { showPage(pagePowerLogs); });
+  makeSmallButton(pageBattery, "View logs", 0, 24, 100, [](lv_event_t*) { showPage(pagePowerLogs); });
   swPowerLogRotation = lv_checkbox_create(pageBattery);
-  lv_checkbox_set_text(swPowerLogRotation, "48h rotation");
-  lv_obj_set_pos(swPowerLogRotation, 120, 24);
+  lv_checkbox_set_text(swPowerLogRotation, "Rotate 48h");
+  lv_obj_set_pos(swPowerLogRotation, 112, 24);
   lv_obj_set_style_text_font(swPowerLogRotation, UI_FONT_SMALL, 0);
   if (batteryCycle.rotationEnabled) lv_obj_add_state(swPowerLogRotation, LV_STATE_CHECKED);
   lv_obj_add_event_cb(swPowerLogRotation, [](lv_event_t* e) {
@@ -1994,15 +2033,15 @@ static void buildScreenUi() {
   }, LV_EVENT_VALUE_CHANGED, nullptr);
   auto* logPolicyHint = lv_label_create(pageBattery);
   styleBoundedLabel(logPolicyHint, 230, COLOR_MUTED, LV_LABEL_LONG_WRAP);
-  lv_obj_set_pos(logPolicyHint, 0, 52);
-  lv_label_set_text(logPolicyHint, "Always logs. Off = keep all logs.");
+  lv_obj_set_pos(logPolicyHint, 0, 56);
+  lv_label_set_text(logPolicyHint, "Always logs. Off = unlimited.");
   lv_obj_t* batteryPanel = makePanel(pageBattery);
-  lv_obj_set_size(batteryPanel, SCREEN_W - 12, 660);
+  lv_obj_set_size(batteryPanel, SCREEN_W - 12, LV_SIZE_CONTENT);
   lv_obj_align(batteryPanel, LV_ALIGN_TOP_MID, 0, 84);
   lblBatteryStats = lv_label_create(batteryPanel);
   setReadoutText(lblBatteryStats, "Reading S3 battery...");
   styleBoundedLabel(lblBatteryStats, lv_pct(100), COLOR_TEXT, LV_LABEL_LONG_WRAP);
-  lv_obj_set_style_text_font(lblBatteryStats, batterySymbolFont(UI_FONT_SMALL), 0);
+  lv_obj_set_style_text_font(lblBatteryStats, UI_FONT_SMALL, 0);
 
   makePageTitle(pagePowerLogs, "Power logs");
   lv_obj_set_height(makeSmallButton(pagePowerLogs, "Current log", 0, 24, 110, [](lv_event_t*) { powerLogViewPrevious = false; loadPowerLogView(); }), 30);

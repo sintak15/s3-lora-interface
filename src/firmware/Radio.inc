@@ -414,6 +414,7 @@ static bool isPrivateChannel(uint8_t index) {
 }
 
 static void refreshChatViews(bool force) {
+  if (uiReadInteractionActive()) return;
   char emptyText[48];
   bool updated = false;
   bool visible = currentPage == pagePublicChat || currentPage == pagePrivateChat || currentPage == pageDirectChat;
@@ -421,15 +422,16 @@ static void refreshChatViews(bool force) {
   if (!force && !isUiDirty(UI_DIRTY_CHAT)) return;
   if (currentPage == pagePublicChat && taPublicChat) {
     formatNoChannelChat(publicChannelLabel(), emptyText, sizeof(emptyText));
-    updated |= setChatTextNewest(taPublicChat, publicChatLog[0] ? publicChatLog : emptyText, force);
+    updated |= setChatTextNewest(taPublicChat, publicChatLog[0] ? publicChatLog : emptyText, chatScrollToNewestPending);
   }
   if (currentPage == pagePrivateChat && taFamilyChat) {
     formatNoChannelChat(privateChannelLabel(), emptyText, sizeof(emptyText));
-    updated |= setChatTextNewest(taFamilyChat, familyChatLog[0] ? familyChatLog : emptyText, force);
+    updated |= setChatTextNewest(taFamilyChat, familyChatLog[0] ? familyChatLog : emptyText, chatScrollToNewestPending);
   }
   if (currentPage == pageDirectChat && taDirectChat) {
-    updated |= setChatTextNewest(taDirectChat, directChatLog[0] ? directChatLog : "No direct messages yet", force);
+    updated |= setChatTextNewest(taDirectChat, directChatLog[0] ? directChatLog : "No direct messages yet", chatScrollToNewestPending);
   }
+  chatScrollToNewestPending = false;
   if (updated || force) clearUiDirty(UI_DIRTY_CHAT);
 }
 
@@ -691,6 +693,7 @@ static void syncMessageDiagTargetsFromDropdowns() {
 }
 
 static void refreshMessageDiagView() {
+  if (currentPage == pageMessageDiag && uiReadInteractionActive()) return;
   char options[3072];
   options[0] = '\0';
   uint32_t signature = 2166136261UL;

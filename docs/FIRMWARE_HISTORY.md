@@ -278,3 +278,40 @@ in blue and other devices in white. New persisted direction tags are derived
 from actual node direction, independently of display names. User content is
 escaped before web/LVGL styling. Clear action labels and short explanations are
 recorded as the preferred approach for future interface work.
+
+## Stable scrolling and concise diagnostics (v0.1.102)
+
+Fixes Nodes refreshes that deleted rows and reset scroll position. Refreshes now
+preserve the visible node and offset; shared live updates wait during touch and
+scrolling momentum. Decorative panels no longer intercept scrolling, readout
+panels fit their contents, and touch focus cannot pull menus back toward a
+button. Pages, lists and read-only text use bounded vertical scrolling. Chat
+preserves older reading positions and follows new messages only at the bottom.
+
+Readable power-health entries keep voltage, percentage/trend, variation and
+largest sampled step on one short line. Error/recovery lines appear only when
+counters increase. Restart notes and measurement limits are stated once per
+boot/new log; repeated normal counters and status paragraphs are removed.
+Detailed CSV records and existing log contents remain available.
+
+Battery symbols return to regular weight. Default text grows by one pixel on
+both interfaces, including CYD Normal/Readable modes. Generated symbol-only
+fonts and superseded normal fonts are removed; regular font sources, OFL
+licenses and a reproducible generator remain in the repository.
+
+Installed over authenticated Wi-Fi on October 24, 2026. The CYD restarted into
+`app1` with a responsive radio link and mounted SD card; reported preferences,
+cached Heltec configuration and channels matched the pre-update snapshot.
+Live checks verified automatic samples, retention off/on with recording
+continuing, all prior readable/CSV bytes preserved, restart continuation,
+unchanged 40-column CSV register units and the new concise readable entries.
+Log/SD write errors remained zero, and 48-hour rotation was left enabled.
+
+Firmware/compile-time regressions, web regressions and mobile/desktop browser
+checks passed. Live browser checks confirmed regular-weight symbols, 15 px body
+text, message colors and no JavaScript errors at 390 px and 1,280 px. Generated
+fonts reproduced from the included source files. Native LVGL scroll tests were
+compiled; physical touch gestures and a full 48-hour rotation were not exercised.
+
+The installed application is 1,887,200 bytes with SHA-256
+`4a109fe5f262c18db0416e1933e5d6528b509ab82982ab25c38373f482c68d42`.

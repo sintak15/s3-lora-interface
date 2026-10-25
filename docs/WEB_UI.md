@@ -49,8 +49,8 @@ have separate expandable topics. Field reports remain directly downloadable.
 SD storage initially shows status, type, usage and capacity; saved files and
 maintenance counters have their own expandable groups.
 
-The Battery & runtime topic shows bold **Battery: +**, **Battery: -** and
-**Battery: =** indicators, sampled voltage variation and automatic logging status.
+The Battery & runtime topic shows Battery: +, Battery: - and
+Battery: = indicators, sampled voltage variation and automatic logging status.
 The retention checkbox rotates after 48 hours of powered-on recording; disabling
 it keeps the current log growing. Current and previous readable/CSV downloads
 remain available. On the CYD, **System > Battery > View logs** opens a scrollable
@@ -131,3 +131,22 @@ setup or verify new relay acknowledgements. Local CYD GPS reception was working.
 
 The installed application is 1,871,040 bytes; its SHA-256 is
 `81923f511a5de53aa77e536fffa12e296425a16d7b195332f6c9b901df4ab821`.
+
+## Stable scrolling and text sizing (v0.1.102)
+
+CYD live readouts wait while a finger is down, until scrolling momentum ends,
+and while an options dropdown is open.
+Nodes refreshes keep the visible node and its offset, including when new nodes
+sort above it or compact/detail row heights change. Removing an anchor clamps
+the old position to the available content. Changing Sort/Filter or explicitly
+clearing the list starts at the top. Returning from node details keeps position.
+
+Pages own vertical scrolling; decorative panels pass drags to the page and
+readout panels grow with their text. Touch focus no longer scrolls a button into
+view. Pages, lists and read-only text avoid elastic overscroll. Chat follows new
+messages while at the bottom and preserves position when reading older entries.
+
+Default text is one pixel larger: CYD Comic Neue 12/14 becomes 13/15 px, and
+Readable mode Montserrat 14/16 becomes 15/17 px. Home small text becomes 11 px
+and message previews 15 px; large dashboard headings retain their separate size.
+Web text sizes also increase by one CSS pixel. Battery symbols use regular weight.

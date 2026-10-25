@@ -38,6 +38,7 @@
 #include "src/SampleVariation.h"
 #include "src/LogRotation.h"
 #include "src/ChatText.h"
+#include "src/UiScroll.h"
 #include "src/MapTileCache.h"
 #include "src/TileUpload.h"
 #include "src/MapNavigation.h"
