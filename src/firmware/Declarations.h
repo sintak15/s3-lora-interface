@@ -1,6 +1,7 @@
 #pragma once
 
 // Internal interfaces shared by the firmware modules.
+static fs::FS& sdCardFilesystem();
 static bool sendTextMessage(const char* text, int8_t channelIndex = PUBLIC_CHANNEL_INDEX);
 static bool sendDirectTextMessage(const char* text, uint32_t toNode);
 static bool isDirectAddress(uint32_t to);
@@ -326,7 +327,7 @@ static bool isRecentLocalEcho(uint8_t channel, uint32_t to, const uint8_t* text,
 static void formatChatTimestamp(char* out, size_t outSize);
 static void copyChatPreview(char* out, size_t outSize, const char* sender, const uint8_t* text, size_t len);
 static void recordChatActivity(uint8_t channel, uint32_t to, const char* sender, const uint8_t* text, size_t len);
-static void appendChatMessage(uint8_t channel, uint32_t to, const char* sender, const uint8_t* text, size_t len, bool local);
+static void appendChatMessage(uint8_t channel, uint32_t to, const char* sender, const uint8_t* text, size_t len, bool local, uint32_t from = 0);
 static bool writeStreamFrame(const uint8_t* payload, size_t len);
 static uint32_t allocateMeshPacketId();
 static uint8_t activeHopLimit();
@@ -403,6 +404,21 @@ static void handleFirmwareUpload();
 static void handleFirmwareUpdateDone();
 static bool validateWebNumericArgs();
 static bool sdDownloadPathActive(const char* path);
+static void initGames();
+static void serviceGames();
+static bool gamesMayLeavePage(lv_obj_t* target);
+static bool uiReadInteractionActive();
+static void updateGameBoyTouches(const uint8_t* points, size_t bytes);
+static void clearGamesUiPointers();
+static void registerGamesRoutes();
+static void initDirectMessages();
+static void openDirectConversation(uint32_t peer, bool legacy = false);
+static void refreshDirectInbox();
+static void markDirectConversationRead();
+static void storeDirectConversation(uint32_t peer, const char* line, bool local);
+static const char* currentDirectConversationText();
+static uint32_t currentDirectPeer();
+static void registerDirectMessageRoutes();
 #ifdef FIRMWARE_RUN_TESTS
 static void runWebMapTests();
 #endif

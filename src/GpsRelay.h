@@ -11,6 +11,15 @@ static constexpr uint32_t LINK_MAX_AGE_MS = 45000;
 static constexpr uint32_t SETUP_SETTLE_MS = 1000;
 static constexpr uint32_t SETUP_TIMEOUT_MS = 30000;
 
+constexpr bool serialConfigReady(const meshtastic_ModuleConfig_SerialConfig& serial) {
+  return serial.enabled &&
+         serial.mode == meshtastic_ModuleConfig_SerialConfig_Serial_Mode_PROTO &&
+         (serial.baud == meshtastic_ModuleConfig_SerialConfig_Serial_Baud_BAUD_115200 ||
+          serial.baud == meshtastic_ModuleConfig_SerialConfig_Serial_Baud_BAUD_DEFAULT) &&
+         serial.rxd > 0 && serial.rxd <= 48 && serial.txd > 0 && serial.txd <= 48 &&
+         serial.rxd != serial.txd;
+}
+
 struct SetupTimer {
   bool written = false;
   uint32_t writeMs = 0, waitMs = 0;

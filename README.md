@@ -4,7 +4,7 @@ A touchscreen and local web interface for a Heltec Meshtastic radio, built on
 an ESP32-S3 CYD. Read messages, check radio and battery status, browse nodes,
 and use offline maps without depending on internet access.
 
-**Current firmware: v0.1.104.** The CYD runs this firmware; the Heltec runs
+**Current firmware: v0.1.112.** The CYD runs this firmware; the Heltec runs
 Meshtastic and handles the LoRa radio connection.
 
 Both interfaces use a blue theme with bundled Material Symbols Rounded icons,
@@ -38,10 +38,12 @@ All modules share a common ground; UART and I²C signals use 3.3 V logic.
 
 **Leave Heltec GPIO4 disconnected from GPS RX.** Only CYD GPIO2 drives that
 wire. Enable the Heltec Serial module in **PROTO / Protobuf** mode at
-**115200 baud**, with **RX 38 / TX 39**. For CYD GPS sharing, use
-**System > GPS > Config > Adv > Use CYD GPS** before removing the old GPS TX
-branch to Heltec GPIO5. See [GPS sharing](docs/GPS_SHARING.md). With sharing
-off, the earlier split-wire setup still requires Heltec GPS RX5 enabled.
+**115200 baud**, with **RX 38 / TX 39**, matching the working Heltec configuration read
+on October 25, 2026. The Web UI reads the configured pins or requires both to
+be entered explicitly; it does not assume a pair. For CYD GPS sharing, use
+**System > GPS > Config > Adv > Use CYD GPS**. The current enclosure has GPS
+connected only to the CYD. See [GPS sharing](docs/GPS_SHARING.md) for migration
+from the earlier split-wire setup.
 See [detailed wiring and battery connections](#wiring) below.
 
 These built-in CYD connections are already routed on the board:
@@ -65,7 +67,10 @@ describe internal board wiring. See [notification audio](docs/AUDIO.md).
 - **Home dashboard:** radio status, battery level, node/GPS status and a message
   preview. Tap a card for details, or Menu for the launcher.
 - **Messaging:** channel and direct messages, unread counts, delivery states,
-  and retry controls where available.
+  and retry controls where available. Direct messages have per-device conversations
+  and drafts on the CYD and web UI.
+- **Games:** Tamapetchi and Giraffegotchi beneath a compact live dashboard, plus
+  Peanut GB with touch controls and web ROM uploads. See [games](docs/GAMES.md).
 - **Notification audio:** soft boops and bubble pops with separate message/direct
   selections, clean volume control, dedicated playback and automatic fault recovery.
 - **Offline maps:** SD-backed maps on both the touchscreen and web interface,
@@ -76,13 +81,14 @@ describe internal board wiring. See [notification audio](docs/AUDIO.md).
   low-battery status, and runtime estimates with discharge learning retained
   across restarts. See [battery statistics](docs/BATTERY_STATS.md).
 - **Local storage:** chat/event logs, position history, saved location and a
-  cached map image on MicroSD.
+  cached map image on FAT32 MicroSD. Supports normal MBR cards and validated
+  GPT FAT32 partitions. See [replacement-card verification](docs/SD_REPLACEMENT.md).
 - **USB tools:** upload tiles, copy files to a replacement card and inspect
   receiver-level GPS and audio diagnostics.
 
 <img src="docs/images/home.png" alt="Touchscreen home dashboard with radio, battery, nodes and messages cards" width="240">
 
-The launcher contains Messages, Nodes, Map, TX Log and System. Health is under
+The launcher contains Messages, Nodes, Map, TX Log, System and Games. Health is under
 System. See the [home dashboard guide](docs/HOME_DASHBOARD.md) for details.
 
 ## Hardware
@@ -192,7 +198,7 @@ boosted GPS supply rail. Without a gauge, the UI shows an unavailable reading.
 | GND | GND |
 
 In the Meshtastic serial module, set **Enabled**, **PROTO / Protobuf** mode,
-**115200 baud**, **RX pin 38** and **TX pin 39**.
+**115200 baud**, **RX pin 38** and **TX pin 39** for this wiring.
 
 ### GPS
 
@@ -201,7 +207,7 @@ positions over its existing Protobuf serial connection to the Heltec:
 
 | GPS module | Connect to |
 | --- | --- |
-| TX | CYD GPIO3; retain the Heltec GPIO5 branch until sharing is verified |
+| TX | CYD GPIO3 |
 | RX | CYD GPIO2 (GPS TX) |
 | VCC | Boosted 5V rail for the GY-NEO6MV2 breakout |
 | GND | Common ground |

@@ -70,7 +70,7 @@ static bool handleUsbSdCommand(char* command) {
     if (errno || parsed > UINT32_MAX) { error("invalid-offset"); return true; }
     uint32_t offset = (uint32_t)parsed;
     if (strcmp(verb, "sd-list") == 0) {
-      File directory = SD_MMC.open(path, FILE_READ);
+      File directory = sdCardFilesystem().open(path, FILE_READ);
       if (!directory || !directory.isDirectory()) { if (directory) directory.close(); error("not-directory"); return true; }
       uint32_t cursor = 0, emitted = 0;
       File child = directory.openNextFile();
@@ -96,7 +96,7 @@ static bool handleUsbSdCommand(char* command) {
     }
     if (!id || offset != 0) { error("open-requires-zero-offset"); return true; }
     closeUsbSdExport();
-    usbSdFile = SD_MMC.open(path, FILE_READ);
+    usbSdFile = sdCardFilesystem().open(path, FILE_READ);
     if (!usbSdFile || usbSdFile.isDirectory() || usbSdFile.size() > UINT32_MAX) { closeUsbSdExport(); error("not-readable-file"); return true; }
     usbSdBuffer = (uint8_t*)heap_caps_malloc(USB_SD_CHUNK + USB_SD_ENCODED, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!usbSdBuffer) { closeUsbSdExport(); error("no-psram"); return true; }

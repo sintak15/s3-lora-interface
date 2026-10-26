@@ -142,6 +142,17 @@ static void appendSdStatusJson(String& json) {
   json += "\"sdAvailable\":" + String(sdStorage.available ? "true" : "false") + ",";
   json += "\"sdStatus\":\"" + jsonEscape(sdStorage.status) + "\",";
   json += "\"sdType\":\"" + jsonEscape(sdStorage.cardType) + "\",";
+  json += "\"sdBusWidth\":" + String(sdStorage.busWidth) + ",";
+  json += "\"sdFrequencyKhz\":" + String(sdStorage.frequencyKhz) + ",";
+  json += "\"sdMountAttempts\":" + String(sdStorage.mountAttempts) + ",";
+  json += "\"sdRawReadable\":" + String(sdStorage.rawReadable ? "true" : "false") + ",";
+  json += "\"sdProbeError\":" + String(sdStorage.probeError) + ",";
+  json += "\"sdProbe\":\"" + jsonEscape(sdStorage.probe) + "\",";
+  json += "\"sdGptMounted\":" + String(GptStorage::mounted ? "true" : "false") + ",";
+  json += "\"sdPartitionStart\":" + String(GptStorage::first) + ",";
+  json += "\"sdPartitionSectors\":" + String(GptStorage::sectors) + ",";
+  json += "\"sdGptHeaderCrc\":" + String(GptStorage::headerCrc) + ",";
+  json += "\"sdGptTableCrc\":" + String(GptStorage::tableCrc) + ",";
   json += "\"sdUsedKb\":" + String(bytesToWholeKb(sdStorage.usedBytes)) + ",";
   json += "\"sdTotalKb\":" + String(bytesToWholeKb(sdStorage.totalBytes)) + ",";
   json += "\"sdUsedMb\":" + String(bytesToWholeMb(sdStorage.usedBytes)) + ",";
@@ -615,6 +626,13 @@ static String buildFieldReportJson() {
   json += "\"linkHealth\":\"" + String(linkHealthText()) + "\",";
   json += "\"lastRadioResponseSec\":" + (radioResponseSeen ? String((millis() - lastRadioResponseMs) / 1000) : String("null")) + ",";
   json += "\"framesDecoded\":" + String(framesDecoded) + ",\"decodeErrors\":" + String(decodeErrors) + ",";
+  json += "\"radioUartReady\":" + String(SerialLoRa ? "true" : "false") + ",";
+  json += "\"radioUartRxPin\":" + String(uart_get_RxPin(LORA_UART_NUM)) + ",";
+  json += "\"radioUartTxPin\":" + String(uart_get_TxPin(LORA_UART_NUM)) + ",";
+  json += "\"radioUartBaud\":" + String(SerialLoRa.baudRate()) + ",";
+  json += "\"radioExpectedRxPin\":" + String(LORA_RX_PIN) + ",\"radioExpectedTxPin\":" + String(LORA_TX_PIN) + ",";
+  json += "\"radioRxLevel\":" + String(gpio_get_level((gpio_num_t)LORA_RX_PIN)) + ",\"radioTxLevel\":" + String(gpio_get_level((gpio_num_t)LORA_TX_PIN)) + ",";
+  json += "\"radioConfigRequests\":" + String(configRequestCount) + ",";
   json += "\"rxBytes\":" + String(bytesFromRadio) + ",\"txBytes\":" + String(bytesToRadio) + ",";
   json += "\"frameTimeouts\":" + String(serialFrameTimeouts) + ",\"invalidLengths\":" + String(invalidFrameLengths) + ",";
   json += "\"heartbeats\":" + String(heartbeatCount) + ",\"apiResyncs\":" + String(apiResyncCount) + ",";
@@ -687,8 +705,8 @@ static void handleStatusSnapshot() {
       server.send(503, "text/plain", "SD card busy");
       return;
     }
-    if (SD_MMC.exists(SD_STATUS_SNAPSHOT_PATH)) SD_MMC.remove(SD_STATUS_SNAPSHOT_PATH);
-    File file = SD_MMC.open(SD_STATUS_SNAPSHOT_PATH, FILE_WRITE);
+    if (sdCardFilesystem().exists(SD_STATUS_SNAPSHOT_PATH)) sdCardFilesystem().remove(SD_STATUS_SNAPSHOT_PATH);
+    File file = sdCardFilesystem().open(SD_STATUS_SNAPSHOT_PATH, FILE_WRITE);
     if (!file) {
       sdStorage.writeErrors++;
       strlcpy(sdStorage.status, "snapshot open failed", sizeof(sdStorage.status));
@@ -803,11 +821,11 @@ static void handleSdDownload(const char* path, const char* downloadName, const c
       server.send(503, "text/plain", "SD card busy");
       return;
     }
-    if (!SD_MMC.exists(path)) {
+    if (!sdCardFilesystem().exists(path)) {
       server.send(404, "text/plain", "file not found");
       return;
     }
-    sdDownload.file = SD_MMC.open(path, FILE_READ);
+    sdDownload.file = sdCardFilesystem().open(path, FILE_READ);
     if (!sdDownload.file) {
       server.send(500, "text/plain", "open failed");
       return;
@@ -1049,7 +1067,13 @@ static void handleFirmwareUpdateDone() {
 #include "UiLayoutTests.inc"
 #endif
 
+#include "GamesHttp.inc"
+#include "DirectMessagesHttp.inc"
+#include "SdMirrorHttp.inc"
 static void registerWebRoutes() {
+  registerGamesRoutes();
+  registerDirectMessageRoutes();
+  registerSdMirrorRoutes();
   registerWebMapRoutes();
   server.on("/", HTTP_GET, handleRoot);
   server.on("/status", HTTP_GET, handleStatus);
@@ -1166,8 +1190,12 @@ static void registerWebRoutes() {
   });
   server.on("/heltec/serial", HTTP_POST, []() {
     if (!requireWebAuth()) return;
-    uint32_t rxd = server.hasArg("rxd") ? formU32("rxd") : 38;
-    uint32_t txd = server.hasArg("txd") ? formU32("txd") : 39;
+    if (!server.hasArg("rxd") || !server.hasArg("txd")) {
+      server.send(400, "text/plain", "Both Heltec RX and TX pins are required; no pins are assumed");
+      return;
+    }
+    uint32_t rxd = formU32("rxd");
+    uint32_t txd = formU32("txd");
     String baud = server.arg("baud");
     String mode = server.arg("mode");
     bool ok = sendHeltecSerialConfig(server.arg("enabled") == "1",

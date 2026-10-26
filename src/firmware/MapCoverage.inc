@@ -21,9 +21,9 @@ static MapCoverage::Profile probeMapCoverage(const MapRenderJob& job) {
     for (unsigned i = 0; i < level.area.count; ++i) {
       char path[112];
       buildTilePath(job.tileRoot, z, level.area.cells[i].x, level.area.cells[i].y, path, sizeof(path));
-      File tile = SD_MMC.open(path, FILE_READ);
+      File tile = sdCardFilesystem().open(path, FILE_READ);
       if (tile && !tile.isDirectory() && tile.size() == MAP_TILE_BYTES) level.validMask |= 1U << i;
-      else if (tile || SD_MMC.exists(path)) level.invalidMask |= 1U << i;
+      else if (tile || sdCardFilesystem().exists(path)) level.invalidMask |= 1U << i;
       if (tile) tile.close();
       delay(0);
     }

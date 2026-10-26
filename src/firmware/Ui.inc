@@ -15,17 +15,16 @@ static void lvFlush(lv_disp_drv_t* disp, const lv_area_t* area, lv_color_t* colo
 }
 
 static bool readTouch(uint16_t& x, uint16_t& y) {
+  updateGameBoyTouches(nullptr, 0);
   Wire.beginTransmission(TOUCH_ADDR);
   Wire.write(0x02);
   if (Wire.endTransmission(false) != 0) return false;
-  if (Wire.requestFrom(TOUCH_ADDR, (uint8_t)5) != 5) return false;
-
-  uint8_t touches = Wire.read();
-  uint8_t xh = Wire.read();
-  uint8_t xl = Wire.read();
-  uint8_t yh = Wire.read();
-  uint8_t yl = Wire.read();
+  const uint8_t length = currentPage == pageGameBoyPlayer && pageGameBoyPlayer ? 13 : 5;
+  if (Wire.requestFrom(TOUCH_ADDR, length) != length) return false;
+  uint8_t points[13] = {}; for (unsigned i = 0; i < length; ++i) points[i] = Wire.read();
+  uint8_t touches = points[0] & 15, xh = points[1], xl = points[2], yh = points[3], yl = points[4];
   if (touches == 0 || touches > 2) return false;
+  if (length == 13) updateGameBoyTouches(points, length);
 
   uint16_t rawX = constrain(((uint16_t)(xh & 0x0F) << 8) | xl, 0, SCREEN_W - 1);
   uint16_t rawY = constrain(((uint16_t)(yh & 0x0F) << 8) | yl, 0, SCREEN_H - 1);
@@ -218,6 +217,7 @@ static void buildStatusBar(lv_obj_t* screen) {
 
 static void showPage(lv_obj_t* target, bool remember) {
   if (!target) return;
+  if (!gamesMayLeavePage(target)) return;
   bool leavingNodeDetailMap = (currentPage == pageGps || currentPage == pageMapCoverage) && target != pageGps && target != pageMapCoverage && mapNodeDetailViewActive;
   if (remember && currentPage && currentPage != target) {
     if (navigationDepth == 8) {
@@ -227,8 +227,9 @@ static void showPage(lv_obj_t* target, bool remember) {
     navigationStack[navigationDepth++] = currentPage;
   }
   lv_obj_t* pages[] = {
-    pageLauncher, pageFunctions, pageOperate, pageDiagnose, pageNodes, pageNodeDetail, pageMeshHealth, pagePacketInspector,
-    pageTxHistory, pagePublicChat, pagePrivateChat, pageDirectChat, pageMessageDiag, pageGps, pageMapCoverage,
+    pageLauncher, pageFunctions, pageGames, pagePets, pagePet, pagePetCare, pageGameBoy, pageGameBoyPlayer,
+    pageOperate, pageDiagnose, pageNodes, pageNodeDetail, pageMeshHealth, pagePacketInspector,
+    pageTxHistory, pagePublicChat, pagePrivateChat, pageDirectInbox, pageDirectChat, pageMessageDiag, pageGps, pageMapCoverage,
     pageSystem, pageSystemInterface, pageSystemSerial, pageSystemRadio, pageSystemGps, pageGpsConfig, pageGpsAdvanced,
     pageWifi, pageWifiStats, pageWifiLocal, pageWifiScan, pageBacklight, pageSound, pageBattery, pagePowerLogs
   };
@@ -241,6 +242,11 @@ static void showPage(lv_obj_t* target, bool remember) {
   if (currentPage != target && (target == pagePublicChat || target == pagePrivateChat || target == pageDirectChat))
     chatScrollToNewestPending = true;
   currentPage = target;
+  if (navBar) {
+    bool emulator = target == pageGameBoyPlayer;
+    lv_obj_align(navBar, emulator ? LV_ALIGN_TOP_LEFT : LV_ALIGN_BOTTOM_MID, 0, emulator ? STATUS_BAR_H : 0);
+    lv_obj_set_style_border_side(navBar, emulator ? LV_BORDER_SIDE_BOTTOM : LV_BORDER_SIDE_TOP, 0);
+  }
   if (target == pagePowerLogs) loadPowerLogView();
   if (btnNavBack && btnNavHome) {
     bool home = target == pageLauncher;
@@ -262,7 +268,8 @@ static void showPage(lv_obj_t* target, bool remember) {
   }
   if (target == pagePublicChat) unreadPublic = 0;
   if (target == pagePrivateChat) unreadFamily = 0;
-  if (target == pageDirectChat) unreadDirect = 0;
+  if (target == pageDirectChat) markDirectConversationRead();
+  if (target == pageDirectInbox) directInboxDirty = true;
   if (leavingNodeDetailMap) {
     mapNodeDetailViewActive = false;
     mapFocusSelectedNode = false;
@@ -396,6 +403,7 @@ static void mapDragEvent(lv_event_t* e) {
 }
 
 static void clearUiObjectPointers() {
+  clearGamesUiPointers();
   pageLauncher = nullptr;
   pageFunctions = nullptr;
   pageOperate = nullptr;
@@ -408,6 +416,7 @@ static void clearUiObjectPointers() {
   pagePublicChat = nullptr;
   pagePrivateChat = nullptr;
   pageDirectChat = nullptr;
+  pageDirectInbox = directInboxList = directThreadTitle = nullptr;
   pageMessageDiag = nullptr;
   pageGps = nullptr;
   pageMapCoverage = nullptr;
@@ -698,12 +707,13 @@ static void buildNavBar(lv_obj_t* screen) {
 
   btnNavBack = makeNavButton(navBar, "Back", LV_ALIGN_LEFT_MID, 4, [](lv_event_t*) {
     if (currentPage == pageLauncher) { showPage(pageFunctions); return; }
-    lv_obj_t* target = navigationDepth ? navigationStack[--navigationDepth] : pageLauncher;
+    lv_obj_t* target = navigationDepth ? navigationStack[navigationDepth - 1] : pageLauncher;
     showPage(target, false);
+    if (currentPage == target && navigationDepth) --navigationDepth;
   });
   btnNavHome = makeNavButton(navBar, "Home", LV_ALIGN_RIGHT_MID, -4, [](lv_event_t*) {
-    navigationDepth = 0;
     showPage(pageLauncher, false);
+    if (currentPage == pageLauncher) navigationDepth = 0;
   });
 }
 
@@ -1127,11 +1137,7 @@ static void refreshNodeList(bool force) {
 }
 
 static void directSelectedNode() {
-  if (!selectedNodeNum || !taDirectTo) return;
-  char toText[12];
-  snprintf(toText, sizeof(toText), "!%08lX", (unsigned long)selectedNodeNum);
-  lv_textarea_set_text(taDirectTo, toText);
-  showPage(pageDirectChat);
+  if (selectedNodeNum) openDirectConversation(selectedNodeNum);
 }
 
 static void showSelectedNodeOnMap() {
@@ -1420,6 +1426,7 @@ static void buildLandscapeKeyboardScreen() {
   lv_obj_add_event_cb(landscapeKeyboard, landscapeKeyboardEvent, LV_EVENT_CANCEL, nullptr);
 }
 
+#include "Games.inc"
 #include "HomeUi.inc"
 
 #include "GpsUi.inc"
@@ -1434,6 +1441,12 @@ static void buildScreenUi() {
 
   pageLauncher = makePage(screen);
   pageFunctions = makePage(screen);
+  pageGames = makePage(screen);
+  pagePets = makePage(screen);
+  pagePet = makePage(screen);
+  pagePetCare = makePage(screen);
+  pageGameBoy = makePage(screen);
+  pageGameBoyPlayer = makePage(screen);
   pageOperate = makePage(screen);
   pageDiagnose = makePage(screen);
   pageNodes = makePage(screen);
@@ -1444,6 +1457,7 @@ static void buildScreenUi() {
   pagePublicChat = makePage(screen);
   pagePrivateChat = makePage(screen);
   pageDirectChat = makePage(screen);
+  pageDirectInbox = makePage(screen);
   pageMessageDiag = makePage(screen);
   pageGps = makePage(screen);
   pageMapCoverage = makePage(screen);
@@ -1467,6 +1481,7 @@ static void buildScreenUi() {
   lv_obj_clear_flag(pageLauncher, LV_OBJ_FLAG_HIDDEN);
 
   buildHomeUi();
+  buildGamesUi();
 
   makePageTitle(pageFunctions, "Menu");
   makeMenuTile(pageFunctions, "Messages", 6, 24,
@@ -1481,6 +1496,8 @@ static void buildScreenUi() {
                  [](lv_event_t*) { showPage(pageTxHistory); });
   makeMenuTile(pageFunctions, "System", 6, 164,
                  [](lv_event_t*) { showPage(pageSystem); });
+  makeMenuTile(pageFunctions, "Games", 118, 164,
+                 [](lv_event_t*) { showPage(pageGames); });
 
   makePageTitle(pageOperate, "Messages");
   makePageScrollable(pageOperate);
@@ -1488,7 +1505,7 @@ static void buildScreenUi() {
   lblTilePublic = lv_obj_get_child(publicTile, 0);
   lv_obj_t* privateTile = makeSystemTile(pageOperate, privateChannelLabel(), 1, 0, [](lv_event_t*) { showPage(pagePrivateChat); });
   lblTilePrivate = lv_obj_get_child(privateTile, 0);
-  makeSystemTile(pageOperate, "Direct", 0, 1, [](lv_event_t*) { showPage(pageDirectChat); });
+  makeSystemTile(pageOperate, "Direct", 0, 1, [](lv_event_t*) { showPage(pageDirectInbox); });
   makeSystemTile(pageOperate, "TX Log", 1, 1, [](lv_event_t*) { showPage(pageTxHistory); });
   lblMsgPublic = makeDashboardLabel(pageOperate, 6, 152, 228, 34);
   lblMsgFamily = makeDashboardLabel(pageOperate, 6, 192, 228, 34);
@@ -1636,7 +1653,12 @@ static void buildScreenUi() {
   styleBoundedLabel(lblPrivateChannelHint, SCREEN_W - 12, COLOR_MUTED);
   lv_obj_align(lblPrivateChannelHint, LV_ALIGN_TOP_LEFT, 2, 232);
 
-  makePageTitle(pageDirectChat, "Direct Messages");
+  makePageTitle(pageDirectInbox, "Conversations");
+  lv_obj_set_height(makeSmallButton(pageDirectInbox, "New conversation", 4, 28, 222, [](lv_event_t*) { openDirectConversation(0); }), 36);
+  directInboxList = lv_list_create(pageDirectInbox);
+  lv_obj_set_pos(directInboxList, 4, 72); lv_obj_set_size(directInboxList, 222, 176);
+  styleDarkObject(directInboxList, COLOR_BG); UiScroll::vertical(directInboxList);
+  directThreadTitle = makePageTitle(pageDirectChat, "Direct Messages");
   taDirectChat = makeReadonlyText(pageDirectChat, 22, 132);
   lv_textarea_set_text(taDirectChat, "No direct messages yet");
   taDirectTo = lv_textarea_create(pageDirectChat);

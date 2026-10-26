@@ -138,6 +138,15 @@ Use the scripts to refresh this identity before building after source changes.
   channel keys, message contents and coordinates. The existing full status
   snapshot remains available separately.
 
+The field report also reads the active radio UART driver's RX/TX pins, baud
+rate and ready state. `radioExpectedRxPin`/`radioExpectedTxPin` identify the
+compiled wiring, while `radioUartRxPin`/`radioUartTxPin` identify the current
+driver assignment. `radioRxLevel`/`radioTxLevel` read the GPIO input buffer;
+a pad with its input buffer disabled always reports zero, including an
+output-only TX pad. These values are not a waveform or a continuity test.
+`radioConfigRequests` counts configuration
+requests sent since startup.
+
 The verifier also checks delivery timeout/queue transitions, ACK source matching,
 timer wraparound, runtime estimation/reset rules, escaped delivery rendering,
 and retry request handling. Hardware acceptance should cover a successful direct
@@ -250,7 +259,7 @@ CYD. The authentication file is a private JSON object with `username` and
 python tools/check_display_layout.py --base-url http://192.168.1.192 --auth-file build/cyd-ota-auth.json --output build/display-layout
 ```
 
-The tool checks 30 screens in both Normal and Readable modes, additional Home
+The tool checks 37 screens in both Normal and Readable modes, additional Home
 states and detailed node rows. It saves coordinates/issues and CRC-verified
 240×320 PNG captures. Single-screen checks accept `--screen home --font readable
 --case runtime`. Nonzero exit status means overlaps, clipping or truncated
@@ -262,3 +271,24 @@ The verification loop task has additional stack space for HTTP-nested rendering.
 Production retains its normal stack and has no inspection endpoints. Install
 the production image when inspection is complete. These measurements do not
 replace touch/gesture testing.
+
+The games verification build also exposes authenticated `POST /diagnostics/games`.
+It checks the original homebrew demo, video output, emulated input, recovery from
+an invalid opcode, and independent pet care. All returned checks must be true.
+Capture the two pets with `--screen pet --case real` and `--case giraffe`; use
+`--screen gameboy-player --case demo` for the Game Boy controller layout. These
+checks temporarily use a demo session, so run them with no user game in progress.
+
+### GPT FAT32 card support
+
+The pinned Arduino SDK disables native FatFs GPT parsing. Firmware supplies a
+partition-aware block driver in `GptStorage.inc` while retaining the SDK's FAT32
+filesystem and VFS. File operations go through `sdCardFilesystem()`; SD host
+setup still uses the normal driver for MBR cards. Keep all card file operations
+on that shared filesystem selector.
+
+`SdGptTests.h` checks CRC32, corrupt GPT headers, partition bounds/read-only
+flags and FAT32 geometry at compile time. On a GPT card, authenticated
+`GET /sd/gpt/verify` checks that protective MBR and primary/backup GPT metadata
+match the baseline. Validate file readback, a ROM upload/delete and a remount
+when changing this driver. See [replacement SD details](SD_REPLACEMENT.md).

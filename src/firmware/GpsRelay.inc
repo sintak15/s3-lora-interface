@@ -12,12 +12,7 @@ static bool gpsRelayLinkReady() {
 }
 
 static bool gpsRelaySerialReady() {
-  const auto& serial = heltecConfig.serial;
-  return heltecConfig.hasSerial && serial.enabled &&
-         serial.mode == meshtastic_ModuleConfig_SerialConfig_Serial_Mode_PROTO &&
-         (serial.baud == meshtastic_ModuleConfig_SerialConfig_Serial_Baud_BAUD_115200 ||
-          serial.baud == meshtastic_ModuleConfig_SerialConfig_Serial_Baud_BAUD_DEFAULT) &&
-         serial.rxd == 38 && serial.txd == 39;
+  return heltecConfig.hasSerial && GpsRelay::serialConfigReady(heltecConfig.serial);
 }
 
 static bool gpsRelaySetupBusy() { return gpsRelaySetup != GpsRelaySetup::IDLE; }
@@ -67,7 +62,7 @@ static void onGpsRelayConfigComplete(uint32_t id) {
   if (!gpsRelaySawPosition || !gpsRelaySawSerial) {
     failGpsRelaySetup("Heltec did not return position and serial settings."); return;
   }
-  if (!gpsRelaySerialReady()) { failGpsRelaySetup("Heltec serial must use PROTO, 115200, RX38 / TX39."); return; }
+  if (!gpsRelaySerialReady()) { failGpsRelaySetup("Heltec serial must use PROTO, 115200, with distinct nonzero RX/TX pins matching the wiring."); return; }
   if (GpsRelay::physicalGpsAbsent(heltecConfig.position)) {
     gpsRelaySetup = GpsRelaySetup::IDLE;
     if (!setGpsRelayEnabled(true)) failGpsRelaySetup("Heltec ready; sharing preference could not be saved.");

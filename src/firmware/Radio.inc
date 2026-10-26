@@ -429,7 +429,7 @@ static void refreshChatViews(bool force) {
     updated |= setChatTextNewest(taFamilyChat, familyChatLog[0] ? familyChatLog : emptyText, chatScrollToNewestPending);
   }
   if (currentPage == pageDirectChat && taDirectChat) {
-    updated |= setChatTextNewest(taDirectChat, directChatLog[0] ? directChatLog : "No direct messages yet", chatScrollToNewestPending);
+    updated |= setChatTextNewest(taDirectChat, currentDirectConversationText(), chatScrollToNewestPending);
   }
   chatScrollToNewestPending = false;
   if (updated || force) clearUiDirty(UI_DIRTY_CHAT);
@@ -931,7 +931,6 @@ static void recordChatActivity(uint8_t channel, uint32_t to, const char* sender,
   bool isLocal = sender && strcmp(sender, "me") == 0;
   if (isDirectAddress(to)) {
     copyChatPreview(previewDirect, sizeof(previewDirect), sender, text, len);
-    if (!isLocal && currentPage != pageDirectChat && unreadDirect < 999) unreadDirect++;
   } else if (isPrivateChannel(channel)) {
     copyChatPreview(previewFamily, sizeof(previewFamily), sender, text, len);
     if (!isLocal && currentPage != pagePrivateChat && unreadFamily < 999) unreadFamily++;
@@ -942,7 +941,7 @@ static void recordChatActivity(uint8_t channel, uint32_t to, const char* sender,
   refreshDashboardLabels();
 }
 
-static void appendChatMessage(uint8_t channel, uint32_t to, const char* sender, const uint8_t* text, size_t len, bool local) {
+static void appendChatMessage(uint8_t channel, uint32_t to, const char* sender, const uint8_t* text, size_t len, bool local, uint32_t from) {
   if (!text || len == 0) return;
   char stamp[28];
   formatChatTimestamp(stamp, sizeof(stamp));
@@ -961,7 +960,12 @@ static void appendChatMessage(uint8_t channel, uint32_t to, const char* sender, 
     if (ch == '\n') { line[used++] = ' '; line[used++] = ' '; }
   }
   line[used++] = '\n'; line[used] = 0;
-  if (isDirectAddress(to)) appendLine(directChatLog, CHAT_SIZE, line);
+  if (isDirectAddress(to)) {
+    uint32_t peer = ConversationRouting::peer(local ? stats.myNodeNum : from, to, stats.myNodeNum);
+    if (!peer) return;
+    storeDirectConversation(peer, line, local);
+    appendLine(directChatLog, CHAT_SIZE, line);
+  }
   else appendLine(isPrivateChannel(channel) ? familyChatLog : publicChatLog, CHAT_SIZE, line);
   recordChatActivity(channel, to, safeSender, text, len);
   refreshChatViews();
@@ -1018,8 +1022,9 @@ static bool sendConfigRequest() {
 static bool sendRadioHeartbeat() {
   meshtastic_ToRadio toRadio = meshtastic_ToRadio_init_zero;
   toRadio.which_payload_variant = meshtastic_ToRadio_heartbeat_tag;
-  toRadio.heartbeat.nonce = ++heartbeatNonce;
-  if (heartbeatNonce == 0) toRadio.heartbeat.nonce = ++heartbeatNonce;
+  // Meshtastic 2.7.26 treats nonce 1 as a node-info broadcast request.
+  // Zero is the ordinary keepalive and queue-status reply on both releases.
+  toRadio.heartbeat.nonce = 0;
 
   uint8_t out[64];
   pb_ostream_t stream = pb_ostream_from_buffer(out, sizeof(out));
@@ -1926,11 +1931,6 @@ static void handleDecodedPacket(const meshtastic_MeshPacket& packet) {
       node->lastPortNum = data.portnum;
     }
     bool fromThisNode = stats.myNodeNum != 0 && packet.from == stats.myNodeNum;
-    if (!fromThisNode && isDirectAddress(packet.to) && taDirectTo) {
-      char fromText[12];
-      snprintf(fromText, sizeof(fromText), "!%08lX", (unsigned long)packet.from);
-      lv_textarea_set_text(taDirectTo, fromText);
-    }
     bool compressedText = data.portnum == meshtastic_PortNum_TEXT_MESSAGE_COMPRESSED_APP;
     const uint8_t* chatBytes = data.payload.bytes;
     size_t chatLen = data.payload.size;
@@ -1943,7 +1943,7 @@ static void handleDecodedPacket(const meshtastic_MeshPacket& packet) {
     if (localEcho) {
       markTxEchoSeen(packet.channel, packet.to, data.payload.bytes, data.payload.size);
     } else {
-      appendChatMessage(packet.channel, packet.to, fromThisNode ? "me" : nodeName(packet.from), chatBytes, chatLen, fromThisNode);
+      appendChatMessage(packet.channel, packet.to, fromThisNode ? "me" : nodeName(packet.from), chatBytes, chatLen, fromThisNode, packet.from);
       if (!fromThisNode) queueTone(isDirectAddress(packet.to) ? TONE_DIRECT : TONE_MESSAGE);
     }
     snprintf(line, sizeof(line), "[%s ch%u %s%s] %.*s\n",

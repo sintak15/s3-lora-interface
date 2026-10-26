@@ -6,6 +6,11 @@ supports client-provided positions; no Heltec firmware update is required.
 
 ## Wiring migration
 
+Current enclosure wiring, confirmed by the user on October 25, 2026, has GPS
+connected only to the CYD; there is no GPS TX branch to the Heltec. The steps
+below describe migration from the earlier split-wire installation. For the
+current enclosure, skip the branch-removal step.
+
 1. Install the CYD update with the existing wiring intact.
 2. Open **System > GPS > Config > Adv**, then press **Use CYD GPS**.
 3. Wait for sharing to become enabled. Setup reads a fresh Heltec configuration,
@@ -20,7 +25,12 @@ supports client-provided positions; no Heltec firmware update is required.
    not a LoRa transmission or remote delivery.
 5. Power off before removing only the branch from **GPS TX to Heltec GPIO5**.
    Keep GPS TX to CYD GPIO3, GPS RX to CYD GPIO2, GPS power and common ground.
-   The CYD GPIO14/21 to Heltec GPIO39/38 link stays connected.
+   The CYD GPIO14 RX / GPIO21 TX to Heltec GPIO39 TX / GPIO38 RX link stays connected.
+
+The Heltec pin pair above was read directly from the radio on October 25, 2026.
+Sharing checks its configured serial pins and does not require a fixed pair;
+the wiring must match, RX/TX must be distinct and nonzero, and the link must
+use PROTO at 115200 baud.
 
 The switch defaults to off to preserve existing split-wire installations.
 Turning it off stops forwarding without changing Heltec configuration. To

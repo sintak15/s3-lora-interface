@@ -6,18 +6,18 @@ struct PowerLogStorage {
     batteryCycle.rotationPending = value;
     return true;
   }
-  bool currentExists() const { return SD_MMC.exists(SD_POWER_LOG_CURRENT_DIR); }
+  bool currentExists() const { return sdCardFilesystem().exists(SD_POWER_LOG_CURRENT_DIR); }
   bool removePrevious() {
-    if (!SD_MMC.exists(SD_POWER_LOG_PREVIOUS_DIR)) return true;
+    if (!sdCardFilesystem().exists(SD_POWER_LOG_PREVIOUS_DIR)) return true;
     // Only these two owned files may be removed. Unexpected files make rmdir
     // fail safely; never recursively remove user storage.
     for (auto path : {SD_POWER_HEALTH_PREVIOUS_PATH, SD_BATTERY_PREVIOUS_PATH}) {
-      if (SD_MMC.exists(path) && !SD_MMC.remove(path)) return false;
+      if (sdCardFilesystem().exists(path) && !sdCardFilesystem().remove(path)) return false;
     }
-    return SD_MMC.rmdir(SD_POWER_LOG_PREVIOUS_DIR);
+    return sdCardFilesystem().rmdir(SD_POWER_LOG_PREVIOUS_DIR);
   }
   bool archiveCurrent() {
-    return SD_MMC.rename(SD_POWER_LOG_CURRENT_DIR, SD_POWER_LOG_PREVIOUS_DIR);
+    return sdCardFilesystem().rename(SD_POWER_LOG_CURRENT_DIR, SD_POWER_LOG_PREVIOUS_DIR);
   }
   bool resetProgress() {
     if (prefs.putULong64("batLogAge", 0) != sizeof(uint64_t)) return false;
@@ -27,7 +27,7 @@ struct PowerLogStorage {
     return true;
   }
   bool createCurrent() {
-    return SD_MMC.exists(SD_POWER_LOG_CURRENT_DIR) || SD_MMC.mkdir(SD_POWER_LOG_CURRENT_DIR);
+    return sdCardFilesystem().exists(SD_POWER_LOG_CURRENT_DIR) || sdCardFilesystem().mkdir(SD_POWER_LOG_CURRENT_DIR);
   }
 };
 
@@ -39,14 +39,14 @@ static bool powerLogDownloadActive() {
 
 static bool preparePowerLogStorage() {
   PowerLogStorage storage;
-  if (!SD_MMC.exists(SD_POWER_LOG_ROOT) && !SD_MMC.mkdir(SD_POWER_LOG_ROOT)) return false;
+  if (!sdCardFilesystem().exists(SD_POWER_LOG_ROOT) && !sdCardFilesystem().mkdir(SD_POWER_LOG_ROOT)) return false;
   if (batteryCycle.rotationPending && !PowerLog::rotate(storage)) return false;
   if (!storage.createCurrent()) return false;
   // Upgrade v0.1.100 in place, retaining its readable and CSV history.
   const char* legacy[] = {"/s3-lora/power-health.log", "/s3-lora/battery-cycle.csv"};
   const char* current[] = {SD_POWER_HEALTH_PATH, SD_BATTERY_CYCLE_PATH};
   for (unsigned i = 0; i < 2; ++i) {
-    if (SD_MMC.exists(legacy[i]) && !SD_MMC.exists(current[i]) && !SD_MMC.rename(legacy[i], current[i])) return false;
+    if (sdCardFilesystem().exists(legacy[i]) && !sdCardFilesystem().exists(current[i]) && !sdCardFilesystem().rename(legacy[i], current[i])) return false;
   }
   if (!batteryCycle.progressRecovered) {
     // The already-flushed readable record provides a 10-second checkpoint,
@@ -70,7 +70,7 @@ static bool preparePowerLogStorage() {
     batteryCycle.rotationClock.restore(savedAge + elapsedThisBoot, millis());
     batteryCycle.progressRecovered = true;
   }
-  batteryCycle.previousAvailable = SD_MMC.exists(SD_POWER_HEALTH_PREVIOUS_PATH);
+  batteryCycle.previousAvailable = sdCardFilesystem().exists(SD_POWER_HEALTH_PREVIOUS_PATH);
   batteryCycle.pathsReady = true;
   return true;
 }

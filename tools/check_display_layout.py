@@ -58,7 +58,7 @@ else:
     screens = ['home','menu','messages','health','nodes','node-detail','mesh-health','packets','delivery',
                'public','secondary','direct','message-test','map','coverage','system','interface','serial',
                'radio','gps','gps-config','gps-advanced','wifi','wifi-stats','wifi-connect','wifi-scan',
-               'display','sound','battery','power-logs']
+               'display','sound','battery','power-logs','games','pets','pet','pet-care','gameboy','gameboy-player','conversations']
     results = []
     for font in (['normal','readable'] if not args.font else [args.font]):
         for screen in screens:

@@ -12,11 +12,11 @@ static void webMapTestsTask(void*) {
   bool fixtures = false;
   {
     SdLock lock;
-    if (lock && !SD_MMC.exists(root) && SD_MMC.mkdir(root) && SD_MMC.mkdir(z12) && SD_MMC.mkdir(x12) && SD_MMC.mkdir(z14) && SD_MMC.mkdir(x14)) {
+    if (lock && !sdCardFilesystem().exists(root) && sdCardFilesystem().mkdir(root) && sdCardFilesystem().mkdir(z12) && sdCardFilesystem().mkdir(x12) && sdCardFilesystem().mkdir(z14) && sdCardFilesystem().mkdir(x14)) {
       memset(pixels, 0x36, MAP_TILE_BYTES);
-      File file = SD_MMC.open(parent, FILE_WRITE);
+      File file = sdCardFilesystem().open(parent, FILE_WRITE);
       fixtures = file && file.write(pixels, MAP_TILE_BYTES) == MAP_TILE_BYTES; if (file) file.close();
-      File bad = SD_MMC.open(detail, FILE_WRITE);
+      File bad = sdCardFilesystem().open(detail, FILE_WRITE);
       fixtures &= bad && bad.write(pixels, 8) == 8; if (bad) bad.close();
     }
   }
@@ -26,7 +26,7 @@ static void webMapTestsTask(void*) {
     check("Malformed detail falls back to parent", fallback.code == 200 && fallback.zoom == 12 && pixels[0] == 0x36 && pixels[MAP_TILE_BYTES-1] == 0x36);
     {
       SdLock lock;
-      if (lock) { SD_MMC.remove(detail); File file = SD_MMC.open(detail, FILE_WRITE); if (file) { file.write(pixels, MAP_TILE_BYTES); file.close(); } }
+      if (lock) { sdCardFilesystem().remove(detail); File file = sdCardFilesystem().open(detail, FILE_WRITE); if (file) { file.write(pixels, MAP_TILE_BYTES); file.close(); } }
     }
     auto exact = readWebMapTile(root, 14, 3955, 5898, pixels);
     check("Detailed tile recovery", exact.code == 200 && exact.zoom == 14);
@@ -38,13 +38,13 @@ static void webMapTestsTask(void*) {
   {
     SdLock lock; bool cleaned = (bool)lock;
     if (lock) {
-      if (SD_MMC.exists(parent)) cleaned &= SD_MMC.remove(parent);
-      if (SD_MMC.exists(detail)) cleaned &= SD_MMC.remove(detail);
-      if (SD_MMC.exists(x12)) cleaned &= SD_MMC.rmdir(x12);
-      if (SD_MMC.exists(x14)) cleaned &= SD_MMC.rmdir(x14);
-      if (SD_MMC.exists(z12)) cleaned &= SD_MMC.rmdir(z12);
-      if (SD_MMC.exists(z14)) cleaned &= SD_MMC.rmdir(z14);
-      if (SD_MMC.exists(root)) cleaned &= SD_MMC.rmdir(root);
+      if (sdCardFilesystem().exists(parent)) cleaned &= sdCardFilesystem().remove(parent);
+      if (sdCardFilesystem().exists(detail)) cleaned &= sdCardFilesystem().remove(detail);
+      if (sdCardFilesystem().exists(x12)) cleaned &= sdCardFilesystem().rmdir(x12);
+      if (sdCardFilesystem().exists(x14)) cleaned &= sdCardFilesystem().rmdir(x14);
+      if (sdCardFilesystem().exists(z12)) cleaned &= sdCardFilesystem().rmdir(z12);
+      if (sdCardFilesystem().exists(z14)) cleaned &= sdCardFilesystem().rmdir(z14);
+      if (sdCardFilesystem().exists(root)) cleaned &= sdCardFilesystem().rmdir(root);
     }
     check("Temporary fixtures removed", cleaned);
   }

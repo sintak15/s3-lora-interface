@@ -35,7 +35,7 @@ static bool tileNumber(const char* text, uint32_t& value, int base = 10) {
 }
 
 static bool crcSdTile(const char* path, uint32_t& crc, uint8_t* scratch, size_t scratchBytes) {
-  File file = SD_MMC.open(path, FILE_READ);
+  File file = sdCardFilesystem().open(path, FILE_READ);
   if (!file || file.isDirectory() || file.size() != TileUpload::tileBytes) { if (file) file.close(); return false; }
   crc = 0xffffffffU;
   for (size_t offset = 0; offset < TileUpload::tileBytes;) {
@@ -56,7 +56,7 @@ static bool commitUsbTile() {
   char temporary[136], backup[136];
   snprintf(temporary, sizeof(temporary), "%s.part", usbTilePath);
   snprintf(backup, sizeof(backup), "%s.bak", usbTilePath);
-  File file = SD_MMC.open(temporary, FILE_WRITE);
+  File file = sdCardFilesystem().open(temporary, FILE_WRITE);
   if (!file) return false;
   bool ok = true;
   for (size_t offset = 0; offset < TileUpload::tileBytes; offset += 4096) {
@@ -66,17 +66,17 @@ static bool commitUsbTile() {
   file.close();
   uint32_t actualCrc = 0;
   if (ok) ok = crcSdTile(temporary, actualCrc, usbTileBuffer, 4096) && actualCrc == usbTileExpectedCrc;
-  bool hadOld = SD_MMC.exists(usbTilePath);
+  bool hadOld = sdCardFilesystem().exists(usbTilePath);
   if (ok && hadOld) {
-    if (SD_MMC.exists(backup) && !SD_MMC.remove(backup)) ok = false;
-    if (ok) ok = SD_MMC.rename(usbTilePath, backup);
+    if (sdCardFilesystem().exists(backup) && !sdCardFilesystem().remove(backup)) ok = false;
+    if (ok) ok = sdCardFilesystem().rename(usbTilePath, backup);
   }
   if (ok) {
-    ok = SD_MMC.rename(temporary, usbTilePath);
-    if (!ok && hadOld) SD_MMC.rename(backup, usbTilePath);
+    ok = sdCardFilesystem().rename(temporary, usbTilePath);
+    if (!ok && hadOld) sdCardFilesystem().rename(backup, usbTilePath);
   }
-  if (!ok) { SD_MMC.remove(temporary); return false; }
-  if (hadOld) SD_MMC.remove(backup);
+  if (!ok) { sdCardFilesystem().remove(temporary); return false; }
+  if (hadOld) sdCardFilesystem().remove(backup);
   sdStorage.writes++;
   mapStorageGeneration.fetch_add(1);
   mapTileCacheResident.store(0);
@@ -122,7 +122,7 @@ static bool handleUsbTileCommand(char* command) {
     snprintf(xPath, sizeof(xPath), "%s/%lu", zoomPath, (unsigned long)x);
     snprintf(usbTilePath, sizeof(usbTilePath), "%s/%lu.rgb565", xPath, (unsigned long)y);
     snprintf(backup, sizeof(backup), "%s.bak", usbTilePath);
-    if (!SD_MMC.exists(usbTilePath) && SD_MMC.exists(backup) && !SD_MMC.rename(backup, usbTilePath)) { error("restore-failed"); return true; }
+    if (!sdCardFilesystem().exists(usbTilePath) && sdCardFilesystem().exists(backup) && !sdCardFilesystem().rename(backup, usbTilePath)) { error("restore-failed"); return true; }
     // Reuse one PSRAM tile for checksumming existing files and receiving new data.
     usbTileBuffer = (uint8_t*)heap_caps_malloc(TileUpload::tileBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!usbTileBuffer) { error("no-psram"); return true; }
@@ -132,10 +132,10 @@ static bool handleUsbTileCommand(char* command) {
       Serial.printf("[TILEUSB] %08lx SKIP %08lx\n", (unsigned long)id, (unsigned long)crc);
       return true;
     }
-    if (SD_MMC.exists(usbTilePath) && !overwrite) { resetUsbTileUpload(); error("exists-use-overwrite"); return true; }
-    bool dirs = (SD_MMC.exists("/s3-lora") || SD_MMC.mkdir("/s3-lora")) &&
-                (SD_MMC.exists(mapTileRoot) || SD_MMC.mkdir(mapTileRoot)) &&
-                (SD_MMC.exists(zoomPath) || SD_MMC.mkdir(zoomPath)) && (SD_MMC.exists(xPath) || SD_MMC.mkdir(xPath));
+    if (sdCardFilesystem().exists(usbTilePath) && !overwrite) { resetUsbTileUpload(); error("exists-use-overwrite"); return true; }
+    bool dirs = (sdCardFilesystem().exists("/s3-lora") || sdCardFilesystem().mkdir("/s3-lora")) &&
+                (sdCardFilesystem().exists(mapTileRoot) || sdCardFilesystem().mkdir(mapTileRoot)) &&
+                (sdCardFilesystem().exists(zoomPath) || sdCardFilesystem().mkdir(zoomPath)) && (sdCardFilesystem().exists(xPath) || sdCardFilesystem().mkdir(xPath));
     if (!dirs) { resetUsbTileUpload(); error("mkdir-failed"); return true; }
     usbTileId = id;
     usbTileExpectedCrc = crc;

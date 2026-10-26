@@ -31,6 +31,8 @@ struct SdLock {
   }
 };
 
+#include "GptStorage.inc"
+
 static bool writeSdLineNow(const char* path, const char* line);
 
 static UBaseType_t sdAppendQueueWaiting() {
@@ -79,8 +81,8 @@ static void initMapRenderWorker() {
 static size_t loadSdTextTail(const char* path, char* buffer, size_t bufferSize) {
   SdLock lock;
   if (!lock) return 0;
-  if (!sdStorage.available || !path || !buffer || bufferSize == 0 || !SD_MMC.exists(path)) return 0;
-  File file = SD_MMC.open(path, FILE_READ);
+  if (!sdStorage.available || !path || !buffer || bufferSize == 0 || !sdCardFilesystem().exists(path)) return 0;
+  File file = sdCardFilesystem().open(path, FILE_READ);
   if (!file) return 0;
   size_t fileSize = file.size();
   size_t maxRead = bufferSize - 1;
@@ -163,7 +165,7 @@ static bool writeSdLineNow(const char* path, const char* line) {
     sdStorage.writeErrors++;
     return false;
   }
-  File file = SD_MMC.open(path, FILE_APPEND);
+  File file = sdCardFilesystem().open(path, FILE_APPEND);
   if (!file) {
     sdStorage.writeErrors++;
     strlcpy(sdStorage.status, "open failed", sizeof(sdStorage.status));
@@ -207,8 +209,66 @@ static bool appendSdLine(const char* path, const char* line) {
   return ok;
 }
 
+#include <driver/sdmmc_host.h>
+#include <sdmmc_cmd.h>
+
+// Runs only after every filesystem mount failed. Reads boot sectors without
+// mounting or writing the card, so a socket error can be distinguished from
+// an unsupported partition table/filesystem.
+static void probeUnmountedSdCard() {
+  sdmmc_host_t host = SDMMC_HOST_DEFAULT();
+  host.flags = SDMMC_HOST_FLAG_1BIT; host.slot = SDMMC_HOST_SLOT_1; host.max_freq_khz = 400;
+  sdmmc_slot_config_t slot = SDMMC_SLOT_CONFIG_DEFAULT();
+  slot.clk = (gpio_num_t)SD_CLK_PIN; slot.cmd = (gpio_num_t)SD_CMD_PIN; slot.d0 = (gpio_num_t)SD_D0_PIN; slot.width = 1;
+  sdmmc_card_t card = {};
+  const char* stage = "host init";
+  esp_err_t result = sdmmc_host_init();
+  const bool hostReady = result == ESP_OK;
+  if (result == ESP_OK) { stage = "slot init"; result = sdmmc_host_init_slot(host.slot, &slot); }
+  if (result == ESP_OK) { stage = "card init"; result = sdmmc_card_init(&host, &card); }
+  uint8_t* sector = nullptr;
+  if (result == ESP_OK) {
+    stage = "sector size";
+    if (card.csd.sector_size != 512) result = ESP_ERR_NOT_SUPPORTED;
+    else { sector = (uint8_t*)heap_caps_malloc(512, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL); if (!sector) result = ESP_ERR_NO_MEM; }
+  }
+  if (result == ESP_OK) { stage = "boot read"; result = sdmmc_read_sectors(&card, sector, 0, 1); }
+  if (result == ESP_OK) {
+    sdStorage.rawReadable = true;
+    auto le32 = [](const uint8_t* b) { return uint32_t(b[0]) | (uint32_t(b[1]) << 8) | (uint32_t(b[2]) << 16) | (uint32_t(b[3]) << 24); };
+    bool boot = memcmp(sector + 82, "FAT32   ", 8) == 0 || memcmp(sector + 3, "EXFAT   ", 8) == 0;
+    if (!boot && sector[510] == 0x55 && sector[511] == 0xaa) {
+      for (unsigned i = 0; i < 4; ++i) {
+        const uint8_t* entry = sector + 446 + i * 16;
+        if (!entry[4]) continue;
+        if (entry[4] == 0xee) { strlcpy(sdStorage.probe, "GPT/protective partition table detected", sizeof(sdStorage.probe)); break; }
+        uint32_t start = le32(entry + 8);
+        if (!start || start >= card.csd.capacity) { strlcpy(sdStorage.probe, "Readable card; invalid partition start", sizeof(sdStorage.probe)); break; }
+        stage = "partition boot read"; result = sdmmc_read_sectors(&card, sector, start, 1); boot = result == ESP_OK;
+        break;
+      }
+    }
+    if (boot) {
+      if (memcmp(sector + 3, "EXFAT   ", 8) == 0) strlcpy(sdStorage.probe, "exFAT filesystem detected; FAT32 required", sizeof(sdStorage.probe));
+      else if (memcmp(sector + 82, "FAT32   ", 8) == 0) snprintf(sdStorage.probe, sizeof(sdStorage.probe), "FAT32 boot readable: sector=%u bytes, cluster=%u sectors", unsigned(sector[11] | (sector[12] << 8)), unsigned(sector[13]));
+      else strlcpy(sdStorage.probe, "Card readable; partition boot is not identified as FAT32", sizeof(sdStorage.probe));
+    } else if (strcmp(sdStorage.probe, "not checked") == 0) strlcpy(sdStorage.probe, "Card readable; no FAT32 boot or partition identified", sizeof(sdStorage.probe));
+  }
+  sdStorage.probeError = result;
+  if (result != ESP_OK) snprintf(sdStorage.probe, sizeof(sdStorage.probe), "%s: %s (0x%x)", stage, esp_err_to_name(result), unsigned(result));
+  if (sector) heap_caps_free(sector);
+  if (hostReady) sdmmc_host_deinit();
+  Serial.printf("[sd] read-only probe: %s\n", sdStorage.probe);
+}
+
 static void initSdStorage() {
   batteryCycle.pathsReady = false;
+  sdStorage.busWidth = 0;
+  sdStorage.frequencyKhz = 0;
+  sdStorage.mountAttempts = 0;
+  sdStorage.rawReadable = false;
+  sdStorage.probeError = 0;
+  strlcpy(sdStorage.probe, "not checked", sizeof(sdStorage.probe));
   SdLock lock(5000);
   if (!lock) {
     sdStorage.available = false;
@@ -217,6 +277,7 @@ static void initSdStorage() {
     return;
   }
   mapStorageGeneration.fetch_add(1);
+  GptStorage::end();
   mapTileCacheResident.store(0);
   mapCanvasCached = false;
   mapRenderPending = true;
@@ -226,33 +287,56 @@ static void initSdStorage() {
   Serial.printf("[sd] setPins clk=%d cmd=%d d0=%d d1=%d d2=%d d3=%d oneBit=%s freq=%d\n",
                 SD_CLK_PIN, SD_CMD_PIN, SD_D0_PIN, SD_D1_PIN, SD_D2_PIN, SD_D3_PIN,
                 SD_MMC_ONE_BIT ? "true" : "false", SD_MMC_FREQ);
-  SD_MMC.end();
-  bool pinsOk = SD_MMC_ONE_BIT
-                  ? SD_MMC.setPins(SD_CLK_PIN, SD_CMD_PIN, SD_D0_PIN)
-                  : SD_MMC.setPins(SD_CLK_PIN, SD_CMD_PIN, SD_D0_PIN, SD_D1_PIN, SD_D2_PIN, SD_D3_PIN);
-  if (!pinsOk) {
+  struct MountMode { bool oneBit; int frequency; };
+  constexpr int slowFrequency = SD_MMC_FREQ < 10000 ? SD_MMC_FREQ : 10000;
+  const MountMode modes[] = {{SD_MMC_ONE_BIT, SD_MMC_FREQ},
+                            {SD_MMC_ONE_BIT, slowFrequency}, {true, slowFrequency}, {true, 400}};
+  bool mounted = false, pinsConfigured = false;
+  for (unsigned i = 0; i < sizeof(modes) / sizeof(modes[0]); ++i) {
+    bool duplicate = false;
+    for (unsigned j = 0; j < i; ++j) if (modes[i].oneBit == modes[j].oneBit && modes[i].frequency == modes[j].frequency) duplicate = true;
+    if (duplicate) continue;
+    SD_MMC.end();
+    bool pinsOk = modes[i].oneBit
+                    ? SD_MMC.setPins(SD_CLK_PIN, SD_CMD_PIN, SD_D0_PIN)
+                    : SD_MMC.setPins(SD_CLK_PIN, SD_CMD_PIN, SD_D0_PIN, SD_D1_PIN, SD_D2_PIN, SD_D3_PIN);
+    ++sdStorage.mountAttempts;
+    Serial.printf("[sd] mount attempt %u: %u-bit %d kHz pins=%s\n", sdStorage.mountAttempts,
+                  modes[i].oneBit ? 1U : 4U, modes[i].frequency, pinsOk ? "ok" : "failed");
+    if (!pinsOk) continue;
+    pinsConfigured = true;
+    // Preserve the filesystem on every attempt, including fallback modes.
+    if (SD_MMC.begin("/sdcard", modes[i].oneBit, false, modes[i].frequency)) {
+      sdStorage.busWidth = modes[i].oneBit ? 1 : 4;
+      sdStorage.frequencyKhz = modes[i].frequency;
+      mounted = true;
+      break;
+    }
+  }
+  if (!mounted) {
+    probeUnmountedSdCard();
+    if (sdStorage.rawReadable && strstr(sdStorage.probe, "GPT/protective")) {
+      for (const auto& mode : modes) {
+        ++sdStorage.mountAttempts;
+        if (GptStorage::begin(mode.oneBit, mode.frequency, sdStorage.probe, sizeof(sdStorage.probe))) {
+          sdStorage.busWidth = mode.oneBit ? 1 : 4; sdStorage.frequencyKhz = mode.frequency; mounted = true; break;
+        }
+      }
+    }
+  }
+  if (!mounted) {
     sdStorage.available = false;
     sdStorage.cardSizeBytes = 0;
     sdStorage.totalBytes = 0;
     sdStorage.usedBytes = 0;
     strlcpy(sdStorage.cardType, "none", sizeof(sdStorage.cardType));
-    strlcpy(sdStorage.status, "pin setup failed", sizeof(sdStorage.status));
-    Serial.println("[sd] setPins failed");
+    snprintf(sdStorage.status, sizeof(sdStorage.status), "%s after %u attempts",
+             pinsConfigured ? "mount failed" : "pin setup failed", sdStorage.mountAttempts);
+    Serial.printf("[sd] %s\n", sdStorage.status);
     return;
   }
 
-  if (!SD_MMC.begin("/sdcard", SD_MMC_ONE_BIT, false, SD_MMC_FREQ)) {
-    sdStorage.available = false;
-    sdStorage.cardSizeBytes = 0;
-    sdStorage.totalBytes = 0;
-    sdStorage.usedBytes = 0;
-    strlcpy(sdStorage.cardType, "none", sizeof(sdStorage.cardType));
-    strlcpy(sdStorage.status, "mount failed", sizeof(sdStorage.status));
-    Serial.println("[sd] mount failed");
-    return;
-  }
-
-  uint8_t cardType = SD_MMC.cardType();
+  uint8_t cardType = GptStorage::mounted ? CARD_SDHC : SD_MMC.cardType();
   if (cardType == CARD_NONE) {
     sdStorage.available = false;
     sdStorage.cardSizeBytes = 0;
@@ -271,18 +355,18 @@ static void initSdStorage() {
   else strlcpy(sdStorage.cardType, "unknown", sizeof(sdStorage.cardType));
 
   sdStorage.available = true;
-  sdStorage.cardSizeBytes = SD_MMC.cardSize();
-  sdStorage.totalBytes = SD_MMC.totalBytes();
+  sdStorage.cardSizeBytes = GptStorage::mounted ? uint64_t(GptStorage::card.csd.capacity) * 512 : SD_MMC.cardSize();
+  sdStorage.totalBytes = GptStorage::mounted ? GptStorage::totalBytes() : SD_MMC.totalBytes();
   if (sdStorage.totalBytes == 0) sdStorage.totalBytes = sdStorage.cardSizeBytes;
-  sdStorage.usedBytes = SD_MMC.usedBytes();
-  strlcpy(sdStorage.status, "mounted", sizeof(sdStorage.status));
+  sdStorage.usedBytes = GptStorage::mounted ? GptStorage::usedBytes() : SD_MMC.usedBytes();
+  strlcpy(sdStorage.status, GptStorage::mounted ? "mounted (GPT FAT32)" : "mounted", sizeof(sdStorage.status));
   Serial.printf("[sd] mounted type=%s card=%llu total=%llu used=%llu\n",
                 sdStorage.cardType,
                 (unsigned long long)sdStorage.cardSizeBytes,
                 (unsigned long long)sdStorage.totalBytes,
                 (unsigned long long)sdStorage.usedBytes);
-  if (!SD_MMC.exists(SD_DIR)) SD_MMC.mkdir(SD_DIR);
-  if (!SD_MMC.exists(SD_POSITIONS_PATH)) {
+  if (!sdCardFilesystem().exists(SD_DIR)) sdCardFilesystem().mkdir(SD_DIR);
+  if (!sdCardFilesystem().exists(SD_POSITIONS_PATH)) {
     appendSdLine(SD_POSITIONS_PATH, "uptime_ms,node,name,source,lat,lon,alt_m\n");
   }
   detectMapTileRoot(true);
@@ -317,8 +401,8 @@ static uint8_t scoreMapTileRoot(const char* root) {
   for (int zoom = MAP_TILE_MIN_ZOOM; zoom <= MAP_TILE_MAX_ZOOM; zoom++) {
     char zoomPath[64];
     buildTileRootPath(root, zoom, zoomPath, sizeof(zoomPath));
-    if (!SD_MMC.exists(zoomPath)) continue;
-    File zoomDir = SD_MMC.open(zoomPath);
+    if (!sdCardFilesystem().exists(zoomPath)) continue;
+    File zoomDir = sdCardFilesystem().open(zoomPath);
     if (!zoomDir || !zoomDir.isDirectory()) {
       if (zoomDir) zoomDir.close();
       continue;
@@ -449,11 +533,11 @@ static void printSdTileSummary() {
   for (int zoom = MAP_TILE_MIN_ZOOM; zoom <= MAP_TILE_MAX_ZOOM; zoom++) {
     char zoomPath[64];
     buildTileRootPath(mapTileRoot, zoom, zoomPath, sizeof(zoomPath));
-    if (!SD_MMC.exists(zoomPath)) {
+    if (!sdCardFilesystem().exists(zoomPath)) {
       Serial.printf("[tiles] z%d missing\n", zoom);
       continue;
     }
-    File zoomDir = SD_MMC.open(zoomPath);
+    File zoomDir = sdCardFilesystem().open(zoomPath);
     if (!zoomDir || !zoomDir.isDirectory()) {
       Serial.printf("[tiles] z%d not a directory\n", zoom);
       if (zoomDir) zoomDir.close();
@@ -575,11 +659,11 @@ static void printSdTileFastSummary() {
   for (int zoom = MAP_TILE_MIN_ZOOM; zoom <= MAP_TILE_MAX_ZOOM; zoom++) {
     char zoomPath[64];
     buildTileRootPath(mapTileRoot, zoom, zoomPath, sizeof(zoomPath));
-    if (!SD_MMC.exists(zoomPath)) {
+    if (!sdCardFilesystem().exists(zoomPath)) {
       Serial.printf("[tilesfast] z%d missing\n", zoom);
       continue;
     }
-    File zoomDir = SD_MMC.open(zoomPath);
+    File zoomDir = sdCardFilesystem().open(zoomPath);
     if (!zoomDir || !zoomDir.isDirectory()) {
       Serial.printf("[tilesfast] z%d not a directory\n", zoom);
       if (zoomDir) zoomDir.close();
@@ -619,12 +703,12 @@ static void printSdTileFastSummary() {
     long maxXMinY = LONG_MAX;
     long maxXMaxY = LONG_MIN;
     if (sampleMinXPath[0]) {
-      File sample = SD_MMC.open(sampleMinXPath);
+      File sample = sdCardFilesystem().open(sampleMinXPath);
       if (sample && sample.isDirectory()) inspectTileYRange(sample, &minXTileCount, &minXMinY, &minXMaxY);
       if (sample) sample.close();
     }
     if (sampleMaxXPath[0] && strcmp(sampleMaxXPath, sampleMinXPath) != 0) {
-      File sample = SD_MMC.open(sampleMaxXPath);
+      File sample = sdCardFilesystem().open(sampleMaxXPath);
       if (sample && sample.isDirectory()) inspectTileYRange(sample, &maxXTileCount, &maxXMinY, &maxXMaxY);
       if (sample) sample.close();
     }
@@ -666,8 +750,8 @@ static void saveLastLocationToSd(double lat, double lon, int32_t alt) {
   if (!sdStorage.available) return;
   SdLock lock;
   if (!lock) return;
-  if (SD_MMC.exists(SD_LAST_LOCATION_PATH)) SD_MMC.remove(SD_LAST_LOCATION_PATH);
-  File file = SD_MMC.open(SD_LAST_LOCATION_PATH, FILE_WRITE);
+  if (sdCardFilesystem().exists(SD_LAST_LOCATION_PATH)) sdCardFilesystem().remove(SD_LAST_LOCATION_PATH);
+  File file = sdCardFilesystem().open(SD_LAST_LOCATION_PATH, FILE_WRITE);
   if (!file) return;
   file.printf("%.7f,%.7f,%ld,%lu\n", lat, lon, (long)alt, (unsigned long)millis());
   file.close();
@@ -676,8 +760,8 @@ static void saveLastLocationToSd(double lat, double lon, int32_t alt) {
 static bool loadLastLocationFromSd() {
   SdLock lock;
   if (!lock) return false;
-  if (!sdStorage.available || !SD_MMC.exists(SD_LAST_LOCATION_PATH)) return false;
-  File file = SD_MMC.open(SD_LAST_LOCATION_PATH, FILE_READ);
+  if (!sdStorage.available || !sdCardFilesystem().exists(SD_LAST_LOCATION_PATH)) return false;
+  File file = sdCardFilesystem().open(SD_LAST_LOCATION_PATH, FILE_READ);
   if (!file) return false;
   String line = file.readStringUntil('\n');
   file.close();

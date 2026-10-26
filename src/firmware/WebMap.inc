@@ -16,8 +16,8 @@ static WebTileResult readWebMapTile(const char* root, uint32_t z, uint32_t x, ui
     int shift = (int)z - level;
     char path[112];
     buildTilePath(root, level, x >> shift, y >> shift, path, sizeof(path));
-    File file = SD_MMC.open(path, FILE_READ);
-    if (!file) { unreadable |= SD_MMC.exists(path); continue; }
+    File file = sdCardFilesystem().open(path, FILE_READ);
+    if (!file) { unreadable |= sdCardFilesystem().exists(path); continue; }
     if (file.isDirectory() || file.size() != MAP_TILE_BYTES) { file.close(); unreadable = true; continue; }
     bool complete = true;
     for (size_t offset = 0; offset < MAP_TILE_BYTES; offset += 4096) {

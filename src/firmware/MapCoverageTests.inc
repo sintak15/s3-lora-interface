@@ -22,17 +22,17 @@ static void runMapCoverageTests() {
   job.lat = 44.9537; job.lon = -93.09;
   job.zoom = 14;
   job.plotH = (uint16_t)activeMapPlotHeight();
-  do { snprintf(job.tileRoot, sizeof(job.tileRoot), "/s3-lora/test-coverage-%08lx", (unsigned long)esp_random()); } while (SD_MMC.exists(job.tileRoot));
+  do { snprintf(job.tileRoot, sizeof(job.tileRoot), "/s3-lora/test-coverage-%08lx", (unsigned long)esp_random()); } while (sdCardFilesystem().exists(job.tileRoot));
   auto writeTile = [&](int z, MapCoverage::Cell cell, bool valid) {
     SdLock lock;
     if (!lock || created == 20) return false;
     char zoomPath[96], xPath[112];
     buildTileRootPath(job.tileRoot, z, zoomPath, sizeof(zoomPath));
     snprintf(xPath, sizeof(xPath), "%s/%ld", zoomPath, (long)cell.x);
-    if ((!SD_MMC.exists(job.tileRoot) && !SD_MMC.mkdir(job.tileRoot)) ||
-        (!SD_MMC.exists(zoomPath) && !SD_MMC.mkdir(zoomPath)) || (!SD_MMC.exists(xPath) && !SD_MMC.mkdir(xPath))) return false;
+    if ((!sdCardFilesystem().exists(job.tileRoot) && !sdCardFilesystem().mkdir(job.tileRoot)) ||
+        (!sdCardFilesystem().exists(zoomPath) && !sdCardFilesystem().mkdir(zoomPath)) || (!sdCardFilesystem().exists(xPath) && !sdCardFilesystem().mkdir(xPath))) return false;
     buildTilePath(job.tileRoot, z, cell.x, cell.y, paths[created], 112);
-    File file = SD_MMC.open(paths[created++], FILE_WRITE);
+    File file = sdCardFilesystem().open(paths[created++], FILE_WRITE);
     if (!file) return false;
     bool ok = true;
     for (size_t i = 0; i < (valid ? MAP_TILE_BYTES : 8); i += 4096) {
@@ -93,8 +93,8 @@ static void runMapCoverageTests() {
     check("Detailed coverage returns automatically", added && detail.zoom == 14 && detail.drewTiles && detail.coverage.zooms[4].complete());
     {
       SdLock lock;
-      for (unsigned i = 0; lock && i < full.count; ++i) { char path[112]; buildTilePath(job.tileRoot, 12, full.cells[i].x, full.cells[i].y, path, sizeof(path)); SD_MMC.remove(path); }
-      for (unsigned i = 0; lock && i < detailed.count; ++i) if (!(detailed.centerMask & (1U << i))) { char path[112]; buildTilePath(job.tileRoot, 14, detailed.cells[i].x, detailed.cells[i].y, path, sizeof(path)); SD_MMC.remove(path); }
+      for (unsigned i = 0; lock && i < full.count; ++i) { char path[112]; buildTilePath(job.tileRoot, 12, full.cells[i].x, full.cells[i].y, path, sizeof(path)); sdCardFilesystem().remove(path); }
+      for (unsigned i = 0; lock && i < detailed.count; ++i) if (!(detailed.centerMask & (1U << i))) { char path[112]; buildTilePath(job.tileRoot, 14, detailed.cells[i].x, detailed.cells[i].y, path, sizeof(path)); sdCardFilesystem().remove(path); }
     }
     MapRenderResult partial = {};
     renderCoveredMap(job, partial);
@@ -102,7 +102,7 @@ static void runMapCoverageTests() {
     {
       SdLock lock;
       char path[112]; auto cell = centerCell(14); buildTilePath(job.tileRoot, 14, cell.x, cell.y, path, sizeof(path));
-      if (lock) SD_MMC.remove(path);
+      if (lock) sdCardFilesystem().remove(path);
     }
     auto empty = probeMapCoverage(job);
     check("No coverage is explicit", MapCoverage::choose(empty, 14) == -1);
@@ -114,12 +114,12 @@ static void runMapCoverageTests() {
     SdLock lock;
     bool cleaned = (bool)lock;
     if (lock) {
-      for (unsigned i = 0; i < created; ++i) if (SD_MMC.exists(paths[i])) cleaned &= SD_MMC.remove(paths[i]);
+      for (unsigned i = 0; i < created; ++i) if (sdCardFilesystem().exists(paths[i])) cleaned &= sdCardFilesystem().remove(paths[i]);
       for (unsigned i = 0; i < created; ++i) {
-        char* slash = strrchr(paths[i], '/'); if (slash) { *slash = 0; SD_MMC.rmdir(paths[i]); }
-        slash = strrchr(paths[i], '/'); if (slash) { *slash = 0; SD_MMC.rmdir(paths[i]); }
+        char* slash = strrchr(paths[i], '/'); if (slash) { *slash = 0; sdCardFilesystem().rmdir(paths[i]); }
+        slash = strrchr(paths[i], '/'); if (slash) { *slash = 0; sdCardFilesystem().rmdir(paths[i]); }
       }
-      cleaned &= SD_MMC.rmdir(job.tileRoot);
+      cleaned &= sdCardFilesystem().rmdir(job.tileRoot);
     }
     check("Temporary fixture tree removed", cleaned);
   }

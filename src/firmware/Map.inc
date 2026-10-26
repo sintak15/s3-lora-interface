@@ -70,7 +70,7 @@ static bool mapTileExists(int zoom, long x, long y, char* path, size_t pathSize)
   SdLock lock;
   if (!lock) return false;
   buildTilePath(mapTileRoot, zoom, x, y, path, pathSize);
-  return sdStorage.available && SD_MMC.exists(path);
+  return sdStorage.available && sdCardFilesystem().exists(path);
 }
 
 static int findBestMapZoom(double lat, double lon, char* centerPath, size_t centerPathSize) {
@@ -102,12 +102,12 @@ static void loadMapCacheFromSd() {
     return;
   }
   bool hasLastLocation = loadLastLocationFromSd();
-  if (!SD_MMC.exists(SD_MAP_CACHE_PATH)) {
+  if (!sdCardFilesystem().exists(SD_MAP_CACHE_PATH)) {
     strlcpy(mapCacheStatus, hasLastLocation ? "image missing, location loaded" : "missing", sizeof(mapCacheStatus));
     Serial.printf("[MAPCACHE] %s path=%s\n", mapCacheStatus, SD_MAP_CACHE_PATH);
     return;
   }
-  File file = SD_MMC.open(SD_MAP_CACHE_PATH, FILE_READ);
+  File file = sdCardFilesystem().open(SD_MAP_CACHE_PATH, FILE_READ);
   if (!file) {
     strlcpy(mapCacheStatus, "open failed", sizeof(mapCacheStatus));
     Serial.printf("[MAPCACHE] %s path=%s\n", mapCacheStatus, SD_MAP_CACHE_PATH);
@@ -180,8 +180,8 @@ static void saveMapCacheToSd() {
     strlcpy(mapCacheStatus, "save skipped", sizeof(mapCacheStatus));
     return;
   }
-  if (SD_MMC.exists(SD_MAP_CACHE_PATH)) SD_MMC.remove(SD_MAP_CACHE_PATH);
-  File file = SD_MMC.open(SD_MAP_CACHE_PATH, FILE_WRITE);
+  if (sdCardFilesystem().exists(SD_MAP_CACHE_PATH)) sdCardFilesystem().remove(SD_MAP_CACHE_PATH);
+  File file = sdCardFilesystem().open(SD_MAP_CACHE_PATH, FILE_WRITE);
   if (!file) {
     strlcpy(mapCacheStatus, "save open failed", sizeof(mapCacheStatus));
     Serial.printf("[MAPCACHE] %s path=%s\n", mapCacheStatus, SD_MAP_CACHE_PATH);
@@ -287,7 +287,7 @@ static bool assembleMapTilesToBuffer(const MapRenderJob& job, MapRenderResult& r
   char centerPath[96];
   buildTilePath(job.tileRoot, job.zoom, job.centerTileX, job.centerTileY, centerPath, sizeof(centerPath));
   bool centerResident = useTileCache && mapTileIndex.find({job.zoom, (int32_t)job.centerTileX, (int32_t)job.centerTileY}, false) != mapTileIndex.missing;
-  if (!centerResident && !SD_MMC.exists(centerPath)) {
+  if (!centerResident && !sdCardFilesystem().exists(centerPath)) {
     strlcpy(result.status, "center tile missing", sizeof(result.status));
     return false;
   }
@@ -313,7 +313,7 @@ static bool assembleMapTilesToBuffer(const MapRenderJob& job, MapRenderResult& r
       } else {
         char path[96];
         buildTilePath(job.tileRoot, job.zoom, tileX, tileY, path, sizeof(path));
-        tile = SD_MMC.open(path, FILE_READ);
+        tile = sdCardFilesystem().open(path, FILE_READ);
         if (!tile) continue;
         if (tile.isDirectory() || tile.size() != MAP_TILE_BYTES) {
           tile.close(); mapTileCacheReadErrors.fetch_add(1); continue;

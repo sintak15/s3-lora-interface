@@ -34,11 +34,11 @@ static bool writeBatteryCycleRow(const char* event) {
       strlcpy(batteryCycle.status, "Rotation pending; retrying safely", sizeof(batteryCycle.status));
       return false;
     }
-    batteryCycle.previousAvailable = SD_MMC.exists(SD_POWER_HEALTH_PREVIOUS_PATH);
+    batteryCycle.previousAvailable = sdCardFilesystem().exists(SD_POWER_HEALTH_PREVIOUS_PATH);
     batteryCycle.pathsReady = true;
   }
-  File file = SD_MMC.open(SD_BATTERY_CYCLE_PATH, FILE_APPEND);
-  File readable = SD_MMC.open(SD_POWER_HEALTH_PATH, FILE_APPEND);
+  File file = sdCardFilesystem().open(SD_BATTERY_CYCLE_PATH, FILE_APPEND);
+  File readable = sdCardFilesystem().open(SD_POWER_HEALTH_PATH, FILE_APPEND);
   if (!file || !readable) {
     if (file) file.close();
     if (readable) readable.close();

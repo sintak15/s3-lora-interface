@@ -143,6 +143,43 @@ async function testRetryRequests() {
   assert(elements.txRetryStatus.textContent.includes('result unknown'));
 }
 
+async function testSerialPinSettings(){
+  vm.runInContext("settingsPanel='cfgSerial'",context);
+  for(const id of ['hcSerialRxd','hcSerialTxd']){
+    const tag=html.match(new RegExp('<input[^>]*id="'+id+'"[^>]*>'))[0];
+    assert(!/\bvalue=/.test(tag),'Unknown Heltec pins must not default to a specific pair');
+    elements[id].value='';elements[id].dataset.dirty='0';
+  }
+  vm.runInContext('applyCurrentConfig({heltecConfig:{serial:{valid:false,rxd:0,txd:0}}})',context);
+  assert.equal(elements.hcSerialRxd.value,'');
+  assert.equal(elements.hcSerialTxd.value,'');
+  let requests=[];
+  context.fetch=async(url,options)=>{requests.push({url,options});return {ok:true};};
+  for(const [rx,tx] of [['',''],['47',''],['','48'],['49','48'],['47','-1'],['47.5','48']]){
+    elements.hcSerialRxd.value=rx;elements.hcSerialTxd.value=tx;
+    assert.equal(await vm.runInContext('applyHeltecSerial()',context),false);
+    assert.equal(requests.length,0,'Invalid or missing pins must not write or save radio configuration');
+  }
+  vm.runInContext('applyCurrentConfig({heltecConfig:{serial:{valid:true,rxd:47,txd:48}}})',context);
+  assert.equal(String(elements.hcSerialRxd.value),'47');
+  assert.equal(String(elements.hcSerialTxd.value),'48');
+  for(const [rx,tx] of [['39','38'],['47','48']]){
+    elements.hcSerialRxd.value=rx;elements.hcSerialTxd.value=tx;
+    elements.hcSerialRxd.dataset.dirty='1';elements.hcSerialTxd.dataset.dirty='1';
+    vm.runInContext('applyCurrentConfig({heltecConfig:{serial:{valid:true,rxd:38,txd:39}}})',context);
+    assert.equal(elements.hcSerialRxd.value,rx,'Polling must preserve edited RX');
+    assert.equal(elements.hcSerialTxd.value,tx,'Polling must preserve edited TX');
+    requests=[];
+    assert.equal(await vm.runInContext('applyHeltecSerial()',context),true);
+    assert.deepEqual(requests.map(r=>r.url),['/heltec/serial','/heltec/save']);
+    const body=new URLSearchParams(requests[0].options.body);
+    assert.equal(body.get('rxd'),rx);assert.equal(body.get('txd'),tx);
+  }
+  vm.runInContext('applyCurrentConfig({heltecConfig:{serial:{valid:true,rxd:47,txd:48}}})',context);
+  assert.equal(elements.hcSerialRxd.dataset.dirty,'0','Matching radio readback clears the saved RX draft');
+  assert.equal(elements.hcSerialTxd.dataset.dirty,'0','Matching radio readback clears the saved TX draft');
+}
+
 async function testBatteryCycleControls(){
   let calls=0,finish;
   context.fetch=(url,options)=>{
@@ -255,16 +292,62 @@ function testBundledMapAssets(){
   assert(!html.includes('tile.openstreetmap.org'),'No online tile dependency');
 }
 
+async function testGameRomsAndConversationIsolation() {
+  let requests = [], finishUpload;
+  context.FormData = class { append(...values) { this.values = values; } };
+  elements.romUploadFile.files = [{name:'../bad.gb',size:32768}];
+  context.fetch = async (url, options) => { requests.push(url); return {ok:true,text:async()=> 'Uploaded',json:async()=>({roms:[]})}; };
+  await vm.runInContext('romUploadForm.onsubmit({preventDefault(){}})',context);
+  assert.equal(requests.length,0,'Traversal filename is blocked before upload');
+  elements.romUploadFile.files = [{name:'Good.gb',size:4194305}];
+  await vm.runInContext('romUploadForm.onsubmit({preventDefault(){}})',context);
+  assert.equal(requests.length,0,'Oversized ROM is blocked');
+  elements.romUploadFile.files = [{name:'Good.gb',size:32768}];
+  context.fetch = async (url,options) => {
+    requests.push(url);
+    if(url==='/games/roms/upload')return new Promise(resolve=>{finishUpload=()=>resolve({ok:true,text:async()=> 'ROM uploaded'});});
+    return {ok:true,json:async()=>({roms:[{name:'<img src=x onerror=alert(1)>.gb',bytes:32768}]})};
+  };
+  const upload=vm.runInContext('romUploadForm.onsubmit({preventDefault(){}})',context);
+  await vm.runInContext('romUploadForm.onsubmit({preventDefault(){}})',context);
+  assert.equal(requests.filter(x=>x==='/games/roms/upload').length,1,'Repeated upload click sends one request');
+  finishUpload(); await upload;
+  assert.equal(elements.romUploadButton.disabled,false);
+  assert(!elements.romFiles.innerHTML.includes('<img'),'ROM names are escaped');
+  let oldReply;
+  requests=[];
+  context.fetch=async (url,options)=>{
+    requests.push([url,options]);
+    if(url.startsWith('/messages/thread?')&&url.includes('00000002'))return new Promise(resolve=>{oldReply=()=>resolve({ok:true,json:async()=>({text:'OLD DEVICE SECRET'})});});
+    return {ok:true,json:async()=>({text:'NEW DEVICE THREAD'}),text:async()=>''};
+  };
+  const first=vm.runInContext("openWebDirectConversation('!00000002')",context);
+  elements.directMsg.value='Draft for device two';
+  await vm.runInContext("openWebDirectConversation('!00000003')",context);
+  oldReply(); await first;
+  assert.equal(elements.directTo.value,'!00000003','Late data cannot change recipient');
+  assert(!elements.directChatLog.innerHTML.includes('OLD DEVICE SECRET'),'Late thread response cannot cross conversations');
+  assert(elements.directChatLog.innerHTML.includes('NEW DEVICE THREAD'));
+  assert.equal(elements.directMsg.value,'','Draft from another device is not reused');
+  assert.equal(requests.filter(([u,o])=>u==='/messages/read'&&o.body.get('peer')==='!00000002').length,0,'Hidden stale thread is not marked read');
+  context.fetch=async()=>({ok:true,json:async()=>({text:'THREAD TWO'}),text:async()=>''});
+  await vm.runInContext("openWebDirectConversation('!00000002')",context);
+  assert.equal(elements.directMsg.value,'Draft for device two','Draft is restored only for its device');
+  vm.runInContext("selectedWebDirectPeer='';currentPage='overview'",context);
+}
+
 (async () => {
   await testRendering();
   await testSingleRequestAndRetries();
   await testRequestTimeout();
   await testRetryRequests();
   await testSavedMessageTone();
+  await testSerialPinSettings();
   await testBatteryCycleControls();
   testChatColorsAndBatterySymbols();
   testOfflineCoverage();
   testImperialMapScale();
   testBundledMapAssets();
-  console.log('Web UI regressions passed: escaping, single request, retry/backoff, recovery, timeout, delivery, runtime, retry controls, sound preview, coverage, imperial scale, bundled map assets.');
+  await testGameRomsAndConversationIsolation();
+  console.log('Web UI regressions passed: escaping, single request, retry/backoff, recovery, timeout, delivery, runtime, retry controls, sound preview, serial pin readback/edit/save, coverage, imperial scale, bundled map assets.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

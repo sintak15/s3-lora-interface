@@ -1,5 +1,28 @@
 # Heltec firmware updates
 
+## Compatibility with the installed 2.7.26 release
+
+Direct radio readback on October 25, 2026 identified **2.7.26.54e0d8d**.
+Compared with the previously installed 2.7.15, its serial API still uses the
+same `0x94 0xC3` frame prefix, big-endian length and configured UART RX/TX pins.
+The Heltec V3 serial module still uses Serial2. No pin-direction swap is required
+by this firmware upgrade.
+
+Later on October 25, the user restored Heltec RX38/TX39 and reported that the
+link worked. CYD counters and direct configuration readback confirmed operation
+with 2.7.26 still installed. Channel keys, owner name and saved preferences were
+restored from the October 24 backup, retaining GPS input from the CYD only.
+This establishes that the installed release can operate the application UART;
+the earlier RX47/TX48 failure was not conclusively isolated.
+
+One client change is required: 2.7.26 interprets heartbeat nonce **1** as a
+node-info broadcast request. Ordinary keepalives now use nonce **0**, which
+retains the keepalive/queue-status behavior on both versions. This prevents
+the first periodic heartbeat from requesting an unintended node-info broadcast;
+it does not establish the cause of a UART link receiving no configuration replies.
+See the [2.7.26 heartbeat handler](https://github.com/meshtastic/firmware/blob/v2.7.26.54e0d8d/src/mesh/PhoneAPI.cpp)
+and [serial module](https://github.com/meshtastic/firmware/blob/v2.7.26.54e0d8d/src/modules/SerialModule.cpp).
+
 The CYD and Heltec run separate firmware. A CYD application update does not
 update Meshtastic or the Heltec's OTA loader. The current CYD firmware can
 configure Heltec networking through its application UART, but contains no
@@ -102,7 +125,7 @@ and `verification-result.json`.
 | USB / UART0 flashing | A working USB data connection or a suitable 3.3 V serial connection to the ESP32-S3 ROM UART, plus boot/reset handling |
 | Flashing through the CYD | Additional bridge firmware and different wiring; the existing application UART is insufficient |
 
-The existing Heltec GPIO38 RX / GPIO39 TX connection is an application UART.
+The currently configured Heltec GPIO38 RX / GPIO39 TX connection is an application UART.
 The ROM flashing UART0 is GPIO44 RX / GPIO43 TX on Heltec V3.2; the onboard
 CP2102 also connects to those pins. A wired recovery design must account for
 that existing driver and boot/reset signals before attaching another transmitter.

@@ -27,7 +27,7 @@ static const uint16_t* loadCachedMapTile(const MapRenderJob& job, long x, long y
   mapTileCacheMisses.fetch_add(1);
   char path[96];
   buildTilePath(job.tileRoot, job.zoom, x, y, path, sizeof(path));
-  File tile = SD_MMC.open(path, FILE_READ);
+  File tile = sdCardFilesystem().open(path, FILE_READ);
   if (!tile) return nullptr; // Missing neighbours are normal at coverage edges.
   if (tile.isDirectory() || tile.size() != MAP_TILE_BYTES) {
     tile.close();

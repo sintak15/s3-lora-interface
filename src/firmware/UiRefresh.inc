@@ -786,6 +786,7 @@ static void refreshScreenUi() {
   refreshMapUi();
 
   refreshChatViews(pageForce);
+  refreshDirectInbox();
   if (currentPage == pagePacketInspector && taPacketInspector && (pageForce || isUiDirty(UI_DIRTY_PACKET_LOG))) {
     setReadonlyTextStable(taPacketInspector, packetLog[0] ? packetLog : "No packets decoded yet");
     clearUiDirty(UI_DIRTY_PACKET_LOG);
@@ -888,7 +889,7 @@ static bool runUiSmokeTests() {
         menuOk &= lv_obj_get_height(child) >= 44;
       }
     }
-    menuOk &= menuActions == 5;
+    menuOk &= menuActions == 6;
     // Exercise the nested System > Health route and its Back chain.
     showPage(pageSystem);
     showPage(pageDiagnose);
@@ -931,6 +932,14 @@ static void sendDirectFromInput(lv_obj_t* toInput, lv_obj_t* msgInput) {
   uint32_t to = parseNodeAddress(lv_textarea_get_text(toInput));
   const char* msg = lv_textarea_get_text(msgInput);
   if (to && msg && msg[0] && sendDirectTextMessage(msg, to)) {
+    if (auto* draft = directConversation(selectedDirectPeer)) draft->draft[0] = 0;
+    if (auto* draft = directConversation(to)) draft->draft[0] = 0;
+    newDirectDraft[0] = 0;
+    if (to != currentDirectPeer()) {
+      selectedDirectPeer = to; directLegacyView = false;
+      if (directThreadTitle) lv_label_set_text(directThreadTitle, nodeName(to));
+      markDirectConversationRead(); chatScrollToNewestPending = true; markUiDirty(UI_DIRTY_CHAT);
+    }
     lv_textarea_set_text(msgInput, "");
   }
 }

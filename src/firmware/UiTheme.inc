@@ -13,7 +13,8 @@ static lv_obj_t* makeThemeIcon(lv_obj_t* parent, UiIcons::Id id, unsigned size=2
 static UiIcons::Id navigationIcon(const char* title) {
   struct NamedIcon { const char* title; UiIcons::Id id; };
   static const NamedIcon icons[] = {
-    {"Menu",UiIcons::Id::Menu}, {"Messages",UiIcons::Id::Messages}, {"Direct",UiIcons::Id::Messages},
+    {"Menu",UiIcons::Id::Menu}, {"Games",UiIcons::Id::Menu}, {"Pets",UiIcons::Id::Sensors}, {"Game Boy",UiIcons::Id::Display},
+    {"Messages",UiIcons::Id::Messages}, {"Direct",UiIcons::Id::Messages},
     {"Nodes",UiIcons::Id::Nodes}, {"Mesh",UiIcons::Id::Nodes}, {"Map",UiIcons::Id::Map},
     {"TX Log",UiIcons::Id::Delivery}, {"Packets",UiIcons::Id::Delivery},
     {"Health",UiIcons::Id::Health}, {"System",UiIcons::Id::Settings}, {"Interface",UiIcons::Id::Display},
@@ -28,7 +29,10 @@ static UiIcons::Id navigationIcon(const char* title) {
 static UiIcons::Id pageThemeIcon(lv_obj_t* page) {
   if (page==pageLauncher) return UiIcons::Id::Home;
   if (page==pageFunctions) return UiIcons::Id::Menu;
-  if (page==pageOperate || page==pagePublicChat || page==pagePrivateChat || page==pageDirectChat) return UiIcons::Id::Messages;
+  if (page==pageGames) return UiIcons::Id::Menu;
+  if (page==pagePets || page==pagePet || page==pagePetCare) return UiIcons::Id::Sensors;
+  if (page==pageGameBoy || page==pageGameBoyPlayer) return UiIcons::Id::Display;
+  if (page==pageOperate || page==pagePublicChat || page==pagePrivateChat || page==pageDirectChat || page==pageDirectInbox) return UiIcons::Id::Messages;
   if (page==pageNodes || page==pageNodeDetail || page==pageMeshHealth) return UiIcons::Id::Nodes;
   if (page==pageGps || page==pageMapCoverage) return UiIcons::Id::Map;
   if (page==pageTxHistory || page==pagePacketInspector) return UiIcons::Id::Delivery;

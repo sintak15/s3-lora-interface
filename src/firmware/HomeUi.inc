@@ -38,8 +38,10 @@ static void buildHomeUi() {
   lv_obj_set_style_bg_color(pageLauncher, lv_color_hex(0x0C1C30), 0);
   lv_obj_set_style_bg_grad_color(pageLauncher, lv_color_hex(0x07111F), 0);
   lv_obj_set_style_bg_grad_dir(pageLauncher, LV_GRAD_DIR_VER, 0);
-  homeLabel(pageLauncher, "At a glance", 8, 0, 214, &lv_font_montserrat_22, 0xF4F8FF);
-  auto* caption = homeLabel(pageLauncher, "FIELD DASHBOARD", 9, 28, 210, &montserrat_11, 0x85BFFF);
+  homeLabel(pageLauncher, "At a glance", 8, 0, 148, &lv_font_montserrat_22, 0xF4F8FF);
+  auto* caption = homeLabel(pageLauncher, "FIELD DASHBOARD", 9, 28, 148, &montserrat_11, 0x85BFFF);
+  btnHomeGames = makeSmallButton(pageLauncher, "Games", 164, 0, 60, [](lv_event_t*) { showPage(pageGames); });
+  lv_obj_set_height(btnHomeGames, 44);
   lv_obj_set_style_text_letter_space(caption, 1, 0);
 
   auto* radio = homeCard("RADIO LINK", UiIcons::Id::Radio, 6, 48, 218, 62, [](lv_event_t*) { showPage(pageSystemRadio); });

@@ -48,7 +48,7 @@ static bool runHomeUiTests() {
       bounds &= child.x1 >= area.x1 && child.x2 <= area.x2 && child.y1 >= area.y1 && child.y2 <= area.y2;
     }
   }
-  check("Four uniform cards with bounded long text", cards == 4 && bounds && uniform);
+  check("Home cards and Games shortcut have bounded text", cards == 5 && bounds && uniform);
   lv_obj_t* labels[] = {lblHomeLink, lblHomePower, lblHomeNodes, lblHomeMessages};
   nodeCount = savedNodes;
   lv_obj_t* pages[] = {pageSystemRadio, pageBattery, pageNodes, pageOperate};

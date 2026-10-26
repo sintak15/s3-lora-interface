@@ -8,7 +8,7 @@ Open the CYD's IP address in a browser and use its configured web login.
 v0.1.104 adds Material Symbols Rounded to the home dashboard, main navigation,
 system menus and page headings, with matching icons in web navigation, Settings
 categories, status cards and diagnostic topics. Every navigation control keeps
-its text label. The CYD main menu keeps all five destinations on one screen;
+its text label. The CYD main menu keeps all six destinations on one screen;
 denser system menus scroll to accommodate an icon above each full-width label.
 
 Cards, panels and buttons share rounded corners and blue pressed/selected states.
@@ -58,6 +58,13 @@ reporting intervals. Their values still load from the radio and remain included
 when their section is applied. Blank password fields retain existing secrets.
 Apply/save feedback appears above the active editor. A lost connection reports
 an unknown outcome; refresh settings before repeating the change.
+
+Serial RX/TX fields start blank until valid Heltec configuration is received.
+If the link is down, enter both pins to match the wiring. Applying the serial
+module never substitutes a default pin pair; requests missing either pin are
+rejected. Background refreshes preserve edited pins until matching radio
+readback arrives. GPS sharing accepts distinct, nonzero configured RX/TX pins
+with PROTO at 115200 baud and a responsive radio link.
 
 Channel Save remains in its editor. General save/restart and diagnostic commands
 are under **Tools > Serial console > Heltec commands**.
@@ -193,3 +200,21 @@ Default text is one pixel larger: CYD Comic Neue 12/14 becomes 13/15 px, and
 Readable mode Montserrat 14/16 becomes 15/17 px. Home small text becomes 11 px
 and message previews 15 px; large dashboard headings retain their separate size.
 Web text sizes also increase by one CSS pixel. Battery symbols use regular weight.
+
+## Games and direct conversations (v0.1.107)
+
+**Games** lists SD Game Boy ROMs and accepts authenticated `.gb` uploads up to
+4 MiB. Uploads validate names, cartridge headers and declared size before an
+atomic rename. Existing ROMs require explicit deletion before replacement;
+deleting a ROM retains its save file. See [games](GAMES.md) for paths and limits.
+
+**Messages > Direct** selects a particular peer, shows its recent history and
+keeps its draft. Changing peers also changes the reply recipient. Late responses
+for an earlier selection cannot replace the visible conversation. Reading one
+conversation marks only that peer read. Old mixed history remains available as
+**Earlier messages**.
+
+Authenticated `GET /sd/list?path=/&cursor=0` provides a paginated directory
+listing (64 entries per page); `GET /sd/file?path=/...` exports a file. These
+read-only routes support copying existing data to a replacement card while
+preserving a newly downloaded map pack. They do not modify the old card.

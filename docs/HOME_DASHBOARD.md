@@ -22,7 +22,7 @@ detail screen retains the estimate basis and full gauge readings.
 All four cards open their corresponding detail page and support Back to Home.
 The Menu button remains the main launcher; System still contains Health. The
 home layout remains within the existing 240×320 portrait display, with card
-touch targets at least 44 pixels tall. The five main-menu tiles remain visible
+touch targets at least 44 pixels tall. v0.1.107 adds a Games shortcut beside the Home heading. The six main-menu tiles remain visible
 together. System menus place icons above their labels and scroll when needed;
 the existing font preferences remain available.
 

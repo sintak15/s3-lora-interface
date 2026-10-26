@@ -14,6 +14,8 @@ static Page page(unsigned index) {
     {"gps-advanced", pageGpsAdvanced}, {"wifi", pageWifi}, {"wifi-stats", pageWifiStats},
     {"wifi-connect", pageWifiLocal}, {"wifi-scan", pageWifiScan}, {"display", pageBacklight},
     {"sound", pageSound}, {"battery", pageBattery}, {"power-logs", pagePowerLogs}
+    ,{"games", pageGames}, {"pets", pagePets}, {"pet", pagePet}, {"pet-care", pagePetCare},
+    {"gameboy", pageGameBoy}, {"gameboy-player", pageGameBoyPlayer}, {"conversations", pageDirectInbox}
   };
   return index < sizeof(pages) / sizeof(pages[0]) ? pages[index] : Page{nullptr, nullptr};
 }
@@ -122,6 +124,7 @@ static void handle() {
   auto* entries = (Entry*)heap_caps_calloc(2048, sizeof(Entry), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   if (!entries) { server.send(503, "text/plain", "No inspection memory"); return; }
   const bool savedReadable = readableTextMode;
+  uint8_t savedPet = activePet;
   int savedPage = index(currentPage), savedNavigation[8];
   uint8_t savedDepth = navigationDepth;
   for (unsigned i = 0; i < savedDepth; ++i) savedNavigation[i] = index(navigationStack[i]);
@@ -150,9 +153,13 @@ static void handle() {
     }
   }
   if (requested == "nodes") nodeListViewMode = variant == "detail" ? NODE_LIST_VIEW_DETAILED : NODE_LIST_VIEW_COMPACT;
+  if (requested == "pet") activePet = variant == "giraffe" ? 1 : 0;
+  if (requested == "gameboy-player" && variant == "demo") {
+    if (startGameBoy(nullptr)) { gameBoyCoreFrame(gbCore, 0xff); gameBoyCoreFrame(gbCore, 0xff); }
+  }
   if (requested == "node-detail" && nodeCount) selectedNodeNum = nodes[0].num;
   showPage(page(target).object, false);
-  forcePageRefresh = true; refreshScreenUi(); lv_obj_update_layout(mainScreen);
+  forcePageRefresh = true; refreshScreenUi(); lastGamesRefresh = 0; serviceGames(); lv_obj_update_layout(mainScreen);
   Audit audit{entries};
   audit.root = page(target).object; audit.collect(audit.root); audit.overlaps();
   unsigned bars = audit.count;
@@ -180,6 +187,7 @@ static void handle() {
   }
   result += "}";
   heap_caps_free(entries);
+  activePet = savedPet;
   localBattery = savedBattery; batteryRuntime = savedRuntime; gpsStats = savedGps;
   radioResponseSeen = savedSeen; lastRadioResponseMs = savedResponse; nodeCount = savedNodeCount;
   unreadPublic = savedUnread; selectedNodeNum = savedSelected; nodeListViewMode = savedListView;

@@ -3,6 +3,38 @@
 
 namespace GpsRelayTests {
 using namespace GpsRelay;
+constexpr bool configuredSerialPins() {
+  meshtastic_ModuleConfig_SerialConfig serial = meshtastic_ModuleConfig_SerialConfig_init_zero;
+  serial.enabled = true;
+  serial.mode = meshtastic_ModuleConfig_SerialConfig_Serial_Mode_PROTO;
+  serial.baud = meshtastic_ModuleConfig_SerialConfig_Serial_Baud_BAUD_115200;
+  serial.rxd = 47; serial.txd = 48;
+  if (!serialConfigReady(serial)) return false;
+  serial.rxd = 39; serial.txd = 38;
+  if (!serialConfigReady(serial)) return false;
+  serial.rxd = 38; serial.txd = 39;
+  if (!serialConfigReady(serial)) return false;
+  serial.rxd = 39;
+  if (serialConfigReady(serial)) return false;
+  serial.rxd = 0;
+  if (serialConfigReady(serial)) return false;
+  serial.rxd = 49;
+  if (serialConfigReady(serial)) return false;
+  serial.rxd = 47; serial.txd = 0;
+  if (serialConfigReady(serial)) return false;
+  serial.txd = 49;
+  if (serialConfigReady(serial)) return false;
+  serial.txd = 48; serial.enabled = false;
+  if (serialConfigReady(serial)) return false;
+  serial.enabled = true; serial.mode = meshtastic_ModuleConfig_SerialConfig_Serial_Mode_SIMPLE;
+  if (serialConfigReady(serial)) return false;
+  serial.mode = meshtastic_ModuleConfig_SerialConfig_Serial_Mode_PROTO;
+  serial.baud = meshtastic_ModuleConfig_SerialConfig_Serial_Baud_BAUD_9600;
+  if (serialConfigReady(serial)) return false;
+  serial.baud = meshtastic_ModuleConfig_SerialConfig_Serial_Baud_BAUD_DEFAULT;
+  return serialConfigReady(serial);
+}
+static_assert(configuredSerialPins(), "GPS sharing accepts the configured UART pin pair and rejects unusable serial settings");
 constexpr Fix sample(uint32_t now, uint32_t sequence = 1) {
   Fix fix; fix.valid = true; fix.capturedMs = now; fix.sequence = sequence;
   fix.latitude = 449770000; fix.longitude = -932650000;

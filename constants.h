@@ -6,7 +6,7 @@
 #include "config/device_config.example.h"
 #endif
 
-#define FIRMWARE_VERSION "v0.1.104"
+#define FIRMWARE_VERSION "v0.1.112"
 
 #ifndef DEVICE_NAME
 #define DEVICE_NAME "s3-lora-interface"
@@ -18,12 +18,14 @@
 
 // UART connection from this ESP32-S3 interface board to the Heltec LoRa unit.
 // Cross TX/RX between boards: interface TX -> Heltec RX, interface RX -> Heltec TX.
+// Verified Heltec config: interface GPIO21 TX -> GPIO38 RX; interface GPIO14 RX <- GPIO39 TX.
 #define LORA_RX_PIN 14
 #define LORA_TX_PIN 21
+#define LORA_UART_NUM 2
 #define LORA_BAUD 115200
 
-// Shared GPS output -> CYD GPIO3 and Heltec GPIO5; only CYD drives GPS RX.
-// CYD GPIO2 -> GPS RX. Leave Heltec GPIO4 disconnected from GPS RX.
+// GPS TX -> CYD GPIO3; CYD GPIO2 -> GPS RX.
+// The Heltec receives CYD positions through the radio UART, with no direct GPS wire.
 #define GPS_RX_PIN 3
 #define GPS_TX_PIN 2
 #define GPS_BAUD 9600

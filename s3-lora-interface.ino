@@ -1,4 +1,6 @@
 #include <Arduino.h>
+#include <esp32-hal-uart.h>
+#include <driver/gpio.h>
 #ifdef FIRMWARE_RUN_TESTS
 // HTTP layout inspection nests rendering and test fixtures inside the server.
 SET_LOOP_TASK_STACK_SIZE(16 * 1024);
@@ -69,6 +71,9 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 #include "src/tests/GpsRelayTests.h"
 #include "src/tests/DiagnosticTextTests.h"
 #include "src/tests/NotificationSoundTests.h"
+#include "src/tests/ConversationTests.h"
+#include "src/tests/SdGptTests.h"
+#include "src/tests/GameBoyInputTests.h"
 #endif
 
 #include "src/firmware/State.h"
@@ -76,6 +81,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 #include "src/firmware/Runtime.inc"
 #include "src/firmware/Storage.inc"
+#include "src/firmware/DirectMessages.inc"
 #include "src/firmware/Gps.inc"
 #include "src/firmware/Battery.inc"
 #include "src/firmware/PowerLogStorage.inc"
@@ -162,6 +168,8 @@ void setup() {
   initToneAudio();
   Serial.println("[boot] init sd");
   initSdStorage();
+  initDirectMessages();
+  initGames();
 
   char bootLine[96];
   snprintf(bootLine, sizeof(bootLine), "[boot] %s starting\n", interfaceDeviceName);
@@ -212,6 +220,7 @@ void loop() {
     ESP.restart();
   }
   serviceScreen();
+  serviceGames();
   printSerialDiagnostics();
   delay(2);
 }
