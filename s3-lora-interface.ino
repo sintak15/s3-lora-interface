@@ -40,7 +40,8 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 #include "src/WebMapAssets.h"
 #include "src/Reliability.h"
 #include "src/FieldStatus.h"
-#include "src/Max17048.h"
+#include "src/BatteryVoltage.h"
+#include "src/Ads1115.h"
 #include "src/SampleVariation.h"
 #include "src/LogRotation.h"
 #include "src/ChatText.h"
@@ -58,7 +59,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 #ifdef FIRMWARE_RUN_TESTS
 #include "src/tests/ReliabilityTests.h"
 #include "src/tests/FieldStatusTests.h"
-#include "src/tests/Max17048Tests.h"
+#include "src/tests/BatteryVoltageTests.h"
 #include "src/tests/SampleVariationTests.h"
 #include "src/tests/LogRotationTests.h"
 #include "src/tests/ChatTextTests.h"

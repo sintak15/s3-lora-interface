@@ -13,12 +13,12 @@ static bool runHomeUiTests() {
   bool all = true;
   auto check = [&all](const char* name, bool ok) { Serial.printf("[test-home] %s: %s\n", name, ok ? "PASS" : "FAIL"); all &= ok; };
   showPage(pageLauncher, false);
-  radioResponseSeen = false; localBattery.gaugePresent = false; refreshDashboardLabels();
+  radioResponseSeen = false; localBattery.voltageValid = false; refreshDashboardLabels();
   check("Waiting and missing gauge remain explicit", strcmp(lv_label_get_text(lblHomeLink), "Waiting") == 0 && strcmp(lv_label_get_text(lblHomePower), "--") == 0 && lv_obj_has_flag(homePowerBar, LV_OBJ_FLAG_HIDDEN));
   radioResponseSeen = true; lastRadioResponseMs = millis();
-  localBattery.gaugePresent = true; localBattery.charging = true; localBattery.percent = 100;
+  localBattery.voltageValid = true; localBattery.charging = true; localBattery.percent = 100; localBattery.batteryMv = 4200;
   refreshDashboardLabels();
-  check("Connected and charging states", strcmp(lv_label_get_text(lblHomeLink), "Connected") == 0 && strcmp(lv_label_get_text(lblHomePower), "100%") == 0 && strcmp(lv_label_get_text(lblHomePowerDetail), "Battery: +") == 0 && lv_bar_get_value(homePowerBar) == 100);
+  check("Connected and estimated battery states", strcmp(lv_label_get_text(lblHomeLink), "Connected") == 0 && strcmp(lv_label_get_text(lblHomePower), "~100%") == 0 && strcmp(lv_label_get_text(lblHomePowerDetail), "4.20 V (estimated level)") == 0 && lv_bar_get_value(homePowerBar) == 100);
   localBattery.charging = false; localBattery.chargeRateValid = true;
   localBattery.batteryLow = localBattery.batteryCritical = false;
   batteryRuntime.restore(10); batteryRuntime.sample(millis(), 49, true, false);

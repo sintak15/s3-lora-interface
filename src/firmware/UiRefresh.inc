@@ -15,17 +15,7 @@ static void printFirmwareIdentity() {
 }
 
 static void formatBatteryRuntime(char* out, size_t size) {
-  if (!localBattery.gaugePresent) strlcpy(out, "unavailable (no gauge)", size);
-  else if (!localBattery.chargeRateValid) strlcpy(out, "Battery: Unavailable", size);
-  else if (localBattery.charging) strlcpy(out, "Battery: +", size);
-  else if (batteryRuntime.minutes() < 0) strlcpy(out, "estimating...", size);
-  else {
-    int32_t minutes = FieldStatus::roundedRuntimeMinutes(batteryRuntime.minutes());
-    const char* basis = batteryRuntime.basis();
-    const char* label = strcmp(basis, "previous") == 0 ? "prior use" :
-                        strcmp(basis, "gauge") == 0 ? "gauge trend" : "current use";
-    snprintf(out, size, "~%ldh %ldm (%s)", (long)(minutes / 60), (long)(minutes % 60), label);
-  }
+  strlcpy(out, "unavailable (voltage monitor)", size);
 }
 
 static bool gpsSatsPresent() {
@@ -81,26 +71,18 @@ static void refreshDashboardLabels() {
   }
   if (lblHomeMessages) lv_label_set_text(lblHomeMessages, previewLatest[0] ? previewLatest : "No messages yet");
   if (lblHomePower) {
-    if (!localBattery.gaugePresent) strlcpy(line, "--", sizeof(line));
-    else snprintf(line, sizeof(line), "%d%%", localBattery.percent);
+    if (!localBattery.voltageValid) strlcpy(line, "--", sizeof(line));
+    else snprintf(line, sizeof(line), "~%d%%", localBattery.percent);
     lv_label_set_text(lblHomePower, line);
-    uint32_t color = !localBattery.gaugePresent ? 0xA1B5CE : localBattery.batteryCritical ? 0xF29A91 : localBattery.batteryLow ? 0xE2C17E : 0xF4F8FF;
+    uint32_t color = !localBattery.voltageValid ? 0xA1B5CE : localBattery.batteryCritical ? 0xF29A91 : localBattery.batteryLow ? 0xE2C17E : 0xF4F8FF;
     lv_obj_set_style_text_color(lblHomePower, lv_color_hex(color), 0);
     if (lblHomePowerDetail) {
-      if (!localBattery.gaugePresent) strlcpy(line, "No gauge", sizeof(line));
-      else if (localBattery.charging) strlcpy(line, "Battery: +", sizeof(line));
-      else if (localBattery.batteryCritical) strlcpy(line, "Charge soon", sizeof(line));
-      else if (localBattery.batteryLow) strlcpy(line, "Battery low", sizeof(line));
-      else if (!localBattery.chargeRateValid) strlcpy(line, "Reading...", sizeof(line));
-      else if (batteryRuntime.minutes() < 0) strlcpy(line, "Estimating", sizeof(line));
-      else {
-        int32_t minutes = FieldStatus::roundedRuntimeMinutes(batteryRuntime.minutes());
-        snprintf(line, sizeof(line), "~%ldh%02ldm", (long)(minutes / 60), (long)(minutes % 60));
-      }
+      if (!localBattery.voltageValid) snprintf(line, sizeof(line), "No battery reading");
+      else snprintf(line, sizeof(line), "%.2f V (estimated level)", localBattery.batteryMv / 1000.0f);
       lv_label_set_text(lblHomePowerDetail, line);
     }
     if (homePowerBar) {
-      if (localBattery.gaugePresent) lv_obj_clear_flag(homePowerBar, LV_OBJ_FLAG_HIDDEN);
+      if (localBattery.voltageValid) lv_obj_clear_flag(homePowerBar, LV_OBJ_FLAG_HIDDEN);
       else lv_obj_add_flag(homePowerBar, LV_OBJ_FLAG_HIDDEN);
       lv_bar_set_value(homePowerBar, constrain(localBattery.percent, 0, 100), LV_ANIM_OFF);
       lv_obj_set_style_bg_color(homePowerBar, lv_color_hex(localBattery.batteryLow || localBattery.batteryCritical ? color : 0x65B0FF), LV_PART_INDICATOR);
@@ -166,22 +148,22 @@ static void refreshScreenUi() {
 
   if (lblBatteryStatus) {
     char batteryStatus[32];
-    if (localBattery.gaugePresent) {
-      if (localBattery.charging) {
-        snprintf(batteryStatus, sizeof(batteryStatus), LV_SYMBOL_CHARGE " %d%%", localBattery.percent);
+    if (localBattery.voltageValid) {
+      if (batteryActivelyCharging) {
+        snprintf(batteryStatus, sizeof(batteryStatus), LV_SYMBOL_CHARGE " ~%d%%", localBattery.percent);
       } else {
         const char* icon = LV_SYMBOL_BATTERY_EMPTY;
         if (localBattery.percent >= 90) icon = LV_SYMBOL_BATTERY_FULL;
         else if (localBattery.percent >= 65) icon = LV_SYMBOL_BATTERY_3;
         else if (localBattery.percent >= 35) icon = LV_SYMBOL_BATTERY_2;
         else if (localBattery.percent >= 12) icon = LV_SYMBOL_BATTERY_1;
-        snprintf(batteryStatus, sizeof(batteryStatus), "%s %d%%", icon, localBattery.percent);
+        snprintf(batteryStatus, sizeof(batteryStatus), "%s ~%d%%", icon, localBattery.percent);
       }
     } else {
-      strlcpy(batteryStatus, "No gauge", sizeof(batteryStatus));
+      strlcpy(batteryStatus, "No reading", sizeof(batteryStatus));
     }
     lv_label_set_text(lblBatteryStatus, batteryStatus);
-    uint32_t batteryColor = localBattery.gaugePresent
+    uint32_t batteryColor = localBattery.voltageValid
                               ? (localBattery.batteryCritical ? 0xFF5A5F :
                                  (localBattery.batteryLow ? 0xFFD166 : COLOR_ACCENT))
                               : COLOR_MUTED;
@@ -580,86 +562,26 @@ static void refreshScreenUi() {
 
   if (currentPage == pageBattery && lblBatteryStats) {
     char batteryText[1400];
-    char runtimeText[48];
-    formatBatteryRuntime(runtimeText, sizeof(runtimeText));
-    uint32_t gaugeAge = localBattery.lastGaugeMs ? (millis() - localBattery.lastGaugeMs) / 1000 : 0;
-    if (localBattery.gaugePresent) {
-      snprintf(batteryText, sizeof(batteryText),
-               "LiPo fuel gauge\n"
-               "Chip: MAX17048  v0x%04X\n"
-               "Displayed: %d%%\n"
-               "Remaining: %s\n"
-               "Alert: %s\n"
-               "Displayed source: %s\n"
-               "Sensor level: %.1f%%  raw 0x%04X\n"
-               "Pack filtered: %.3f V\n"
-               "Pack raw: %.3f V\n"
-               "Voltage filter: %s  rejected %lu\n"
-               "Voltage low/critical: %s/%s\n"
-               "Level change: %.1f%%/hour\n"
-               "Last change: %ld mV\n"
-               "Voltage trend: %.1f mV/min\n"
-               "Battery: %s\n"
-               "Key: + up / - down / = steady\n"
-               "Discharge: %.1f%%/hr\n"
-               "Saved discharge: %.1f%%/hr\n"
-               "Updated: %lu s ago\n\n"
-               "Power path\n"
-               "LiPo > charger > booster > 5V pins\n\n"
-               "S3 interface\n"
-               "Uptime: %lu s\n"
-               "Heap free/min: %lu/%lu KB\n"
-               "PSRAM free: %lu KB",
-               localBattery.gaugeVersion,
-               localBattery.percent,
-               runtimeText,
-               batteryAlertLabel(),
-               localBattery.percentSource,
-               localBattery.gaugeSoc,
-               localBattery.rawGaugeSoc,
-               localBattery.filteredPackMv / 1000.0f,
-               localBattery.rawPackMv / 1000.0f,
-               localBattery.voltageUnstable ? "settling" : "stable",
-               (unsigned long)localBattery.voltageRejectedSamples,
-               localBattery.voltageLowSustained ? "yes" : "no",
-               localBattery.voltageCriticalSustained ? "yes" : "no",
-               localBattery.chargeRateValid ? localBattery.chargeRatePercentHr : 0.0f,
-               (long)localBattery.instantDeltaMv,
-               localBattery.deltaMvPerMinTenths / 10.0f,
-               Max17048::trendLabel(localBattery.chargeRateValid, localBattery.chargeRatePercentHr),
-               batteryRuntime.percentPerHour(),
-               localBattery.savedDischargeRate,
-               (unsigned long)gaugeAge,
-               (unsigned long)(millis() / 1000),
-               (unsigned long)(ESP.getFreeHeap() / 1024),
-               (unsigned long)(ESP.getMinFreeHeap() / 1024),
-               (unsigned long)(ESP.getFreePsram() / 1024));
+    char voltageText[24], percentText[40];
+    if (localBattery.voltageValid) {
+      snprintf(voltageText, sizeof(voltageText), "%.3f V", localBattery.batteryMv / 1000.0f);
+      snprintf(percentText, sizeof(percentText), "~%d%% (voltage estimate)", localBattery.percent);
     } else {
-      snprintf(batteryText, sizeof(batteryText),
-               "LiPo fuel gauge\n"
-               "MAX17048 not detected\n"
-               "I2C: SDA GPIO%d  SCL GPIO%d\n"
-               "Address: 0x%02X\n\n"
-               "Power path\n"
-               "LiPo > charger > booster > 5V pins\n\n"
-               "S3 interface\n"
-               "Uptime: %lu s\n"
-               "Heap free/min: %lu/%lu KB\n"
-               "PSRAM free: %lu KB",
-               TOUCH_SDA,
-               TOUCH_SCL,
-               MAX17048_ADDR,
-               (unsigned long)(millis() / 1000),
-               (unsigned long)(ESP.getFreeHeap() / 1024),
-               (unsigned long)(ESP.getMinFreeHeap() / 1024),
-               (unsigned long)(ESP.getFreePsram() / 1024));
+      strlcpy(voltageText, "Unavailable", sizeof(voltageText));
+      strlcpy(percentText, "Unavailable", sizeof(percentText));
     }
+    snprintf(batteryText, sizeof(batteryText),
+             "Battery voltage monitor\nSource: ADS1115 A0 (0x%02X)\nVoltage: %s\nLevel: %s\nMeasurement: %s\nCharging: Not monitored\nRuntime: Unavailable\n\nS3 interface\nUptime: %lu s\nHeap free/min: %lu/%lu KB\nPSRAM free: %lu KB",
+             BATTERY_ADS1115_ADDR, voltageText, percentText,
+             localBattery.voltageValid ? "available" : "unavailable",
+             (unsigned long)(millis() / 1000), (unsigned long)(ESP.getFreeHeap() / 1024),
+             (unsigned long)(ESP.getMinFreeHeap() / 1024), (unsigned long)(ESP.getFreePsram() / 1024));
     if (swPowerLogRotation) {
       if (batteryCycle.rotationEnabled) lv_obj_add_state(swPowerLogRotation, LV_STATE_CHECKED);
       else lv_obj_clear_state(swPowerLogRotation, LV_STATE_CHECKED);
     }
     size_t used = strlen(batteryText);
-    snprintf(batteryText + used, sizeof(batteryText) - used, "\n\nContinuous log: %s\nRetention: %s\nLog age: %.1f h\nMode: %s\nRows/errors: %lu/%lu\nVoltage span/SD: %lu/%.1f mV\nMax sample step: %lu mV\nMAX read errors: %lu\n1 Hz samples; not RF noise.",
+    snprintf(batteryText + used, sizeof(batteryText) - used, "\n\nContinuous log: %s\nRetention: %s\nLog age: %.1f h\nMode: %s\nRows/errors: %lu/%lu\nVoltage span/SD: %lu/%.1f mV\nMax sample step: %lu mV\nADC read errors: %lu\n1 Hz samples; not RF noise.",
              batteryCycle.status, batteryCycle.rotationEnabled ? "48h + previous" : "Unlimited",
              batteryCycle.rotationClock.elapsed() / 3600000.0, batteryCyclePhase(), (unsigned long)batteryCycle.rows, (unsigned long)batteryCycle.errors,
              (unsigned long)batteryCycle.lastSpanMv, batteryCycle.lastStdDevMv,
@@ -825,25 +747,25 @@ static bool runUiSmokeTests() {
   lv_obj_t* savedNavigation[8];
   memcpy(savedNavigation, navigationStack, sizeof(savedNavigation));
   uint8_t savedDepth = navigationDepth;
-  bool savedGaugePresent = localBattery.gaugePresent;
+  bool savedGaugePresent = localBattery.voltageValid;
   bool passed = pageBattery && lblBatteryStats;
   if (passed) {
     showPage(pageBattery, false);
-    localBattery.gaugePresent = true;
+    localBattery.voltageValid = true;
     refreshScreenUi();
     const char* text = lv_label_get_text(lblBatteryStats);
-    bool presentOk = strstr(text, "Remaining:") && strstr(text, "PSRAM free:");
-    Serial.printf("[test-ui] Battery gauge present: %s\n", presentOk ? "PASS" : "FAIL");
+    bool presentOk = strstr(text, "Runtime:") && strstr(text, "PSRAM free:");
+    Serial.printf("[test-ui] Battery voltage available: %s\n", presentOk ? "PASS" : "FAIL");
     passed &= presentOk;
-    localBattery.gaugePresent = false;
+    localBattery.voltageValid = false;
     forcePageRefresh = true;
     refreshScreenUi();
     text = lv_label_get_text(lblBatteryStats);
-    bool missingOk = strstr(text, "MAX17048 not detected") && strstr(text, "PSRAM free:");
-    Serial.printf("[test-ui] Battery gauge missing: %s\n", missingOk ? "PASS" : "FAIL");
+    bool missingOk = strstr(text, "Battery voltage monitor") && strstr(text, "PSRAM free:");
+    Serial.printf("[test-ui] Battery voltage unavailable: %s\n", missingOk ? "PASS" : "FAIL");
     passed &= missingOk;
   }
-  localBattery.gaugePresent = savedGaugePresent;
+  localBattery.voltageValid = savedGaugePresent;
   struct ScreenCheck { lv_obj_t* page; lv_obj_t* label; const char* expected; const char* name; };
   const ScreenCheck checks[] = {
     {pageLauncher, lblHomeMessageTitle, "Messages", "Home dashboard"},

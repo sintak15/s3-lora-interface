@@ -300,7 +300,7 @@ button,.actions a,input,select,textarea,.statusbox{border-radius:11px}nav button
 <details class="card disclosure"><summary>Radio traffic & serial data</summary><div class="stats" id="packetStats"></div><h3>Last serial data</h3><pre id="diagSerial"></pre></details>
 <details class="card disclosure"><summary>Maps & tile cache</summary><div class="stats" id="diagMapStats"></div></details>
 <details class="card disclosure"><summary>Memory, Wi-Fi & storage</summary><div class="stats" id="diagSystemStats"></div></details>
-<details class="card disclosure"><summary>Audio & hardware checks</summary><div class="stats" id="diagAudioStats"></div><div class="actions"><button onclick="testTone()">Test message sound</button><button class="secondaryAction" onclick="probeI2cMap()">Probe I2C map</button></div><div class="hint statusbox" id="toneStatus">Sound status appears after a test.</div><pre id="i2cProbeStatus">Run Probe I2C map to inspect the touch, codec and fuel gauge buses.</pre></details>
+<details class="card disclosure"><summary>Audio & hardware checks</summary><div class="stats" id="diagAudioStats"></div><div class="actions"><button onclick="testTone()">Test message sound</button><button class="secondaryAction" onclick="probeI2cMap()">Probe I2C map</button></div><div class="hint statusbox" id="toneStatus">Sound status appears after a test.</div><pre id="i2cProbeStatus">Run Probe I2C map to inspect the touch and codec buses.</pre></details>
 </section>
 <section class="page" id="serialPage"><div class="card"><h2>Serial Link</h2><input id="cmd" placeholder="Serial command"><button onclick="sendCmd()">Send Command</button><pre id="serialLog" style="margin-top:6px"></pre></div><details class="card disclosure"><summary>Heltec commands</summary><div class="minihelp">Read configuration, save settings or restart the connected radio.</div><div class="statusbox" id="commandStatus" role="status">Command status appears here.</div><div class="actions">
 <button onclick="heltecCmd('get config')">Get Config</button><button onclick="heltecCmd('get module')">Get Modules</button><button onclick="heltecCmd('get owner')">Get Owner</button><button onclick="heltecCmd('get lora')">Get LoRa</button>
@@ -422,7 +422,7 @@ function renderStatGroup(id,items){const element=document.getElementById(id);if(
 function renderHealth(s){
  renderStatGroup('diagStats',[
   ['Heltec',s.linkHealth||'waiting'],['Last valid response',s.lastRadioResponseSec==null?'never':`${s.lastRadioResponseSec}s ago`],
-  ['Battery',s.fuelGaugePresent?`${s.battery}% · ${s.voltage} V`:'Gauge unavailable'],['Remaining',batteryRuntimeLabel(s)],
+  ['Battery',s.batteryMeasurementAvailable?`~${s.battery}% · ${s.voltage} V`:'Measurement unavailable'],['Remaining',batteryRuntimeLabel(s)],
   ['GPS',s.localGpsFreshFix?'Live fix':s.gpsValid?'Last known position':'No fix'],['SD card',s.sdAvailable?'Mounted':s.sdStatus],
   ['Wi-Fi',s.wifiEnabled?`${s.wifiMode} · ${s.ip}`:'Off'],['Power',s.powerState]
  ]);
@@ -432,7 +432,7 @@ function renderHealth(s){
   ['Voltage trend',`${s.batteryTrend||0} mV/min`],['Estimate basis',s.batteryRuntimeBasis||'Not yet available'],
   ['Battery',batteryTrendLabel(s)],['Level change',s.batteryChargeRateValid?`${s.batteryChargeRatePercentHr}%/hour`:'Unavailable']
  ]);
- renderStatGroup('diagNoiseStats',[["Sampled voltage span",`${s.batteryVoltageSpanMv||0} mV`],["Sampled standard deviation",`${s.batteryVoltageStdDevMv||0} mV`],["Largest sampled step",`${s.batteryVoltageLargestStepMv||0} mV`],["Window samples",s.batteryVoltageWindowSamples||0],["MAX read errors / attempts",`${s.batteryGaugeReadErrors||0} / ${s.batteryGaugeReadAttempts||0}`],["UART decode / timeout / length errors",`${s.errors||0} / ${s.frameTimeouts||0} / ${s.badLengths||0}`]]);
+ renderStatGroup('diagNoiseStats',[["Sampled voltage span",`${s.batteryVoltageSpanMv||0} mV`],["Sampled standard deviation",`${s.batteryVoltageStdDevMv||0} mV`],["Largest sampled step",`${s.batteryVoltageLargestStepMv||0} mV`],["Window samples",s.batteryVoltageWindowSamples||0],["ADC invalid reads / attempts",`${s.batteryGaugeReadErrors||0} / ${s.batteryGaugeReadAttempts||0}`],["UART decode / timeout / length errors",`${s.errors||0} / ${s.frameTimeouts||0} / ${s.badLengths||0}`]]);
  if(!batteryCycleBusy)powerLogRotation.checked=s.batteryLogRotationEnabled!==false;
  batteryCycleStatus.textContent=`Continuous recording · ${s.batteryLogRotationEnabled===false?'Unlimited':'48-hour rotation'} · ${Math.floor((s.batteryLogWindowSeconds||0)/3600)}h in current log · ${s.batteryCycleRows||0} rows this boot · ${s.batteryCycleErrors||0} write errors · ${s.batteryCycleBusyDeferrals||0} SD busy delays · ${s.batteryCycleSdUnavailableDeferrals||0} SD unavailable delays · ${s.batteryCycleStatus||''}`;
  renderStatGroup('diagGpsStats',[
@@ -553,7 +553,7 @@ try{
   s=await response.json();
 }finally{clearTimeout(timeout)}document.title=s.title||'LoRa Interface';appTitle.textContent=s.title||'LoRa Interface';ip.textContent=s.wifiMode+' '+s.ip;statusFreshness.textContent='Live · updated just now';
 renderFieldStatus(s);
-stats.innerHTML=[['Heltec',s.linkHealth||'waiting'],['Battery',s.fuelGaugePresent?`${s.battery}% · ${s.voltage} V`:'Gauge unavailable'],['Remaining',batteryRuntimeLabel(s)],['Known nodes',s.nodes?s.nodes.length:(s.total||0)]]
+stats.innerHTML=[['Heltec',s.linkHealth||'waiting'],['Battery',s.batteryMeasurementAvailable?`~${s.battery}% · ${s.voltage} V`:'Measurement unavailable'],['Remaining',batteryRuntimeLabel(s)],['Known nodes',s.nodes?s.nodes.length:(s.total||0)]]
 .map((x,i)=>`<div class=stat><div class=statHeading>${uiIcon(['radio','battery','power','nodes'][i])}<div class=label>${h(x[0])}</div></div><div class=value>${h(x[1])}</div></div>`).join('');
 firmwareStats.innerHTML=[['Version',s.firmwareVersion],['Source',`${s.gitCommit||'unknown'}${s.sourceDirty?' (modified)':''}`],['Build',`${s.buildDate} ${s.buildTime}`],['Partition',s.runningPartition],['Sketch',formatBytes(Math.ceil((s.sketchSize||0)/1024))],['OTA Space',formatBytes(Math.floor((s.freeSketchSpace||0)/1024))],['AP',s.wifiMode+' '+s.ip]]
 .map(x=>`<div class=stat><div class=label>${h(x[0])}</div><div class=value>${h(x[1])}</div></div>`).join('');
@@ -580,7 +580,7 @@ if(currentPage==='map')drawMap(s);
 let batteryCycleBusy=false;
 async function batteryCycleAction(action){if(batteryCycleBusy)return;batteryCycleBusy=true;const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),8000);try{const r=await fetch('/battery/cycle',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({action}).toString(),signal:controller.signal});batteryCycleStatus.textContent=await r.text();if(!r.ok)batteryCycleStatus.textContent='Action failed: '+batteryCycleStatus.textContent;}catch(e){batteryCycleStatus.textContent='Connection lost; action result unknown. Check status before retrying.';}finally{clearTimeout(timeout);batteryCycleBusy=false;}}
 function batteryTrendLabel(s){return {rising:'+',falling:'-',steady:'=',unavailable:'Unavailable'}[s.batteryGaugeTrend]||'Unavailable';}
-function batteryRuntimeLabel(s){if(!s.fuelGaugePresent)return 'Unavailable (no gauge)';if(s.batteryChargeRateValid===false)return 'Battery: Unavailable';if(s.batteryGaugeTrend==='rising'||s.batteryCharging)return 'Battery: +';const raw=s.batteryRuntimeMinutes;if(!Number.isFinite(raw)||raw<0)return 'Estimating remaining time';const m=raw===0?0:Math.max(5,Math.round(raw/5)*5);const basis={previous:'previous use',gauge:'gauge trend',current:'current use'}[s.batteryRuntimeBasis];return `~${Math.floor(m/60)}h ${m%60}m${basis?' · '+basis:''}`;}
+function batteryRuntimeLabel(s){return 'Unavailable (voltage monitor)';}
 function renderFieldStatus(s){
  renderOfflineCoverage(s);
  const state=s.linkHealth||'waiting';

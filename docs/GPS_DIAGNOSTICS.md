@@ -1,5 +1,11 @@
 # GPS receiver diagnostics and control
 
+Current ATGM336H branch: receive-only NMEA on GPIO3 at 9600 baud. Use `gps`
+for health checks; `gps config`, `gps rate` and `gps save` report unsupported
+without transmitting. Maps and Heltec position sharing remain supported.
+The wiring/control sections below describing NEO-6M are historical; use the
+[current installation guide](HARDWARE_UPGRADE.md) for the new receiver.
+
 USB command `gps` reports the CYD receiver's raw byte count, last-byte age,
 checksum-valid NMEA sentences, checksum failures, fix-bearing sentences,
 satellites used, satellites in view when reported, and fresh-fix status. It also

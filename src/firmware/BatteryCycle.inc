@@ -1,4 +1,4 @@
-// Continuous power diagnostics. Charger-phase markers never alter MAX readings.
+// Continuous power diagnostics; battery voltage comes from the ADC.
 // Legacy CSV phase column now identifies automatic recording.
 static const char* batteryCyclePhase() { return "automatic"; }
 
@@ -50,8 +50,8 @@ static bool writeBatteryCycleRow(const char* event) {
   static const char header[] = "session,boot,uptime_ms,event,phase,gauge_valid,crate_valid,vcell_raw,soc_raw,crate_raw,status_valid,status_raw,config_valid,config_raw,soc_percent,cell_mv,soc_rate_percent_hr,cell_min_mv,cell_max_mv,runtime_minutes,radio_seen,radio_age_ms,firmware,voltage_samples,voltage_span_mv,voltage_stddev_mv,largest_step_mv,max_read_attempts,max_read_errors,uart_frames,uart_decode_errors,uart_timeouts,uart_bad_lengths,codec_io_errors,audio_write_errors,audio_recoveries,wifi_rssi_dbm,sd_write_errors,log_errors,utc\n";
   bool ok = file.size() != 0 || file.print(header) == sizeof(header) - 1;
   uint16_t status = 0, config = 0;
-  bool statusValid = max17048ReadReg16(0x1A, status);
-  bool configValid = max17048ReadReg16(0x0C, config);
+  bool statusValid = false;
+  bool configValid = false;
   batteryCycle.lastSpanMv = batteryCycle.voltageWindow.span();
   batteryCycle.lastStdDevMv = sqrt(batteryCycle.voltageWindow.variance());
   batteryCycle.lastStepMv = batteryCycle.voltageWindow.largestStep();
@@ -66,7 +66,7 @@ static bool writeBatteryCycleRow(const char* event) {
   int length = snprintf(row, sizeof(row),
     "%08lx,%08lx,%lu,%s,%s,%u,%u,%04X,%04X,%04X,%u,%04X,%u,%04X,%.3f,%lu,%.3f,%lu,%lu,%ld,%u,%lu,%s,%lu,%lu,%.3f,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%ld,%lu,%lu,%s\n",
     (unsigned long)batteryCycle.session, (unsigned long)batteryCycle.boot, (unsigned long)millis(),
-    event, batteryCyclePhase(), localBattery.gaugePresent, localBattery.chargeRateValid,
+    event, batteryCyclePhase(), false, false,
     localBattery.rawVcell, localBattery.rawGaugeSoc, localBattery.rawCrate,
     statusValid, status, configValid, config, localBattery.gaugeSoc,
     (unsigned long)localBattery.rawPackMv, localBattery.chargeRatePercentHr,
@@ -83,9 +83,9 @@ static bool writeBatteryCycleRow(const char* event) {
   ok = ok && length > 0 && (size_t)length < sizeof(row) && file.print(row) == (size_t)length;
   file.close(); // Flush each row; a hard power cut can still lose the last SD write.
   char battery[80], variation[48], step[32];
-  if (localBattery.gaugePresent) {
-    snprintf(battery, sizeof(battery), "%.3f V, %.1f%% (%s)", localBattery.rawPackMv / 1000.0f,
-             localBattery.gaugeSoc, Max17048::trendLabel(localBattery.chargeRateValid, localBattery.chargeRatePercentHr));
+  if (localBattery.voltageValid) {
+    snprintf(battery, sizeof(battery), "%.3f V, ~%.1f%% (%s)", localBattery.rawPackMv / 1000.0f,
+             localBattery.gaugeSoc, batteryChargingStatus);
   } else strlcpy(battery, "unavailable", sizeof(battery));
   if (batteryCycle.lastSamples >= 2) {
     snprintf(variation, sizeof(variation), "%lu mV", (unsigned long)batteryCycle.lastSpanMv);
@@ -148,7 +148,7 @@ static void sampleBatteryCycle() {
       strlcpy(batteryCycle.status, "Rotation clock save failed", sizeof(batteryCycle.status));
     }
   }
-  if (localBattery.gaugePresent && localBattery.lastGaugeMs != batteryCycle.observedGaugeMs) {
+  if (localBattery.voltageValid && localBattery.lastGaugeMs != batteryCycle.observedGaugeMs) {
     batteryCycle.observedGaugeMs = localBattery.lastGaugeMs;
     batteryCycle.voltageWindow.add(localBattery.rawPackMv);
   }

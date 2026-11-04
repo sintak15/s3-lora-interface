@@ -27,7 +27,11 @@
 // GPS TX -> CYD GPIO3; CYD GPIO2 -> GPS RX.
 // The Heltec receives CYD positions through the radio UART, with no direct GPS wire.
 #define GPS_RX_PIN 3
-#define GPS_TX_PIN 2
+#define GPS_TX_PIN 2 // UART TX remains assigned, but leave GPS RX disconnected.
+// ATGM336H receive-only NMEA. Set to 1 only with a legacy u-blox receiver.
+#ifndef GPS_RECEIVER_UBLOX
+#define GPS_RECEIVER_UBLOX 0
+#endif
 #define GPS_BAUD 9600
 
 // 2.8 inch ESP32-S3 ILI9341 display and capacitive touch.
@@ -69,9 +73,19 @@
 #define CYD_AUDIO_CODEC_ADDR 0x18
 #endif
 
-// Optional MAX17048 fuel gauge on the shared CYD I2C bus.
-// Wire MAX17048 SDA -> GPIO16 and SCL -> GPIO15.
-#define MAX17048_ADDR 0x36
+// External ADS1115 on the shared I2C bus; A0 senses a 10k/10k divider.
+#ifndef BATTERY_ADS1115_ADDR
+#define BATTERY_ADS1115_ADDR 0x48
+#endif
+#ifndef BATTERY_DIVIDER_TOP_OHMS
+#define BATTERY_DIVIDER_TOP_OHMS 10000UL
+#endif
+#ifndef BATTERY_DIVIDER_BOTTOM_OHMS
+#define BATTERY_DIVIDER_BOTTOM_OHMS 10000UL
+#endif
+#ifndef BATTERY_ADC_SCALE
+#define BATTERY_ADC_SCALE 1.0f
+#endif
 
 // Built-in MicroSD socket on the LCDWiki 2.8" ESP32-S3 display.
 // The socket uses the ESP32-S3 SDMMC/SDIO peripheral, not the TFT SPI bus.

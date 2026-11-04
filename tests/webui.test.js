@@ -47,7 +47,7 @@ async function testRendering() {
     heltecConfig: {}, channels: [{ index: 0, name: attack, role: 'PRIMARY', enabled: true }],
     nodes: [], battery: 50, voltage: 3.8,
     linkHealth: 'stale', lastRadioResponseSec: 95,
-    fuelGaugePresent: true, batteryRuntimeMinutes: 125,
+    fuelGaugePresent: false, batteryMeasurementAvailable: true, batteryChargingStatus: "charging", batteryRuntimeMinutes: 125,
     txHistory: [{ id: 123, destination: attack, text: attack, status: 'failed', error: attack, ageSec: 20, canRetry: true },
                 { id: attack, destination: 'test', text: 'test', status: 'acknowledged', canRetry: true }],
   };
@@ -58,25 +58,15 @@ async function testRendering() {
   for (const id of ['stats', 'firmwareStats', 'storageStats', 'configRef', 'diagStats', 'packetStats', 'channelRef', 'txHistoryBody']) {
     assert(!elements[id].innerHTML.includes('<img'), `${id} must escape dynamic HTML`);
   }
+  assert(elements.stats.innerHTML.includes('~'), 'Voltage percentage must be marked as estimated');
+  assert(!elements.stats.innerHTML.includes('Charger'), 'No charger measurement is installed');
   assert.equal(elements.appTitle.textContent, attack);
   assert.equal(elements.radioHealth.textContent, 'Heltec: stale | last valid response: 95s ago');
   assert(elements.txHistoryBody.innerHTML.includes('retryMessage(123)'));
   assert(elements.txHistoryBody.innerHTML.includes('deliveryBadge failed'));
   assert.equal(elements.statusFreshness.textContent, 'Live · updated just now');
   assert.equal((elements.txHistoryBody.innerHTML.match(/retryMessage/g)||[]).length, 1);
-  assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryRuntimeMinutes:125})', context), '~2h 5m');
-  assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryRuntimeMinutes:-1})', context), 'Estimating remaining time');
-  assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryRuntimeMinutes:128,batteryRuntimeBasis:"previous"})', context), '~2h 10m · previous use');
-  assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryRuntimeMinutes:59,batteryRuntimeBasis:"gauge"})', context), '~1h 0m · gauge trend');
-  assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryRuntimeMinutes:2,batteryRuntimeBasis:"current"})', context), '~0h 5m · current use');
-  assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryRuntimeMinutes:0,batteryRuntimeBasis:"current"})', context), '~0h 0m · current use');
-  assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryRuntimeMinutes:NaN})', context), 'Estimating remaining time');
-  assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryRuntimeMinutes:Infinity})', context), 'Estimating remaining time');
-  assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryRuntimeMinutes:125,batteryRuntimeBasis:"<img>"})', context), '~2h 5m');
-  assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryCharging:true,batteryRuntimeMinutes:125})', context), 'Battery: +');
-  assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryChargeRateValid:false})', context), 'Battery: Unavailable');
-  assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:true,batteryGaugeTrend:"rising",batteryCharging:false})', context), 'Battery: +');
-  assert.equal(vm.runInContext('batteryRuntimeLabel({fuelGaugePresent:false})', context), 'Unavailable (no gauge)');
+  assert.equal(vm.runInContext('batteryRuntimeLabel({batteryMeasurementAvailable:true,batteryCharging:true})', context), 'Unavailable (voltage monitor)');
   for (const [direction,label] of [['rising','+'],['falling','-'],['steady','='],['unavailable','Unavailable']]) {
     context.batteryDirection=direction;
     assert.equal(vm.runInContext('batteryTrendLabel({batteryGaugeTrend:batteryDirection})',context),label);

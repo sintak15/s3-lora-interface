@@ -69,8 +69,9 @@ queue-result matching, retry cadence, timer wrap, UTC timestamps, units and
 preservation of unrelated Heltec position settings.
 Display formatting checks cover separate label/value colors, multiple readings
 on a line, MAC/time colons, literal hash characters and bounded output.
-MAX17048 checks cover register units, signed CRATE, fractional/zero SOC and
-failed rate reads. Voltage-variation checks cover known sample statistics,
+ADC checks cover ADS1115 register configuration, signed/clipped conversion
+rejection, divider scaling and invalid cell-voltage rejection. ATGM336H checks
+verify u-blox configuration commands cannot be queued. Voltage-variation checks cover known sample statistics,
 window resets and steps across record boundaries. Web checks cover single
 retention requests, explicit save failures and uncertain connection-loss outcomes.
 Rotation checks cover the 48-hour boundary, unlimited mode, millis rollover and
@@ -121,13 +122,9 @@ Use the scripts to refresh this identity before building after source changes.
   **stale** at 90 seconds. Heartbeats run every 30 seconds. This measures the local
   serial connection, independently of how busy the LoRa mesh is; quiet/stale
   does not prove a wiring failure.
-- Battery percentage comes from MAX17048 SOC without a voltage-derived trim.
-  Runtime uses a persisted discharge rate with fresh SOC at startup, then blends
-  consistent gauge-rate readings and measured SOC decline as evidence arrives.
-  Charging and unreliable readings pause estimation without erasing the learned
-  rate. The UI identifies previous use, gauge trend and current use, with time
-  rounded to five minutes. See [battery statistics](BATTERY_STATS.md) for learning,
-  persistence, gauge trend, SD power logging and measurement limitations.
+- Battery percentage is an approximate single-cell voltage estimate, not fuel-gauge SOC.
+  ADS1115 voltage is converted using the external divider ratio. Runtime and
+  charging detection are unavailable on this hardware branch.
 - At USB **115200 baud**, send `version` followed by a newline for firmware,
   full source commit, modified-source flag, build date/time and active partition.
   Send `diagnostics` for a single-line JSON health report among the usual logs.

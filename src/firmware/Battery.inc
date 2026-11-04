@@ -1,3 +1,5 @@
+static_assert(BATTERY_DIVIDER_TOP_OHMS > 0 && BATTERY_DIVIDER_BOTTOM_OHMS > 0, "Battery divider resistances must be positive");
+static_assert(BATTERY_ADC_SCALE > 0, "Battery ADC calibration must be positive");
 // Internal implementation module; included once by the main sketch.
 static unsigned long bytesToWholeKb(uint64_t bytes) {
   return (unsigned long)((bytes + 1023ULL) / 1024ULL);
@@ -28,23 +30,11 @@ static void recordMapRenderTiming(uint32_t startedMs, bool drewTiles, bool cache
   recordMapRenderTimingDuration(millis() - startedMs, drewTiles, cacheHit);
 }
 
-static bool max17048ReadReg16(uint8_t reg, uint16_t& value) {
-  ++localBattery.readAttempts;
-  Wire.beginTransmission(MAX17048_ADDR);
-  Wire.write(reg);
-  if (Wire.endTransmission(false) != 0) { ++localBattery.readErrors; return false; }
-  if (Wire.requestFrom(MAX17048_ADDR, (uint8_t)2) != 2) { ++localBattery.readErrors; return false; }
-  uint8_t msb = Wire.read();
-  uint8_t lsb = Wire.read();
-  value = ((uint16_t)msb << 8) | lsb;
-  return true;
-}
-
 static const char* i2cKnownDeviceName(uint8_t addr) {
   switch (addr) {
     case TOUCH_ADDR: return "touch";
+    case BATTERY_ADS1115_ADDR: return "ads1115";
     case CYD_AUDIO_CODEC_ADDR: return "codec";
-    case MAX17048_ADDR: return "max17048";
     default: return nullptr;
   }
 }
@@ -101,7 +91,7 @@ static String buildI2cProbeJson() {
            docsFound ? "answers" : "does not answer",
            swappedFound ? "answers" : "does not answer");
   snprintf(i2cProbeDetails, sizeof(i2cProbeDetails),
-           "%s\n%s\nExpect touch=0x38, codec=0x18, fuel gauge=0x36 on the correct map.",
+           "%s\n%s\nExpect touch=0x38, codec=0x18, battery ADC=0x48 on the correct map.",
            docs, swapped);
 
   String json;
@@ -116,205 +106,93 @@ static String buildI2cProbeJson() {
   return json;
 }
 
-static bool readMax17048ChargeRate(float& percentPerHour) {
-  uint16_t rawCrate = 0;
-  if (!max17048ReadReg16(0x16, rawCrate)) return false;
-  localBattery.rawCrate = rawCrate;
-  percentPerHour = Max17048::rate(rawCrate);
-  return true;
-}
-
-static constexpr uint8_t BATTERY_VOLTAGE_QUALIFIED_SAMPLES = 8;
-static constexpr uint32_t BATTERY_VOLTAGE_ALERT_MS = 30000;
-static constexpr uint32_t BATTERY_LOW_VOLTAGE_MV = 3650;
-static constexpr uint32_t BATTERY_CRITICAL_VOLTAGE_MV = 3500;
-static constexpr int BATTERY_LOW_SOC_PERCENT = 20;
-static constexpr int BATTERY_CRITICAL_SOC_PERCENT = 10;
-
-static uint32_t filterBatteryVoltage(uint32_t rawMv, bool chargeRateValid, float chargeRate) {
-  localBattery.rawMv = rawMv;
-  localBattery.rawPackMv = rawMv;
-  localBattery.sampleCount++;
-
-  if (localBattery.filteredPackMv == 0 || localBattery.sampleCount <= 1) {
-    localBattery.filteredPackMv = rawMv;
-    localBattery.batteryMv = rawMv;
-    localBattery.learnedBatteryMv = rawMv;
-    localBattery.voltageStableSamples = 1;
-    localBattery.voltageUnstable = false;
-    return rawMv;
-  }
-
-  int32_t diffMv = (int32_t)rawMv - (int32_t)localBattery.filteredPackMv;
-  uint32_t absDiffMv = (uint32_t)abs(diffMv);
-  bool activeChargeChange = chargeRateValid && fabsf(chargeRate) > 8.0f;
-  bool outlier = absDiffMv > (activeChargeChange ? 140UL : 80UL);
-  uint32_t maxStepMv = activeChargeChange ? 25UL : 10UL;
-
-  if (outlier) {
-    localBattery.voltageRejectedSamples++;
-    localBattery.voltageStableSamples = 0;
-    localBattery.voltageUnstable = true;
-    maxStepMv = localBattery.sampleCount < BATTERY_VOLTAGE_QUALIFIED_SAMPLES ? 25 : 3;
-  } else {
-    if (localBattery.voltageStableSamples < 255) localBattery.voltageStableSamples++;
-    if (localBattery.voltageStableSamples >= BATTERY_VOLTAGE_QUALIFIED_SAMPLES) localBattery.voltageUnstable = false;
-  }
-
-  if (absDiffMv <= maxStepMv) {
-    localBattery.filteredPackMv = rawMv;
-  } else if (diffMv > 0) {
-    localBattery.filteredPackMv += maxStepMv;
-  } else if (localBattery.filteredPackMv > maxStepMv) {
-    localBattery.filteredPackMv -= maxStepMv;
-  } else {
-    localBattery.filteredPackMv = rawMv;
-  }
-
-  localBattery.batteryMv = localBattery.filteredPackMv;
-  localBattery.learnedBatteryMv = localBattery.filteredPackMv;
-  return localBattery.filteredPackMv;
-}
-
-static bool batteryVoltageQualified() {
-  return !localBattery.voltageUnstable &&
-         localBattery.sampleCount >= BATTERY_VOLTAGE_QUALIFIED_SAMPLES &&
-         localBattery.voltageStableSamples >= BATTERY_VOLTAGE_QUALIFIED_SAMPLES;
-}
+// No charger-status hardware is installed.
+static const char* batteryChargingStatus = "unknown";
+static constexpr bool batteryChargeStatusValid = false;
+static constexpr bool batteryActivelyCharging = false;
 
 static const char* batteryAlertLabel() {
+  if (!localBattery.voltageValid) return "unavailable";
   if (localBattery.batteryCritical) return "critical";
   if (localBattery.batteryLow) return "low";
   return "ok";
 }
 
-static void updateBatteryAlertState(int displayedPercent, uint32_t packMv, bool charging, uint32_t nowMs) {
-  bool voltageCanAlert = batteryVoltageQualified() && !charging;
-
-  if (voltageCanAlert && packMv <= BATTERY_LOW_VOLTAGE_MV) {
-    if (!localBattery.lowVoltageSinceMs) localBattery.lowVoltageSinceMs = nowMs;
-  } else {
-    localBattery.lowVoltageSinceMs = 0;
-  }
-
-  if (voltageCanAlert && packMv <= BATTERY_CRITICAL_VOLTAGE_MV) {
-    if (!localBattery.criticalVoltageSinceMs) localBattery.criticalVoltageSinceMs = nowMs;
-  } else {
-    localBattery.criticalVoltageSinceMs = 0;
-  }
-
-  localBattery.voltageLowSustained =
-    localBattery.lowVoltageSinceMs && nowMs - localBattery.lowVoltageSinceMs >= BATTERY_VOLTAGE_ALERT_MS;
-  localBattery.voltageCriticalSustained =
-    localBattery.criticalVoltageSinceMs && nowMs - localBattery.criticalVoltageSinceMs >= BATTERY_VOLTAGE_ALERT_MS;
-  localBattery.batteryCritical =
-    displayedPercent <= BATTERY_CRITICAL_SOC_PERCENT || localBattery.voltageCriticalSustained;
-  localBattery.batteryLow =
-    localBattery.batteryCritical ||
-    displayedPercent <= BATTERY_LOW_SOC_PERCENT ||
-    localBattery.voltageLowSustained;
-}
-
-static void updateBatteryTrend(uint32_t packMv, uint32_t nowMs) {
-  static constexpr uint8_t TREND_WINDOW = sizeof(localBattery.trendMv) / sizeof(localBattery.trendMv[0]);
-  localBattery.trendMv[localBattery.trendHead] = packMv;
-  localBattery.trendMs[localBattery.trendHead] = nowMs;
-  localBattery.trendHead = (localBattery.trendHead + 1) % TREND_WINDOW;
-  if (localBattery.trendCount < TREND_WINDOW) localBattery.trendCount++;
-  localBattery.trendSampleCount = localBattery.trendCount;
-
-  if (localBattery.trendCount < 4) {
-    localBattery.deltaMvPerMin = 0;
-    localBattery.deltaMvPerMinTenths = 0;
-    return;
-  }
-
-  uint8_t newestIndex = (localBattery.trendHead + TREND_WINDOW - 1) % TREND_WINDOW;
-  uint8_t oldestIndex = (localBattery.trendHead + TREND_WINDOW - localBattery.trendCount) % TREND_WINDOW;
-  uint32_t newestMs = localBattery.trendMs[newestIndex];
-  uint32_t oldestMs = localBattery.trendMs[oldestIndex];
-  if (newestMs <= oldestMs) return;
-
-  uint32_t windowMs = newestMs - oldestMs;
-  int32_t deltaMv = (int32_t)localBattery.trendMv[newestIndex] - (int32_t)localBattery.trendMv[oldestIndex];
-  if (windowMs < 20000 || abs(deltaMv) < 3) {
-    localBattery.deltaMvPerMin = 0;
-    localBattery.deltaMvPerMinTenths = 0;
-    return;
-  }
-
-  localBattery.deltaMvPerMinTenths = (int32_t)((int64_t)deltaMv * 600000LL / (int64_t)windowMs);
-  localBattery.deltaMvPerMin = localBattery.deltaMvPerMinTenths / 10;
-}
-
-static void saveBatteryRuntimeLearning(uint32_t nowMs) {
-  float rate = batteryRuntime.learnedPercentPerHour();
-  // Save the first qualified rate promptly so a physical switch can cut power.
-  // Later writes need a meaningful change and are bounded to once per 15 min.
-  if (!FieldStatus::runtimeCheckpointDue(rate, localBattery.savedDischargeRate,
-                                       localBattery.runtimeSaveAttempted, localBattery.lastRuntimeSaveMs, nowMs)) return;
-  localBattery.runtimeSaveAttempted = true;
-  localBattery.lastRuntimeSaveMs = nowMs;
-  if (prefs.putFloat("batRateV1", rate) == sizeof(float)) localBattery.savedDischargeRate = rate;
-}
-
-static bool sampleMax17048() {
-  uint16_t rawVcell = 0;
-  uint16_t rawSoc = 0;
-  if (!max17048ReadReg16(0x02, rawVcell) || !max17048ReadReg16(0x04, rawSoc)) {
-    localBattery.gaugePresent = false;
-    localBattery.chargeRateValid = false;
-    localBattery.gaugeSocReliable = false;
-    localBattery.charging = false;
-    batteryRuntime.pause();
-    localBattery.batteryLow = false;
-    localBattery.batteryCritical = false;
-    localBattery.voltageLowSustained = false;
-    localBattery.voltageCriticalSustained = false;
+static void updateBatteryVoltage(uint32_t mv, bool valid, uint32_t now) {
+  // Reject implausible readings before updating the estimate.
+  localBattery.voltageValid = valid;
+  localBattery.gaugeSocReliable = false;
+  localBattery.chargeRateValid = false;
+  localBattery.charging = batteryActivelyCharging;
+  batteryRuntime.pause();
+  if (!valid) {
+    ++localBattery.readErrors;
+    localBattery.batteryMv = localBattery.rawPackMv = localBattery.filteredPackMv = 0;
+    localBattery.percent = localBattery.gaugePercent = -1;
+    localBattery.gaugeSoc = -1.0f;
+    localBattery.rawMv = 0;
+    localBattery.sampleCount = 0;
+    localBattery.lowVoltageSinceMs = localBattery.criticalVoltageSinceMs = 0;
+    localBattery.batteryLow = localBattery.batteryCritical = false;
     strlcpy(localBattery.powerState, "Battery: Unavailable", sizeof(localBattery.powerState));
-    return false;
+    return;
   }
-
-  uint16_t rawVersion = 0;
-  if (max17048ReadReg16(0x08, rawVersion)) localBattery.gaugeVersion = rawVersion;
-
-  uint32_t rawPackMv = Max17048::millivolts(rawVcell);
-  float soc = Max17048::soc(rawSoc);
-  float chargeRate = 0.0f;
-  bool chargeRateValid = readMax17048ChargeRate(chargeRate);
-  uint32_t packMv = filterBatteryVoltage(rawPackMv, chargeRateValid, chargeRate);
-  uint32_t now = millis();
-  // CRATE is the gauge's averaged SOC slope, not a physical charger flag.
-  bool charging = chargeRateValid && chargeRate > 0;
-  localBattery.instantDeltaMv = localBattery.previousSampleMs ? (int32_t)rawPackMv - (int32_t)localBattery.previousPackMv : 0;
-  localBattery.previousPackMv = rawPackMv;
-  localBattery.previousSampleMs = now;
-  localBattery.gaugePercent = constrain((int)roundf(soc), 0, 100);
-  updateBatteryAlertState(localBattery.gaugePercent, packMv, charging, now);
-  // Filtering qualifies voltage warnings only; primary readings mirror MAX.
-  localBattery.batteryMv = rawPackMv;
-  localBattery.rawVcell = rawVcell;
-  localBattery.gaugePresent = true;
+  localBattery.rawPackMv = localBattery.rawMv = mv;
+  localBattery.filteredPackMv = localBattery.sampleCount ? (localBattery.filteredPackMv * 7 + mv) / 8 : mv;
+  ++localBattery.sampleCount;
+  localBattery.batteryMv = localBattery.filteredPackMv;
   localBattery.lastGaugeMs = now;
-  localBattery.rawGaugeSoc = rawSoc;
-  localBattery.gaugeSoc = soc;
-  localBattery.gaugeSocReliable = true;
-  localBattery.chargeRateValid = chargeRateValid;
-  localBattery.chargeRatePercentHr = chargeRateValid ? chargeRate : 0.0f;
-  localBattery.charging = charging;
-  localBattery.percent = localBattery.gaugePercent;
-  updateBatteryTrend(packMv, now);
-  if (!chargeRateValid) batteryRuntime.pause();
-  else batteryRuntime.sample(now, soc, true, charging, chargeRate, chargeRateValid);
-  saveBatteryRuntimeLearning(now);
-  strlcpy(localBattery.percentSource, "MAX17048 SOC", sizeof(localBattery.percentSource));
-  snprintf(localBattery.powerState, sizeof(localBattery.powerState), "Battery: %s", Max17048::trendLabel(chargeRateValid, chargeRate));
+  localBattery.percent = BatteryVoltage::estimatedPercent(localBattery.batteryMv);
+  localBattery.gaugePercent = localBattery.percent;
+  localBattery.gaugeSoc = localBattery.percent;
+  // Require sustained low voltage; percentage is only a rough voltage estimate.
+  if (localBattery.batteryMv <= 3650) {
+    if (!localBattery.lowVoltageSinceMs) localBattery.lowVoltageSinceMs = now;
+  } else localBattery.lowVoltageSinceMs = 0;
+  if (localBattery.batteryMv <= 3500) {
+    if (!localBattery.criticalVoltageSinceMs) localBattery.criticalVoltageSinceMs = now;
+  } else localBattery.criticalVoltageSinceMs = 0;
+  localBattery.batteryLow = localBattery.lowVoltageSinceMs && now - localBattery.lowVoltageSinceMs >= 30000;
+  localBattery.batteryCritical = localBattery.criticalVoltageSinceMs && now - localBattery.criticalVoltageSinceMs >= 30000;
+  strlcpy(localBattery.percentSource, "ADS1115 voltage estimate", sizeof(localBattery.percentSource));
+  strlcpy(localBattery.powerState, "Battery: Estimated level", sizeof(localBattery.powerState));
+}
+
+static bool readBatteryAdcRegister(uint8_t reg, uint16_t& value) {
+  Wire.beginTransmission(BATTERY_ADS1115_ADDR);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) return false;
+  if (Wire.requestFrom((uint8_t)BATTERY_ADS1115_ADDR, (uint8_t)2) != 2) return false;
+  value = (uint16_t)Wire.read() << 8;
+  value |= (uint8_t)Wire.read();
   return true;
 }
 
+// Let the loop service touch/radio while the ADC converts; never delay for conversion.
 static void sampleLocalBattery() {
+  static bool pending = false;
+  static uint32_t started = 0, lastPoll = 0;
   uint32_t now = millis();
-  if (localBattery.lastSampleMs && now - localBattery.lastSampleMs < 1000) return;
-  localBattery.lastSampleMs = now;
-  sampleMax17048();
+  if (!pending) {
+    if (localBattery.lastSampleMs && uint32_t(now - localBattery.lastSampleMs) < 1000) return;
+    localBattery.lastSampleMs = now;
+    ++localBattery.readAttempts;
+    Wire.beginTransmission(BATTERY_ADS1115_ADDR);
+    Wire.write((uint8_t)1);
+    Wire.write((uint8_t)(Ads1115::CONFIG >> 8));
+    Wire.write((uint8_t)Ads1115::CONFIG);
+    if (Wire.endTransmission() != 0) { updateBatteryVoltage(0, false, now); return; }
+    pending = true; started = lastPoll = now;
+    return;
+  }
+  if (uint32_t(now - lastPoll) < 10) return;
+  lastPoll = now;
+  uint16_t config = 0, raw = 0;
+  bool ok = readBatteryAdcRegister(1, config) && Ads1115::configured(config);
+  if (ok && !Ads1115::ready(config) && uint32_t(now - started) < 100) return;
+  ok = ok && Ads1115::ready(config) && readBatteryAdcRegister(0, raw) && Ads1115::usable(raw);
+  pending = false;
+  uint32_t mv = ok ? Ads1115::cellMillivolts(raw, BATTERY_DIVIDER_TOP_OHMS,
+                  BATTERY_DIVIDER_BOTTOM_OHMS, BATTERY_ADC_SCALE) : 0;
+  updateBatteryVoltage(mv, ok && BatteryVoltage::valid(mv), now);
 }

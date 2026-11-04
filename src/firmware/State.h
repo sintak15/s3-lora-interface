@@ -214,28 +214,28 @@ struct GpsStats {
 };
 
 struct LocalBatteryStats {
-  bool gaugePresent = false;
-  bool gaugeSocReliable = true;
+  bool voltageValid = false;
+  bool gaugeSocReliable = false;
   uint32_t lastGaugeMs = 0;
   uint32_t lastSampleMs = 0;
   uint32_t rawMv = 0;
   uint32_t rawPackMv = 0;
   uint32_t filteredPackMv = 0;
-  uint32_t batteryMv = 5000;
-  uint32_t learnedBatteryMv = 5000;
+  uint32_t batteryMv = 0;
+  uint32_t learnedBatteryMv = 0;
   int32_t deltaMvPerMin = 0;
   int32_t deltaMvPerMinTenths = 0;
   bool chargeRateValid = false;
   float chargeRatePercentHr = 0.0f;
   int32_t instantDeltaMv = 0;
-  int percent = 100;
-  int gaugePercent = 100;
+  int percent = -1;
+  int gaugePercent = -1;
   uint8_t trendSampleCount = 0;
-  char powerState[36] = "ext power";
-  char percentSource[32] = "MAX17048";
+  char powerState[36] = "Battery: Unavailable";
+  char percentSource[32] = "ADS1115 voltage estimate";
   uint16_t gaugeVersion = 0;
   uint16_t rawGaugeSoc = 0;
-  float gaugeSoc = 100.0f;
+  float gaugeSoc = 0.0f;
   bool charging = false;
   uint16_t rawVcell = 0;
   uint16_t rawCrate = 0;

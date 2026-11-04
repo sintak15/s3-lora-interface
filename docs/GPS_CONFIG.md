@@ -1,5 +1,22 @@
 # GPS configuration
 
+## ATGM336H (current branch)
+
+The selected receiver is ATGM336H, receiving standard GP/GN NMEA at 9600 baud
+on GPIO3. GPS RX stays disconnected (GPIO2 stays disconnected). Position reception, maps,
+fix diagnostics and sharing with Heltec remain available. Read/apply/save and
+rate/model/power/SBAS controls are disabled explicitly, not allowed to time out.
+The API reports gpsReceiver=ATGM336H and gpsConfigSupported=false.
+No speculative CASIC/PCAS writes or u-blox packets are sent. Confirm the actual
+module output on the bench before adding receiver-specific settings.
+
+See [installation](HARDWARE_UPGRADE.md). The following section documents the
+legacy u-blox implementation retained for existing tests and possible reuse.
+To restore it with appropriate hardware, set GPS_RECEIVER_UBLOX=1 and connect
+the receiver RX to CYD GPIO2; do not enable it for ATGM336H.
+
+## Legacy NEO-6M configuration
+
 Open **System > GPS > Config**. The CYD reads the NEO-6M through GPIO2 TX /
 GPIO3 RX at 9600 baud; see [wiring and USB diagnostics](GPS_DIAGNOSTICS.md).
 Opening Config starts a read if settings are missing. **Read receiver** refreshes
@@ -74,7 +91,7 @@ No receiver settings were changed or saved during verification. Touchscreen
 Apply/Save and receiver persistence after power removal remain untested.
 
 The health report confirmed a responsive Heltec link with zero decode errors,
-available SD storage and MAX17048, the persisted battery discharge estimate,
+available SD storage and ADC voltage monitoring,
 and preserved 46% audio volume with Bubble Pop / Double Pop selections.
 
 Artifact: `dist/s3-lora-interface-gps-config-v0.1.95-20261023.bin`

@@ -1,9 +1,10 @@
 // Internal implementation module; included once by the main sketch.
 static GpsUbx::Decoder gpsUbx;
-static GpsConfig::Controller gpsConfig;
+static GpsConfig::Controller gpsConfig(GPS_RECEIVER_UBLOX != 0);
 static uint32_t gpsUbxByteMs = 0, gpsUbxReplies = 0, gpsReportedOperation = 0;
 
 static const char* gpsControlState() {
+  if (!gpsConfig.supported) return "unsupported-receiver";
   using namespace GpsConfig;
   if (gpsConfig.phase == Phase::WaitAck) return "awaiting-ack";
   if (gpsConfig.busy()) return gpsConfig.operation == Operation::Apply ? "verifying-settings" : "reading-settings";
@@ -19,6 +20,7 @@ static const char* gpsControlState() {
 }
 
 static void serviceGpsConfig() {
+  if (!gpsConfig.supported) return;
   gpsConfig.tick(millis());
   if (gpsConfig.readyToSend()) {
     const auto packet = gpsConfig.outgoing();
@@ -51,6 +53,7 @@ static bool handleGpsControlCommand(const char* command) {
   bool save = strcmp(command, "gps save") == 0;
   bool rate = strcmp(command, "gps rate") == 0 || strncmp(command, "gps rate ", 9) == 0;
   if (!readAll && !save && !rate) return false;
+  if (!gpsConfig.supported) { Serial.println("[GPS] ATGM336H: receive-only NMEA; receiver configuration unavailable"); return true; }
   if (gpsConfig.busy()) { Serial.println("[GPS] command pending; wait for completion"); return true; }
   bool accepted = false;
   if (readAll) accepted = gpsConfig.read(millis());
@@ -140,6 +143,8 @@ static void captureGpsRelayFix() {
 }
 
 static void appendLocalGpsHealthJson(String& json) {
+  json += "\"gpsReceiver\":\"" + String(gpsConfig.supported ? "u-blox" : "ATGM336H") + "\",";
+  json += "\"gpsConfigSupported\":" + String(gpsConfig.supported ? "true" : "false") + ",";
   bool usedKnown = localGps.satellites.isValid() && localGps.satellites.age() <= 30000;
   int inView = localGpsSatellitesInView();
   json += "\"gpsRxPin\":" + String(GPS_RX_PIN) + ",\"gpsBaud\":" + String(GPS_BAUD) + ",";

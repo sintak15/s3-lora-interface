@@ -320,7 +320,7 @@ static void serviceGames() {
   char text[160];
   const char* radioState = !radioResponseSeen ? "Waiting" : strcmp(linkHealthText(), "responsive") == 0 ? "Linked" : strcmp(linkHealthText(), "quiet") == 0 ? "Quiet" : "Offline";
   snprintf(text, sizeof(text), "Radio: %s", radioState); lv_label_set_text(petDashboard[0], text);
-  snprintf(text, sizeof(text), "Battery: %u%%", localBattery.percent); lv_label_set_text(petDashboard[1], localBattery.gaugePresent ? text : "Battery: --");
+  snprintf(text, sizeof(text), "Battery: ~%d%%", localBattery.percent); lv_label_set_text(petDashboard[1], localBattery.voltageValid ? text : "Battery: --");
   snprintf(text, sizeof(text), "Nodes: %u", (unsigned)nodeCount); lv_label_set_text(petDashboard[2], text);
   snprintf(text, sizeof(text), "GPS: %lu sats", (unsigned long)localGps.satellites.value()); lv_label_set_text(petDashboard[3], text);
   snprintf(text, sizeof(text), "Messages: %u", (unsigned)(unreadPublic + unreadFamily + unreadDirect)); lv_label_set_text(petDashboard[4], text);

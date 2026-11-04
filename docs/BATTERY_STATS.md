@@ -1,153 +1,113 @@
-# Battery statistics
+# ADS1115 battery voltage monitoring
 
-The MAX17048 is the source of cell voltage, modeled state of charge (SOC) and
-signed CRATE. The displayed percentage is rounded/clamped gauge SOC, without a
-voltage correction or a software smoothing delay. The primary voltage is the
-MAX VCELL reading. Firmware does not reset/quick-start the gauge to hide an
-unexpected reading. The retired `batTrim10` preference is removed at startup.
+This branch uses an external ADS1115, not a fuel gauge. It requires no CYD
+component changes. Leave R14/R15 and GPIO9 untouched. Remove the failed MAX17048
+and its battery/I2C wiring. Keep the existing TP4056 charger and MT3608 boost.
+There is no charging detection or remaining-runtime estimate.
 
-**Battery trend** describes the sign of the current CRATE register: increasing,
-decreasing, steady (zero), or unavailable after a failed read. There is no software settling
-window, voltage-step override or retained charging flag. This is an averaged
-SOC trend, not instantaneous current direction or charger presence. The chip
-cannot directly detect the separate 5 V charger's connection; an actual charger
-status input or suitable current sensor is needed for that measurement. CYD USB
-powers the interface but does not charge the main cell in this build.
+## Wiring (all power disconnected)
 
-A separate filtered voltage remains available for diagnostics and qualified
-low-voltage warnings. Thresholds remain 20% low and 10% critical, or qualified
-voltage at/below 3.65 V and 3.50 V for 30 seconds. These UI warnings do not
-replace battery protection or charge control.
+Use a single standard 4.2 V maximum Li-ion cell. Connect the ADS1115 to the
+CYD I2C connector by SIGNAL LABEL, not cable color or connector orientation:
 
-## Remaining time
+| ADS1115 | CYD / connection |
+| --- | --- |
+| VDD | CYD 3V3, never 5 V |
+| GND | Common protected/system ground |
+| SDA | GPIO16 (shared touch/codec bus) |
+| SCL | GPIO15 (shared touch/codec bus) |
+| ADDR | GND, selecting 0x48 |
+| A0 | Divider midpoint below |
+| ALERT/RDY | Leave disconnected |
+| A1/A2/A3 | Unused; may connect to GND |
 
-Runtime is an approximation calculated in firmware from fresh gauge SOC and a
-learned discharge rate in percentage points per hour. No powered-off interval
-is counted as active use, and a saved remaining-minutes value is never restored.
+The existing touch and codec use 0x38 and 0x18, so 0x48 does not conflict.
+Confirm the actual module is ADS1115, not ADS1015, and that any onboard SDA/SCL
+pullups go to its 3.3 V VDD.
 
-The touchscreen and web UI show the basis of each estimate:
+```text
+Switched, unboosted cell positive (AFTER switch, BEFORE boost)
+              |
+           10 kohm, 1%
+              |
+              +---------------- ADS1115 A0
+              |                    |
+           10 kohm, 1%           100 nF ceramic
+              |                    |
+System GND ---+--------------------+
+```
 
-- **Previous use:** a retained rate, including one restored from ESP32 NVS at boot.
-- **Gauge trend:** two consistent, valid negative CRATE readings at least a minute
-  apart. This permits an early estimate on a device without saved history.
-- **Current use:** measured raw SOC decline of at least 0.5 percentage points over
-  at least three minutes, using a rolling window of up to 15 minutes.
+Use two 10 kohm 1% resistors, ordinary 1/4 W is sufficient. The 100 nF capacitor
+filters A0 to GND. Add a 100 nF VDD-to-GND decoupling capacitor near the module
+if its breakout does not already include one. Divider current at 4.2 V is
+approximately 210 microamps while switched on.
 
-New qualified rates blend 25% into the existing learned rate once per minute.
-A rising MAX SOC trend, failed reads, SOC rises and long sample gaps clear
-session observations or pause the estimate, while retaining the learned rate.
-Time is recomputed from current SOC on every valid sample and displayed rounded
-to five minutes. With no saved rate, a flat SOC and unusable CRATE, the display
-continues to say it is estimating instead of inventing a runtime.
+Use the switched CELL rail, not boosted 5 V and not an always-live battery tap.
+The ADS1115 is powered by CYD 3V3; a live analog input with VDD off can backfeed
+through input protection. Power-off behavior must be checked on the assembly.
+Do not bridge battery protection by joining raw cell negative to system ground.
+Keep CYD's BAT connector empty to avoid its onboard charger/power path.
+No transistors, status diodes, charger status taps or CYD solder modifications
+are required. Leave existing power/charging connections otherwise unchanged.
 
-The first qualified rate is saved promptly as `batRateV1`. Subsequent saves need
-a change of at least 0.5 percentage points/hour or 5%, whichever is greater, and
-are limited to once per 15 minutes, including after restarting with a saved rate.
-Failed first-save attempts retry no faster than once a minute. This works with
-a physical power switch and avoids continuous flash writes. A battery replacement
-or different screen/Wi-Fi load may make a prior-use estimate inaccurate until new
-observations adapt it.
+## Meter checks before connecting A0
 
-## Continuous battery and power health logs
+1. Remove battery and all USB cables while assembling the divider.
+2. Check resistor values, ground continuity and absence of solder bridges.
+3. Power the assembly; measure cell voltage at the switched source and midpoint
+   voltage relative to system GND. Midpoint must be HALF the cell voltage:
+   4.0 V cell -> 2.0 V midpoint; 4.2 V -> 2.1 V.
+4. Verify ADS1115 VDD is about 3.3 V, and SDA/SCL are never pulled to 5 V.
+5. With main switch off, check midpoint and ADS1115 supply fall near 0 V.
+   Also test charger-USB and CYD-USB combinations: A0 must never stay powered
+   when ADS1115 VDD is off. Change switch/sense placement if that occurs.
+6. Disconnect power before connecting A0 and reassembling the device.
 
-Diagnostics run automatically whenever the device is powered. No Start, Stop,
-Charge, Discharge or Rest buttons are needed. The old manual notes did not
-measure charger status and are retired. Gauge readings and error counters are
-sampled continuously; a readable record and detailed CSV row are flushed every
-10 seconds. The battery direction comes only from MAX CRATE.
+Never connect the raw cell directly to A0. ADC full-scale settings do not
+permit an input above VDD. Probe I2C map should show 0x48 (ADS1115).
 
-On the CYD, use **System > Battery > View logs**. **Current log** and **Previous
-log** select the file; **Refresh log** loads recent entries without interrupting
-recording. Scroll within the log to read it. The device shows the latest complete
-entries from a bounded 4 KiB tail, while web downloads provide the complete file.
-The viewer refreshes on request so incoming samples do not move the text while
-it is being read. No Wi-Fi connection is needed for on-device viewing.
+## Firmware and displayed data
 
-The CYD **Rotate 48h** checkbox and web **Rotate logs every 48 hours of use**
-setting control retention, not measurement. By default, each 48 hours of powered-on
-recording archives the current readable/CSV pair and starts a fresh pair. One
-previous pair is retained; the older previous pair is removed at the next
-rotation. This retains roughly 48–96 hours of recording, depending on the age
-of the current file. The disabled setting keeps appending to the current files
-without a time or 16 MiB size stop, until the card is full. Re-enabling rotation
-rotates an over-age current file on the next recording attempt. The previously
-saved archive remains downloadable while rotation is disabled.
+The driver starts one single-shot A0-to-GND conversion each second, using
++/-4.096 V gain (125 microvolts/count), 128 SPS, comparator disabled. Conversion
+completion is polled without delaying the loop. Wrong configuration, bus errors,
+short reads, negative/clipped values and conversions that fail to complete
+within 100 ms invalidate the reading. The next second retries automatically.
 
-The setting persists in NVS. Recording age is recovered from the last flushed
-readable record across restarts, including repeated short power cycles, with a
-15-minute NVS checkpoint as fallback. A hard power loss can lose the latest
-record and normally about 10 seconds of age; an unavailable/busy SD card can
-require the older NVS checkpoint. Powered-off time is not counted.
-A persisted rotation journal and a directory rename keep both files together;
-interrupted rotation is completed safely at the next startup/attempt. Downloads
-and busy SD access defer recording/rotation. Sampled voltage statistics are
-retained until the next successful record. Actual write failures and SD-busy/
-unavailable delays have separate counters, all counting the current boot.
+Voltage is filtered; percentage is an approximate interpolated VOLTAGE estimate,
+shown with ~. Load, temperature, charging and age affect accuracy. It is not
+measured capacity. No charging state is inferred from voltage changes. Low and
+critical alerts require 30 seconds at/below 3.65 and 3.50 V; they do not replace
+hardware cell protection. Plausible cell range is 2.5-4.35 V.
 
-Files are under `/s3-lora/power-health/current/` and
-`/s3-lora/power-health/previous/`, named `power-health.log` and
-`battery-cycle.csv`. Existing v0.1.100 files are migrated from `/s3-lora/`
-without overwriting newer files. Rotation deletes only the two owned files
-in the previous directory; unexpected additional files stop rotation safely.
+Defaults in constants.h can be overridden in config/device_config.local.h:
 
-The readable log uses a short measurement line every 10 seconds: timestamp,
-battery voltage/percentage/trend, sampled voltage variation, largest sampled
-step and recording age. Variation is the maximum minus the minimum voltage in
-the current window; step is the largest change between consecutive samples.
-Missing readings are marked unavailable instead of displaying stale values.
+```cpp
+#define BATTERY_ADS1115_ADDR 0x48
+#define BATTERY_DIVIDER_TOP_OHMS 10000UL
+#define BATTERY_DIVIDER_BOTTOM_OHMS 10000UL
+#define BATTERY_ADC_SCALE 1.0f
+```
 
-Battery-read, radio framing/decode/timeout, audio and SD/log errors appear only
-when their counters increase, as a count added since the previous successful
-record. Audio recoveries are recorded the same way. A restart/new-log note
-identifies the firmware, boot and retention policy once. Zero counters, routine
-Wi-Fi/radio status, runtime estimates and repeated explanatory paragraphs are
-omitted from the readable log. Existing older entries remain intact.
+After readings settle, compare against the meter. Calibration scale is current
+scale multiplied by meter voltage / reported voltage. Don't calibrate against
+the boosted output. Missing hardware should show unavailable, never 100% or 5 V.
 
-The optional CSV additionally includes raw VCELL/SOC/CRATE and read-only
-STATUS/CONFIG register snapshots with validity flags. Its legacy `phase` column
-contains `automatic` for new records. Error counters reset at each boot; compare
-changes within the same boot. Zero Wi-Fi RSSI means unavailable or AP mode.
-No coordinates, chat bodies or network credentials are included.
+## API and logs
 
-Variation includes normal load/charging changes and gauge updates. It is not a
-measurement of RF noise or high-frequency switching ripple. Brief supply dips
-can be missed. There is no boosted-5 V or Heltec-3.3 V sensing input, current
-sensor or audio-quality measurement in this diagnostic path. Failed sensor reads
-are marked invalid; retained numbers are stale. Normal use, a manual battery
-cycle, or a hardware change can all be reviewed through these same ordinary logs.
+batteryMeasurementAvailable reports voltage validity; batteryEstimated is true.
+battery is estimated percent and voltage is cell volts, null when unavailable.
+fuelGauge is none; fuelGaugePresent is false. Legacy gauge SOC/register fields
+are null. batteryCharging and batteryChargerConnected are null. Runtime remains
+unavailable. The web UI omits charging status; diagnostic APIs retain unknown.
 
-## API semantics
+Continuous SD diagnostics/downloads/rotation remain. Legacy CSV gauge/register
+columns remain for compatibility with validity false and unused raw values zero.
+soc_percent holds voltage-estimated percent (-1 when unavailable). cell_mv and
+voltage variation columns now use ADS1115 observations. Archives are unchanged.
+Historical enclosure files may still include unused MAX mounting posts.
 
-`batteryGaugeTrend` and `batteryStateSource` identify the MAX CRATE source;
-`batteryChargerConnected` is `null` because that hardware measurement is absent.
-Legacy `batteryCharging` means only **valid positive MAX CRATE**; it must not be
-interpreted as physical charger status. `batteryChargeRateValid` distinguishes
-an unreadable rate from zero. Legacy corrected-SOC fields mirror the gauge;
-all calibration offsets are zero. `voltage` is raw VCELL and `senseVoltage` is
-the separate filtered diagnostic voltage. `batteryRuntimeMinutes` remains a
-software estimate; a rising trend pauses it while preserving the learned rate.
+## References
 
-Authenticated `POST /battery/cycle` accepts `action=rotation-on` or
-`rotation-off`; removed manual start/stop/phase actions return 410. Unknown
-actions return 400. Settings that cannot be saved return 409; a lost response
-has an unknown outcome, so read status before retrying.
-
-Download the current logs with `GET /sd/power-health` and
-`GET /sd/battery-cycle`; append `/previous` for their previous files.
-`batteryCycleEnabled` is always true and the compatibility `batteryCyclePhase`
-is `automatic`. `batteryLogRotationEnabled`, `batteryLogWindowSeconds` and
-`batteryLogPreviousAvailable` describe retention. Existing status/error/voltage
-statistics remain available in status and field reports.
-
-v0.1.98 briefly introduced a voltage/SOC history classifier, but its charging
-confirmation was too conservative during a real charge. v0.1.99 removes it in
-favor of the gauge-only readings described here.
-
-Reference: [Analog Devices MAX17048/MAX17049 datasheet](https://www.analog.com/media/en/technical-documentation/data-sheets/MAX17048-MAX17049.pdf),
-especially ModelGauge theory, voltage versus SOC, temperature compensation,
-quick-start and CRATE.
-
-From v0.1.102, the +, - and = symbols use regular weight on the CYD and web UI.
-They mean increasing, decreasing and steady gauge percentage, and do not assert
-physical charger presence. Detailed API/CSV fields retain their technical
-SOC/CRATE names for analysis.
+- [TI ADS1115 datasheet](https://www.ti.com/lit/ds/symlink/ads1115.pdf)
+- [LCDWiki schematic](https://www.lcdwiki.com/res/ES3C28P/2.8inch_ESP32-S3_Display_Schematic.pdf)

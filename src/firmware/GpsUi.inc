@@ -42,7 +42,7 @@ static void saveGpsConfig(lv_event_t*) {
 
 static void openGpsConfig() {
   showPage(pageGpsConfig);
-  if (!gpsConfig.busy() && gpsConfig.current.known != GpsConfig::ALL_KNOWN) gpsConfig.read(millis());
+  if (gpsConfig.supported && !gpsConfig.busy() && gpsConfig.current.known != GpsConfig::ALL_KNOWN) gpsConfig.read(millis());
 }
 
 static void setGpsControlEnabled(lv_obj_t* control, bool enabled) {
@@ -60,7 +60,9 @@ static void refreshGpsConfigUi() {
   }
   char status[256];
   const Error validation = gpsConfig.validate(gpsConfigDraft);
-  if (gpsConfig.busy()) {
+  if (!gpsConfig.supported) {
+    strlcpy(status, "ATGM336H: receiving NMEA\nReceiver settings unavailable. GPS sharing remains available.", sizeof(status));
+  } else if (gpsConfig.busy()) {
     snprintf(status, sizeof(status), "%s %u/%u\n%s",
              gpsConfig.operation == Operation::Read ? "Reading" : gpsConfig.operation == Operation::Save ? "Saving" : "Applying",
              (unsigned)gpsConfig.index + 1, (unsigned)gpsConfig.count, fieldName(gpsConfig.field()));
@@ -89,8 +91,8 @@ static void refreshGpsConfigUi() {
   setReadoutText(gpsConfigCurrentLabels[3], text);
   snprintf(text, sizeof(text), "NMEA output\nCurrent: %s", profileName(current.profile()));
   setReadoutText(gpsConfigCurrentLabels[4], text);
-  for (auto* dropdown : gpsConfigDropdowns) setGpsControlEnabled(dropdown, !gpsConfig.busy());
-  setGpsControlEnabled(btnGpsConfigRead, !gpsConfig.busy());
+  for (auto* dropdown : gpsConfigDropdowns) setGpsControlEnabled(dropdown, gpsConfig.supported && !gpsConfig.busy());
+  setGpsControlEnabled(btnGpsConfigRead, gpsConfig.supported && !gpsConfig.busy());
   for (auto* button : gpsConfigApplyButtons) setGpsControlEnabled(button, !gpsConfig.busy() && validation == Error::None);
   for (auto* button : gpsConfigSaveButtons)
     setGpsControlEnabled(button, !gpsConfig.busy() && gpsConfig.canSave && !gpsConfigDraft.any());

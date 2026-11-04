@@ -190,3 +190,13 @@ static_assert(readSequence(false) && readSequence(true), "Read each field and ne
 static_assert(failedSequenceRetainsConfirmedChanges(), "Stop after a failure without claiming an atomic rollback");
 static_assert(unknownRateOrPowerPreventsUnsafeChanges(), "Validate rate and power together before transmitting");
 } // namespace GpsConfigTests
+
+constexpr bool unsupportedReceiverChecks() {
+  GpsConfig::Controller receiver(false);
+  GpsConfig::Changes change; change.periodMs = 1000;
+  if (receiver.read(0) || receiver.apply(change, 1) || receiver.save(2)) return false;
+  receiver.tick(10000);
+  return receiver.error == GpsConfig::Error::Unsupported && !receiver.readyToSend() &&
+         !receiver.busy() && receiver.outgoing().size == 0;
+}
+static_assert(unsupportedReceiverChecks(), "ATGM336H must never receive u-blox configuration commands");

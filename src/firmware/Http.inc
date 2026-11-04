@@ -84,18 +84,20 @@ static void appendBatteryCycleStatusJson(String& json) {
 }
 
 static void appendBatteryStatusJson(String& json) {
-  json += "\"battery\":" + String(localBattery.percent) + ",";
-  json += "\"voltage\":" + String(localBattery.batteryMv / 1000.0f, 2) + ",";
-  json += "\"fuelGauge\":\"" + String(localBattery.gaugePresent ? "MAX17048" : "none") + "\",";
-  json += "\"fuelGaugePresent\":" + String(localBattery.gaugePresent ? "true" : "false") + ",";
-  json += "\"fuelGaugeSoc\":" + String(localBattery.gaugeSoc, 1) + ",";
-  // Legacy correction fields now mirror the gauge; no software SOC trim applies.
-  json += "\"fuelGaugeCorrectedSoc\":" + String(localBattery.gaugeSoc, 1) + ",";
-  json += "\"fuelGaugeCorrectedPercent\":" + String(localBattery.gaugePercent) + ",";
+  json += "\"batteryMeasurementAvailable\":" + String(localBattery.voltageValid ? "true" : "false") + ",";
+  json += "\"batteryEstimated\":true,";
+  json += "\"battery\":" + (localBattery.voltageValid ? String(localBattery.percent) : String("null")) + ",";
+  json += "\"voltage\":" + (localBattery.voltageValid ? String(localBattery.batteryMv / 1000.0f, 2) : String("null")) + ",";
+  json += "\"fuelGauge\":\"" + String("none") + "\",";
+  json += "\"fuelGaugePresent\":false,";
+  json += "\"fuelGaugeSoc\":null,";
+  // Retain old API keys, but no fuel-gauge data exists.
+  json += "\"fuelGaugeCorrectedSoc\":null,";
+  json += "\"fuelGaugeCorrectedPercent\":null,";
   json += "\"fuelGaugeSocReliable\":" + String(localBattery.gaugeSocReliable ? "true" : "false") + ",";
-  json += "\"fuelGaugeRawSoc\":\"0x" + String(localBattery.rawGaugeSoc, HEX) + "\",";
+  json += "\"fuelGaugeRawSoc\":null,";
   json += "\"fuelGaugeQuickStartSent\":false,";
-  json += "\"fuelGaugeVersion\":\"0x" + String(localBattery.gaugeVersion, HEX) + "\",";
+  json += "\"fuelGaugeVersion\":null,";
   json += "\"senseVoltage\":" + String(localBattery.filteredPackMv / 1000.0f, 2) + ",";
   json += "\"rawSenseVoltage\":" + String(localBattery.rawPackMv / 1000.0f, 2) + ",";
   json += "\"batteryVoltageUnstable\":" + String(localBattery.voltageUnstable ? "true" : "false") + ",";
@@ -113,9 +115,10 @@ static void appendBatteryStatusJson(String& json) {
   json += "\"batteryTrendMvPerMin\":" + String(localBattery.deltaMvPerMin) + ",";
   json += "\"batteryChargeRatePercentHr\":" + String(localBattery.chargeRatePercentHr, 1) + ",";
   json += "\"batteryChargeRateValid\":" + String(localBattery.chargeRateValid ? "true" : "false") + ",";
-  json += "\"batteryCharging\":" + String(localBattery.charging ? "true" : "false") + ",";
-  json += "\"batteryGaugeTrend\":\"" + String(Max17048::trend(localBattery.gaugePresent && localBattery.chargeRateValid, localBattery.chargeRatePercentHr)) + "\",";
-  json += "\"batteryStateSource\":\"MAX17048 CRATE\",";
+  json += "\"batteryCharging\":" + String(batteryChargeStatusValid ? (batteryActivelyCharging ? "true" : "false") : "null") + ",";
+  json += "\"batteryChargingStatus\":\"" + String(batteryChargingStatus) + "\",";
+  json += "\"batteryGaugeTrend\":\"" + String("unavailable") + "\",";
+  json += "\"batteryStateSource\":\"unavailable\",";
   json += "\"batteryChargerConnected\":null,";
   appendBatteryCycleStatusJson(json);
   uint32_t trendWindowSec = 0;
@@ -129,9 +132,9 @@ static void appendBatteryStatusJson(String& json) {
   }
   json += "\"batteryRuntimeMinutes\":" + String(batteryRuntime.minutes()) + ",";
   json += "\"batteryRuntimeBasis\":\"" + String(batteryRuntime.basis()) + "\",";
-  json += "\"batteryLearnedDischargePercentHr\":" + String(batteryRuntime.learnedPercentPerHour(), 2) + ",";
-  json += "\"batterySavedDischargePercentHr\":" + String(localBattery.savedDischargeRate, 2) + ",";
-  json += "\"batteryDischargePercentHr\":" + String(batteryRuntime.percentPerHour(), 2) + ",";
+  json += "\"batteryLearnedDischargePercentHr\":null,";
+  json += "\"batterySavedDischargePercentHr\":null,";
+  json += "\"batteryDischargePercentHr\":null,";
   json += "\"batteryTrendWindowSec\":" + String(trendWindowSec) + ",";
   json += "\"batteryCalibrationOffsetPercent\":0,";
   json += "\"batteryCalibrationOffsetMv\":0,";

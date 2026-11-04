@@ -13,10 +13,10 @@ categories and one editor at a time; Health and SD storage keep detailed
 readings under expandable topics. CYD label/value readouts use light blue
 labels and white measurements. See the [web UI and display guide](docs/WEB_UI.md).
 
-Battery readings come directly from the MAX17048. Continuous SD power-health logs
-record voltage variation and connection/audio errors in plain language, with CSV
-available for detailed review. Logs rotate every 48 hours of use by default;
-rotation can be disabled, and recent entries can be read directly on the CYD. See [battery statistics and logging](docs/BATTERY_STATS.md).
+Battery voltage is measured through an external ADS1115 and a 10k/10k divider.
+Percentage is a rough voltage estimate; no fuel gauge or charging detection is
+used. The ATGM336H supplies NMEA positions at 9600 baud. See the
+[battery wiring](docs/BATTERY_STATS.md) and [installation checklist](docs/HARDWARE_UPGRADE.md).
 
 ## Pin mapping — quick reference
 
@@ -29,15 +29,14 @@ All modules share a common ground; UART and I²C signals use 3.3 V logic.
 | **GPIO14 — RX** | **Heltec GPIO39 — TX** | Heltec → CYD, 115200 baud |
 | **GPIO21 — TX** | **Heltec GPIO38 — RX** | CYD → Heltec, 115200 baud |
 | **GPIO3 — GPS RX** | **GPS TX** | GPS → CYD, 9600 baud; positions can be shared over the existing Heltec link |
-| **GPIO2 — GPS TX** | **GPS RX** | CYD → GPS configuration, 9600 baud |
-| **GPIO16 — SDA** | **MAX17048 SDA** | Shared I²C data; gauge address `0x36`; also used by built-in touch and audio codec |
-| **GPIO15 — SCL** | **MAX17048 SCL** | Shared I²C clock |
-| **GND** | Heltec GND, GPS GND, MAX17048 GND and power ground | Common ground |
-| **5V** | Boost-converter 5V output; same rail supplies Heltec 5V and GY-NEO6MV2 VCC | Board / breakout power, separate from UART logic |
-| **3V3** | MAX17048 breakout VCC, subject to its supply requirements | Gauge supply; cell sensing connects to the raw battery |
+| **GPIO2** | Leave disconnected | ATGM336H receiver RX is unused |
+| **GPIO16 - SDA** | ADS1115 SDA and built-in touch/codec | Shared I2C bus; ADS1115 address 0x48 |
+| **GPIO15 — SCL** | ADS1115 SCL; built-in touch/codec | Shared I²C clock |
+| **3V3** | ADS1115 VDD | ADC supply and 3.3 V I2C pullups |
+| **GND** | Heltec GND, GPS GND and power ground | Common ground |
+| **5V** | Boost converter output to CYD/Heltec | GPS VCC must match its breakout input rating |
 
-**Leave Heltec GPIO4 disconnected from GPS RX.** Only CYD GPIO2 drives that
-wire. Enable the Heltec Serial module in **PROTO / Protobuf** mode at
+**Leave GPS RX and Heltec GPIO4 disconnected.** No receiver commands are sent. Enable the Heltec Serial module in **PROTO / Protobuf** mode at
 **115200 baud**, with **RX 38 / TX 39**, matching the working Heltec configuration read
 on October 25, 2026. The Web UI reads the configured pins or requires both to
 be entered explicitly; it does not assume a pair. For CYD GPS sharing, use
@@ -77,9 +76,7 @@ describe internal board wiring. See [notification audio](docs/AUDIO.md).
   zooms 10–14, feet/miles scales and coarser fallback when detail is missing.
 - **Map navigation:** drag to explore, pause/follow the device, recenter and
   inspect actual coverage around the touchscreen map center.
-- **Battery monitoring:** optional MAX17048 fuel-gauge support, charging and
-  low-battery status, and runtime estimates with discharge learning retained
-  across restarts. See [battery statistics](docs/BATTERY_STATS.md).
+- **Battery monitoring:** ADS1115 cell voltage and approximate percentage; no charging detection or runtime estimate. See [battery monitoring](docs/BATTERY_STATS.md).
 - **Local storage:** chat/event logs, position history, saved location and a
   cached map image on FAT32 MicroSD. Supports normal MBR cards and validated
   GPT FAT32 partitions. See [replacement-card verification](docs/SD_REPLACEMENT.md).
@@ -99,10 +96,10 @@ The current build uses:
 | --- | --- |
 | [LCDWiki 2.8-inch ESP32-S3 display / CYD](https://www.lcdwiki.com/2.8inch_ESP32-S3_Display) | Touchscreen, web interface and SD storage |
 | Heltec V3.2 running Meshtastic | LoRa radio |
-| GY-NEO6MV2 GPS module | Location input shared by the Heltec and CYD |
+| ATGM336H GPS breakout and antenna | NMEA location input to CYD |
+| ADS1115 breakout, two 10k 1% resistors, 100 nF capacitor | Battery voltage estimate |
 | Single-cell rechargeable battery, 2500 mAh 18650 in this build | Portable power |
 | TP4056 charger and MT3608 5V boost converter | Charging and boosted supply |
-| MAX17048 fuel-gauge breakout, optional | Battery state measurement |
 | FAT32 MicroSD card, optional | Offline maps and persistent logs |
 
 The verified CYD has 16 MiB flash and 8 MiB PSRAM. Pin assignments below are
@@ -169,25 +166,15 @@ in firmware, so the web map needs no internet access.
 TX connects to RX: one board's transmit wire goes to the other's receive pin.
 All boards share a common ground.
 
-### Power and fuel gauge
+### Power and battery monitoring
 
 The documented power path is battery → charger output → 5V boost converter.
-The boosted rail supplies the Heltec `5V`, CYD `5V` and GY-NEO6MV2 breakout
-`VCC`. The CYD USB port does not charge this project's battery; charging uses
+The boosted rail supplies the Heltec `5V`, CYD `5V` and the GPS breakout only if its input rating permits 5 V. The CYD USB port does not charge this project's battery; charging uses
 the separate charger connection.
 
-The MAX17048 measures the **raw cell**, before the boost converter:
-
-| MAX17048 connection | Connect to |
-| --- | --- |
-| Cell positive | Raw battery positive |
-| Cell negative / GND | Common ground |
-| SDA | CYD GPIO16 |
-| SCL | CYD GPIO15 |
-| VCC | CYD 3V3, subject to the breakout's supply requirements |
-
-The gauge uses I²C address `0x36`. Its battery reading does not measure the
-boosted GPS supply rail. Without a gauge, the UI shows an unavailable reading.
+Battery sensing uses an external ADS1115 at 0x48 and a 10k/10k divider on A0.
+[Wiring and power-off checks](docs/BATTERY_STATS.md) require no CYD modifications.
+Keep the CYD battery socket empty while using the external charger.
 
 ### CYD ↔ Heltec serial
 
@@ -202,39 +189,18 @@ In the Meshtastic serial module, set **Enabled**, **PROTO / Protobuf** mode,
 
 ### GPS
 
-For CYD GPS sharing, connect the receiver only to the CYD. The CYD sends fresh
-positions over its existing Protobuf serial connection to the Heltec:
+ATGM336H TX connects to CYD GPIO3; GND connects to common system ground.
+Leave GPS RX and CYD GPIO2 disconnected. Default is 9600 baud, 8N1, receive-only
+NMEA. Supply voltage must match the purchased BREAKOUT's documented rating;
+never assume a bare ATGM336H supports 5 V. Confirm its regulator/input labels
+before reusing the old GPS supply wire.
 
-| GPS module | Connect to |
-| --- | --- |
-| TX | CYD GPIO3 |
-| RX | CYD GPIO2 (GPS TX) |
-| VCC | Boosted 5V rail for the GY-NEO6MV2 breakout |
-| GND | Common ground |
-
-**Use CYD GPS** reads the Heltec's current settings, selects **GPS Not present**
-and turns fixed position off, then enables sharing after verified readback.
-Sharing defaults to off for existing split-wire installations. With sharing
-off, enable Heltec GPS RX5 and retain the GPS TX branch to GPIO5 instead.
-**Leave Heltec GPIO4 disconnected from GPS RX**; never tie both boards' TX
-outputs to the GPS RX wire. An existing Heltec TX-pin setting does not change
-this receive-only physical wiring.
-
-The CYD receives on GPIO3 and transmits on **GPIO2**, at **9600 baud**.
-GPIO2 is the unused expansion IO alongside GPIO3/14/21; see the
-[LCDWiki board manual](https://www.lcdwiki.com/res/ES3C28P/2.8inch_IPS_ESP32-S3_ES3C28P_ES3N28P_User_Manual.pdf).
-Boot sends no GPS configuration commands. **System > GPS > Config** reads and
-changes update rate, navigation mode and SBAS. Its **Adv** submenu controls power
-mode and Normal/Compact NMEA output. Apply checks receiver readback; Save is a
-separate request to retain settings. Prefer 1 Hz; higher rates require Compact
-output and Maximum performance mode on the shared 9600-baud stream. USB
-`gps config` reads all settings; `gps rate` reads the rate alone. See the
-[GPS configuration guide](docs/GPS_CONFIG.md) for choices and constraints.
-Use compatible 3.3 V UART signals and common
-ground; the breakout's boosted 5V power input is separate from UART logic.
-The GPS and radio serial connections use different pins and baud rates.
-See [GPS wiring and control ownership](docs/GPS_DIAGNOSTICS.md#gps-wiring-and-control-ownership)
-for commands, verification and control ownership.
+Enable **Use CYD GPS** only after checking the Heltec setup as described in
+[GPS sharing](docs/GPS_SHARING.md). Position sharing remains available. Receiver
+rate/model/power/SBAS/save controls are disabled for ATGM336H; no u-blox commands
+are sent. See [GPS configuration](docs/GPS_CONFIG.md),
+[GPS diagnostics](docs/GPS_DIAGNOSTICS.md) and
+[the installation checklist](docs/HARDWARE_UPGRADE.md).
 
 ### Built-in MicroSD slot
 

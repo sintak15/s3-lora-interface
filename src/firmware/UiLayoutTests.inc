@@ -139,12 +139,12 @@ static void handle() {
   ensureWifiLocalPage(); ensureWifiScanPage();
   const String variant = server.arg("case");
   if (requested == "home" && variant != "real") {
-    localBattery.gaugePresent = true; localBattery.percent = 49; localBattery.chargeRateValid = true;
+    localBattery.voltageValid = true; localBattery.percent = 49; localBattery.chargeRateValid = true;
     localBattery.charging = false; localBattery.batteryLow = localBattery.batteryCritical = false;
     batteryRuntime.restore(10); batteryRuntime.sample(millis(), 49, true, false);
     if (variant == "charging") { localBattery.charging = true; localBattery.percent = 100; }
     if (variant == "unknown") localBattery.chargeRateValid = false;
-    if (variant == "missing") localBattery.gaugePresent = false;
+    if (variant == "missing") localBattery.voltageValid = false;
     if (variant == "critical") { localBattery.batteryCritical = true; localBattery.percent = 5; }
     if (variant == "long") {
       radioResponseSeen = true; lastRadioResponseMs = millis() - 100000;

@@ -9,7 +9,7 @@ enum class Profile : uint8_t { Keep, Standard, Compact, Custom, Unknown };
 enum class Operation : uint8_t { None, Read, Apply, Save };
 enum class Phase : uint8_t { Idle, Ready, WaitAck, ReadyReadback, WaitReply };
 enum class Result : uint8_t { Idle, Working, Read, PartialRead, Applied, Saved, Failed };
-enum class Error : uint8_t { None, Busy, ReadFirst, Invalid, Bandwidth, PowerRate, NoEdits, Rejected, Timeout, WriteFailed, Mismatch };
+enum class Error : uint8_t { None, Busy, ReadFirst, Invalid, Bandwidth, PowerRate, NoEdits, Rejected, Timeout, WriteFailed, Mismatch, Unsupported };
 static constexpr uint8_t KEEP = 255;
 static constexpr uint16_t ALL_KNOWN = (1U << 10) - 1;
 static constexpr uint32_t RESPONSE_TIMEOUT_MS = 2000;
@@ -53,6 +53,7 @@ constexpr const char* profileName(Profile profile) {
 }
 constexpr const char* errorText(Error error) {
   switch (error) {
+    case Error::Unsupported: return "Receiver configuration unsupported (ATGM336H receive-only)";
     case Error::Busy: return "Receiver busy; wait for completion.";
     case Error::ReadFirst: return "Read receiver settings first.";
     case Error::Invalid: return "Unsupported setting selection.";
@@ -154,6 +155,8 @@ constexpr bool same(Field field, const Snapshot& left, const Snapshot& right) {
 }
 
 struct Controller {
+  bool supported = true;
+  constexpr explicit Controller(bool receiverSupported = true) : supported(receiverSupported) {}
   Snapshot current{}, target{};
   Operation operation = Operation::None;
   Phase phase = Phase::Idle;
@@ -168,7 +171,7 @@ struct Controller {
 
   constexpr bool busy() const { return phase != Phase::Idle; }
   constexpr Field field() const { return index < count ? steps[index].field : errorField; }
-  constexpr bool readyToSend() const { return phase == Phase::Ready || phase == Phase::ReadyReadback; }
+  constexpr bool readyToSend() const { return supported && (phase == Phase::Ready || phase == Phase::ReadyReadback); }
   constexpr GpsUbx::Packet outgoing() const {
     if (!readyToSend()) return {};
     return steps[index].write && phase != Phase::ReadyReadback ? setting(field(), target) : poll(field());
@@ -178,6 +181,7 @@ struct Controller {
     count = index = readErrors = 0; phaseStartedMs = now; canSave = false; ++serial;
   }
   constexpr bool read(uint32_t now, bool rateOnly = false) {
+    if (!supported) { error = Error::Unsupported; return false; }
     if (busy()) return false;
     begin(Operation::Read, now);
     count = rateOnly ? 1 : 10;
@@ -185,6 +189,7 @@ struct Controller {
     return true;
   }
   constexpr Error validate(const Changes& change) const {
+    if (!supported) return Error::Unsupported;
     if (busy()) return Error::Busy;
     if (!change.any()) return Error::NoEdits;
     if ((change.periodMs && !validPeriod(change.periodMs)) ||
@@ -246,6 +251,7 @@ struct Controller {
     return true;
   }
   constexpr bool save(uint32_t now) {
+    if (!supported) { error = Error::Unsupported; return false; }
     if (busy() || !canSave || current.known != ALL_KNOWN) return false;
     begin(Operation::Save, now); steps[0] = {Field::Save, true}; count = 1;
     return true;
