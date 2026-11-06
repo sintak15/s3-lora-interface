@@ -168,31 +168,77 @@ static bool readBatteryAdcRegister(uint8_t reg, uint16_t& value) {
   return true;
 }
 
-// Let the loop service touch/radio while the ADC converts; never delay for conversion.
+struct AuxiliaryAnalogStats {
+  bool boostValid = false, lightValid = false;
+  uint32_t boostMv = 0, lightMv = 0, errors = 0;
+  uint8_t lightPercent = 0;
+};
+static AuxiliaryAnalogStats auxiliaryAnalog;
+static_assert(BOOST_DIVIDER_TOP_OHMS > 0 && BOOST_DIVIDER_BOTTOM_OHMS > 0 && BOOST_ADC_SCALE > 0,
+              "Boost divider and calibration must be positive");
+
+static void finishAnalogChannel(uint8_t channel, uint16_t raw, bool ok, uint32_t now) {
+  if (channel == 0) {
+    uint32_t mv = ok ? Ads1115::cellMillivolts(raw, BATTERY_DIVIDER_TOP_OHMS,
+                    BATTERY_DIVIDER_BOTTOM_OHMS, BATTERY_ADC_SCALE) : 0;
+    updateBatteryVoltage(mv, ok && Ads1115::usable(raw) && BatteryVoltage::valid(mv), now);
+  } else if (channel == 1) {
+    uint32_t mv = ok ? Ads1115::cellMillivolts(raw, BOOST_DIVIDER_TOP_OHMS,
+                    BOOST_DIVIDER_BOTTOM_OHMS, BOOST_ADC_SCALE) : 0;
+    // Zero is a valid rail-off measurement (e.g. CYD powered over USB).
+    bool valid = ok && Ads1115::auxiliaryUsable(raw) && mv <= 6500;
+    auxiliaryAnalog.boostMv = valid ? mv : 0;
+    auxiliaryAnalog.boostValid = valid;
+    if (!valid) ++auxiliaryAnalog.errors;
+  } else {
+    uint32_t mv = ok ? Ads1115::inputMillivolts(raw) : 0;
+    bool valid = ok && Ads1115::auxiliaryUsable(raw) && mv <= 3350;
+    auxiliaryAnalog.lightMv = valid ? mv : 0;
+    auxiliaryAnalog.lightPercent = valid ? Ads1115::relativeLight(mv) : 0;
+    auxiliaryAnalog.lightValid = valid;
+    if (!valid) ++auxiliaryAnalog.errors;
+  }
+}
+
+// One A0/A1/A2 scan per second. No blocking conversion wait; each channel
+// uses its own single shot and verifies the returned mux/gain before reading.
 static void sampleLocalBattery() {
   static bool pending = false;
+  static uint8_t channel = 0;
   static uint32_t started = 0, lastPoll = 0;
   uint32_t now = millis();
   if (!pending) {
-    if (localBattery.lastSampleMs && uint32_t(now - localBattery.lastSampleMs) < 1000) return;
-    localBattery.lastSampleMs = now;
-    ++localBattery.readAttempts;
+    if (channel == 0) {
+      if (localBattery.lastSampleMs && uint32_t(now - localBattery.lastSampleMs) < 1000) return;
+      localBattery.lastSampleMs = now;
+      ++localBattery.readAttempts;
+    }
+    const uint16_t config = Ads1115::channelConfig(channel);
     Wire.beginTransmission(BATTERY_ADS1115_ADDR);
     Wire.write((uint8_t)1);
-    Wire.write((uint8_t)(Ads1115::CONFIG >> 8));
-    Wire.write((uint8_t)Ads1115::CONFIG);
-    if (Wire.endTransmission() != 0) { updateBatteryVoltage(0, false, now); return; }
+    Wire.write((uint8_t)(config >> 8));
+    Wire.write((uint8_t)config);
+    if (Wire.endTransmission() != 0) {
+      // A failed bus invalidates the whole scan immediately, including old aux readings.
+      for (uint8_t input = 0; input < 3; ++input) finishAnalogChannel(input, 0, false, now);
+      channel = 0;
+      return;
+    }
     pending = true; started = lastPoll = now;
     return;
   }
   if (uint32_t(now - lastPoll) < 10) return;
   lastPoll = now;
   uint16_t config = 0, raw = 0;
-  bool ok = readBatteryAdcRegister(1, config) && Ads1115::configured(config);
+  bool ok = readBatteryAdcRegister(1, config) && Ads1115::configured(config, channel);
   if (ok && !Ads1115::ready(config) && uint32_t(now - started) < 100) return;
-  ok = ok && Ads1115::ready(config) && readBatteryAdcRegister(0, raw) && Ads1115::usable(raw);
+  ok = ok && Ads1115::ready(config) && readBatteryAdcRegister(0, raw);
   pending = false;
-  uint32_t mv = ok ? Ads1115::cellMillivolts(raw, BATTERY_DIVIDER_TOP_OHMS,
-                  BATTERY_DIVIDER_BOTTOM_OHMS, BATTERY_ADC_SCALE) : 0;
-  updateBatteryVoltage(mv, ok && BatteryVoltage::valid(mv), now);
+  if (!ok) {
+    for (uint8_t input = 0; input < 3; ++input) finishAnalogChannel(input, 0, false, now);
+    channel = 0;
+    return;
+  }
+  finishAnalogChannel(channel, raw, true, now);
+  channel = (channel + 1) % 3;
 }

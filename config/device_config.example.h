@@ -13,3 +13,6 @@
 // ADS1115 A0: 10k/10k divider, ADDR to GND (0x48), VDD at CYD 3V3.
 // #define BATTERY_ADS1115_ADDR 0x48
 // #define BATTERY_ADC_SCALE 1.0f
+
+// ADS1115 A1: separate 10k/10k divider on boosted 5V; A2: 3.3V TEMT6000 SIG.
+// #define BOOST_ADC_SCALE 1.0f

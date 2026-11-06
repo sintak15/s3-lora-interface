@@ -576,6 +576,16 @@ static void refreshScreenUi() {
              localBattery.voltageValid ? "available" : "unavailable",
              (unsigned long)(millis() / 1000), (unsigned long)(ESP.getFreeHeap() / 1024),
              (unsigned long)(ESP.getMinFreeHeap() / 1024), (unsigned long)(ESP.getFreePsram() / 1024));
+    char boostText[24], lightText[56];
+    if (auxiliaryAnalog.boostValid) snprintf(boostText, sizeof(boostText), "%.3f V", auxiliaryAnalog.boostMv / 1000.0f);
+    else strlcpy(boostText, "Unavailable", sizeof(boostText));
+    if (auxiliaryAnalog.lightValid) snprintf(lightText, sizeof(lightText), "%u%% relative (%.3f V)",
+        (unsigned)auxiliaryAnalog.lightPercent, auxiliaryAnalog.lightMv / 1000.0f);
+    else strlcpy(lightText, "Unavailable", sizeof(lightText));
+    size_t analogUsed = strlen(batteryText);
+    snprintf(batteryText + analogUsed, sizeof(batteryText) - analogUsed,
+             "\n\nBoosted supply (A1): %s\nAmbient light (A2): %s\nAux ADC errors: %lu",
+             boostText, lightText, (unsigned long)auxiliaryAnalog.errors);
     if (swPowerLogRotation) {
       if (batteryCycle.rotationEnabled) lv_obj_add_state(swPowerLogRotation, LV_STATE_CHECKED);
       else lv_obj_clear_state(swPowerLogRotation, LV_STATE_CHECKED);

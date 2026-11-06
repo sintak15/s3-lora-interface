@@ -6,7 +6,8 @@ No automatic flash or Heltec configuration changes have been performed.
 ## Parts and wiring
 
 - ATGM336H breakout with its supplied antenna.
-- ADS1115 breakout, two 10 kohm 1% resistors, 100 nF ceramic capacitor.
+- ADS1115 breakout; four 10 kohm 1% divider resistors and two 100 nF filter capacitors.
+- TEMT6000 analog breakout powered from 3.3 V (bare sensor needs its own 10k load).
 - The existing TP4056, MT3608, cell, switch, CYD and Heltec remain.
 - No fuel gauge, compass or charging detection is installed.
 
@@ -15,7 +16,9 @@ and its old battery connections. Do not reuse its battery socket for ADS1115.
 The CYD I2C connector supplies 3V3/GND/SDA16/SCL15 to ADS1115. ADDR -> GND;
 A0 -> the 10k/10k divider on switched unboosted cell positive. Follow the
 [complete battery wiring and power-off tests](BATTERY_STATS.md). Leave CYD
-R14/R15/GPIO9 untouched and BAT socket empty. No CYD modifications are needed.
+R14/R15/GPIO9 untouched and BAT socket empty. A1 senses boosted 5 V via a
+second 10k/10k divider; A2 reads TEMT6000 SIG. See BATTERY_STATS.md for the
+complete sensor wiring, placement and power-off checks. No CYD modifications are needed.
 
 ATGM336H TX -> CYD GPIO3; GPS GND -> system ground. GPS RX, PPS and CYD GPIO2
 remain disconnected. Verify the actual breakout supply rating and regulator
@@ -34,18 +37,20 @@ size/mounting may differ from the existing enclosure GPS holder.
 4. Probe I2C map: expect 0x48 plus existing 0x38 touch and 0x18 codec.
 5. Compare filtered displayed cell volts with a meter after settling. The level
    should be marked approximate; no charging or runtime claim should appear.
-6. Outdoors with a clear view of sky, use USB `gps` / System > GPS. Confirm byte
+6. Verify A1 reports meter-measured boosted voltage; cover/illuminate TEMT6000
+   and confirm A2 relative signal changes. Brightness remains manual.
+7. Outdoors with a clear view of sky, use USB `gps` / System > GPS. Confirm byte
    count and checksum-valid NMEA sentences increase, then obtain a fresh fix.
    First acquisition can take several minutes; do not judge reception indoors.
-7. Confirm GP/GN sentence compatibility. If bytes arrive but no valid sentences,
+8. Confirm GP/GN sentence compatibility. If bytes arrive but no valid sentences,
    capture a short raw UART sample to confirm baud, talker IDs and checksums
    before changing the parser or sending receiver commands.
-8. Verify position on the map. Configure/enable CYD GPS sharing separately only
+9. Verify position on the map. Configure/enable CYD GPS sharing separately only
    if desired, following GPS_SHARING.md. Do not connect GPS TX to multiple
    transmitter pins or connect Heltec TX to GPS RX.
-9. Test missing ADS1115/unplugged sensing, low voltage availability and restart.
+10. Test missing ADS1115/unplugged sensing, low voltage availability and restart.
    Removing hardware/wires must only be done with power disconnected.
-10. Check every power/USB combination for unintended backfeeding. Main switch
+11. Check every power/USB combination for unintended backfeeding. Main switch
     off must not leave A0 powered while ADS1115 VDD is off.
 
 ATGM336H configuration controls are intentionally unavailable pending verified

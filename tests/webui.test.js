@@ -46,6 +46,7 @@ async function testRendering() {
     wifiMode: 'AP', ip: '192.168.4.1', gpsValid: false,
     heltecConfig: {}, channels: [{ index: 0, name: attack, role: 'PRIMARY', enabled: true }],
     nodes: [], battery: 50, voltage: 3.8,
+    boostVoltageAvailable:true, boostVoltage:5.01, ambientLightAvailable:true, ambientLightVoltage:0.825, ambientLightRelativePercent:25,
     linkHealth: 'stale', lastRadioResponseSec: 95,
     fuelGaugePresent: false, batteryMeasurementAvailable: true, batteryChargingStatus: "charging", batteryRuntimeMinutes: 125,
     txHistory: [{ id: 123, destination: attack, text: attack, status: 'failed', error: attack, ageSec: 20, canRetry: true },
@@ -58,6 +59,13 @@ async function testRendering() {
   for (const id of ['stats', 'firmwareStats', 'storageStats', 'configRef', 'diagStats', 'packetStats', 'channelRef', 'txHistoryBody']) {
     assert(!elements[id].innerHTML.includes('<img'), `${id} must escape dynamic HTML`);
   }
+  assert(elements.diagBatteryStats.innerHTML.includes('5.01 V'));
+  assert(elements.diagBatteryStats.innerHTML.includes('25% relative'));
+  vm.runInContext('renderHealth({boostVoltageAvailable:true,boostVoltage:0,ambientLightAvailable:true,ambientLightRelativePercent:0,ambientLightVoltage:0})', context);
+  assert(elements.diagBatteryStats.innerHTML.includes('0% relative'), 'Darkness must not be unavailable');
+  assert(elements.diagBatteryStats.innerHTML.includes('0 V'), 'Zero rail voltage is a real measurement');
+  vm.runInContext('renderHealth({boostVoltageAvailable:false,ambientLightAvailable:false})', context);
+  assert(!elements.diagBatteryStats.innerHTML.includes('25% relative'), 'Missing readings must clear old auxiliary values');
   assert(elements.stats.innerHTML.includes('~'), 'Voltage percentage must be marked as estimated');
   assert(!elements.stats.innerHTML.includes('Charger'), 'No charger measurement is installed');
   assert.equal(elements.appTitle.textContent, attack);

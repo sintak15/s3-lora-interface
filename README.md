@@ -14,6 +14,7 @@ readings under expandable topics. CYD label/value readouts use light blue
 labels and white measurements. See the [web UI and display guide](docs/WEB_UI.md).
 
 Battery voltage is measured through an external ADS1115 and a 10k/10k divider.
+ADS1115 A1 also monitors boosted 5 V; A2 reads a TEMT6000 light sensor.
 Percentage is a rough voltage estimate; no fuel gauge or charging detection is
 used. The ATGM336H supplies NMEA positions at 9600 baud. See the
 [battery wiring](docs/BATTERY_STATS.md) and [installation checklist](docs/HARDWARE_UPGRADE.md).
@@ -97,7 +98,7 @@ The current build uses:
 | [LCDWiki 2.8-inch ESP32-S3 display / CYD](https://www.lcdwiki.com/2.8inch_ESP32-S3_Display) | Touchscreen, web interface and SD storage |
 | Heltec V3.2 running Meshtastic | LoRa radio |
 | ATGM336H GPS breakout and antenna | NMEA location input to CYD |
-| ADS1115 breakout, two 10k 1% resistors, 100 nF capacitor | Battery voltage estimate |
+| ADS1115 breakout, four 10k 1% divider resistors, filter capacitors, TEMT6000 | Battery/5 V monitoring and relative ambient light |
 | Single-cell rechargeable battery, 2500 mAh 18650 in this build | Portable power |
 | TP4056 charger and MT3608 5V boost converter | Charging and boosted supply |
 | FAT32 MicroSD card, optional | Offline maps and persistent logs |

@@ -84,6 +84,12 @@ static void appendBatteryCycleStatusJson(String& json) {
 }
 
 static void appendBatteryStatusJson(String& json) {
+  json += "\"boostVoltageAvailable\":" + String(auxiliaryAnalog.boostValid ? "true" : "false") + ",";
+  json += "\"boostVoltage\":" + (auxiliaryAnalog.boostValid ? String(auxiliaryAnalog.boostMv / 1000.0f, 3) : String("null")) + ",";
+  json += "\"ambientLightAvailable\":" + String(auxiliaryAnalog.lightValid ? "true" : "false") + ",";
+  json += "\"ambientLightVoltage\":" + (auxiliaryAnalog.lightValid ? String(auxiliaryAnalog.lightMv / 1000.0f, 3) : String("null")) + ",";
+  json += "\"ambientLightRelativePercent\":" + (auxiliaryAnalog.lightValid ? String(auxiliaryAnalog.lightPercent) : String("null")) + ",";
+  json += "\"auxiliaryAdcErrors\":" + String(auxiliaryAnalog.errors) + ",";
   json += "\"batteryMeasurementAvailable\":" + String(localBattery.voltageValid ? "true" : "false") + ",";
   json += "\"batteryEstimated\":true,";
   json += "\"battery\":" + (localBattery.voltageValid ? String(localBattery.percent) : String("null")) + ",";

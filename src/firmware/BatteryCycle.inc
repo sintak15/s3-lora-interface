@@ -99,6 +99,14 @@ static bool writeBatteryCycleRow(const char* event) {
     "\nUTC %s | Battery: %s | Variation: %s | Step: %s | Log age: %llu s\n",
     utc, battery, variation, step, (unsigned long long)(batteryCycle.rotationClock.elapsed() / 1000));
   bool readableOk = entryLength > 0 && (size_t)entryLength < sizeof(entry) && readable.print(entry) == (size_t)entryLength;
+  char boost[24], light[48];
+  if (auxiliaryAnalog.boostValid) snprintf(boost, sizeof(boost), "%.3f V", auxiliaryAnalog.boostMv / 1000.0f);
+  else strlcpy(boost, "unavailable", sizeof(boost));
+  if (auxiliaryAnalog.lightValid) snprintf(light, sizeof(light), "%u%% relative, %.3f V",
+      (unsigned)auxiliaryAnalog.lightPercent, auxiliaryAnalog.lightMv / 1000.0f);
+  else strlcpy(light, "unavailable", sizeof(light));
+  int analogLength = snprintf(entry, sizeof(entry), "  Boost A1: %s | Light A2: %s\n", boost, light);
+  readableOk = readableOk && analogLength > 0 && (size_t)analogLength < sizeof(entry) && readable.print(entry) == (size_t)analogLength;
   if (batteryCycle.bootPending || rotated) {
     int count = snprintf(entry, sizeof(entry),
       "  %s | %s | boot %08lx | Rotation: %s. Variation and step use 1 Hz samples; fast spikes may be missed.\n",

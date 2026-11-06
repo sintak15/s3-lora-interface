@@ -19,7 +19,9 @@ CYD I2C connector by SIGNAL LABEL, not cable color or connector orientation:
 | ADDR | GND, selecting 0x48 |
 | A0 | Divider midpoint below |
 | ALERT/RDY | Leave disconnected |
-| A1/A2/A3 | Unused; may connect to GND |
+| A1 | Midpoint of a SECOND 10k/10k divider on boosted 5 V |
+| A2 | TEMT6000 analog output (sensor powered from CYD 3V3) |
+| A3 | Unused; may connect to GND |
 
 The existing touch and codec use 0x38 and 0x18, so 0x48 does not conflict.
 Confirm the actual module is ADS1115, not ADS1015, and that any onboard SDA/SCL
@@ -68,7 +70,7 @@ permit an input above VDD. Probe I2C map should show 0x48 (ADS1115).
 
 ## Firmware and displayed data
 
-The driver starts one single-shot A0-to-GND conversion each second, using
+The driver scans A0, A1 and A2 sequentially once per second, using
 +/-4.096 V gain (125 microvolts/count), 128 SPS, comparator disabled. Conversion
 completion is polled without delaying the loop. Wrong configuration, bus errors,
 short reads, negative/clipped values and conversions that fail to complete
@@ -93,6 +95,54 @@ After readings settle, compare against the meter. Calibration scale is current
 scale multiplied by meter voltage / reported voltage. Don't calibrate against
 the boosted output. Missing hardware should show unavailable, never 100% or 5 V.
 
+## Boosted supply monitoring (A1)
+
+Add a SECOND pair of 10 kohm 1% resistors, independent of the battery divider:
+
+```text
+Boost converter 5V output --- 10k ---+--- ADS1115 A1
+                                   |
+                                  10k
+                                   |
+                               System GND
+```
+
+Add 100 nF from A1 to GND. At 5.0 V the midpoint must be 2.5 V. Keep A1 within
+0-VDD; do not connect 5 V directly to an ADC input. This reports the actual rail,
+including 0 V when it is off and the CYD is USB-powered. It does not measure
+charger presence. Measure A1 before connecting it, and check power-off combinations
+as for A0: boost output must not remain live when ADS1115 VDD is off.
+BOOST_DIVIDER_TOP_OHMS and BOOST_DIVIDER_BOTTOM_OHMS default to 10000UL;
+BOOST_ADC_SCALE defaults to 1.0f. Calibrate this separately against a meter on
+the boosted output. Firmware accepts 0-6.5 V reconstructed rail voltage; this
+plausibility range does not permit excessive analog input voltage.
+
+## TEMT6000 ambient light (A2)
+
+For a three-pin TEMT6000 ANALOG BREAKOUT (check its own labels):
+
+| Sensor | Connect to |
+| --- | --- |
+| VCC / + | CYD 3V3, NOT 5 V |
+| GND / - | System GND |
+| SIG / S / OUT | ADS1115 A2 |
+
+A typical breakout already includes the emitter load resistor. For a BARE
+TEMT6000 phototransistor, connect collector to 3V3, emitter to A2, and add a
+10 kohm resistor from emitter/A2 to GND. Verify the exact package pinout first;
+do not add another load resistor in parallel to an existing breakout resistor.
+A 100 nF VCC/GND capacitor near the sensor is useful if its board lacks one.
+Position the optical face behind a clear opening, away from the screen/backlight
+and indicator LEDs. Covering it should lower its output; brighter light should
+raise it. A meter check must confirm SIG stays between GND and 3V3.
+
+Firmware reports signal volts and 0-100% RELATIVE TO 3.3 V, not calibrated lux
+or a linear percentage of perceived brightness. Zero is valid darkness.
+Different breakout resistors and sensor variation change the response. A valid
+ADC reading cannot prove a TEMT6000 is physically connected: a disconnected,
+grounded input can also read zero. Screen brightness remains manual; no automatic
+brightness changes are enabled by this addition.
+
 ## API and logs
 
 batteryMeasurementAvailable reports voltage validity; batteryEstimated is true.
@@ -101,7 +151,14 @@ fuelGauge is none; fuelGaugePresent is false. Legacy gauge SOC/register fields
 are null. batteryCharging and batteryChargerConnected are null. Runtime remains
 unavailable. The web UI omits charging status; diagnostic APIs retain unknown.
 
-Continuous SD diagnostics/downloads/rotation remain. Legacy CSV gauge/register
+boostVoltageAvailable/boostVoltage expose A1 validity and reconstructed rail
+volts. ambientLightAvailable, ambientLightVoltage and ambientLightRelativePercent
+expose A2. Unavailable values are null, never retained as live measurements.
+auxiliaryAdcErrors counts failed/invalid auxiliary samples. Touchscreen System >
+Battery and web Health show both sensors. A3 stays free.
+
+Continuous SD diagnostics/downloads/rotation remain. Readable power-health logs
+include A1/A2 observations every 10 seconds; legacy CSV columns stay unchanged. Gauge/register
 columns remain for compatibility with validity false and unused raw values zero.
 soc_percent holds voltage-estimated percent (-1 when unavailable). cell_mv and
 voltage variation columns now use ADS1115 observations. Archives are unchanged.
@@ -109,5 +166,6 @@ Historical enclosure files may still include unused MAX mounting posts.
 
 ## References
 
+- [Vishay TEMT6000 documentation](https://www.vishay.com/en/product/81579/)
 - [TI ADS1115 datasheet](https://www.ti.com/lit/ds/symlink/ads1115.pdf)
 - [LCDWiki schematic](https://www.lcdwiki.com/res/ES3C28P/2.8inch_ESP32-S3_Display_Schematic.pdf)

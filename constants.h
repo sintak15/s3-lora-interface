@@ -87,6 +87,17 @@
 #define BATTERY_ADC_SCALE 1.0f
 #endif
 
+// ADS1115 A1: boosted 5V through a separate 10k/10k divider.
+#ifndef BOOST_DIVIDER_TOP_OHMS
+#define BOOST_DIVIDER_TOP_OHMS 10000UL
+#endif
+#ifndef BOOST_DIVIDER_BOTTOM_OHMS
+#define BOOST_DIVIDER_BOTTOM_OHMS 10000UL
+#endif
+#ifndef BOOST_ADC_SCALE
+#define BOOST_ADC_SCALE 1.0f
+#endif
+
 // Built-in MicroSD socket on the LCDWiki 2.8" ESP32-S3 display.
 // The socket uses the ESP32-S3 SDMMC/SDIO peripheral, not the TFT SPI bus.
 #define SD_CLK_PIN 38
