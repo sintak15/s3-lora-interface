@@ -1,0 +1,149 @@
+{
+  "status": "prototype; actual hardware dimensions unverified",
+  "parts": {
+    "sensors-am2302_holder.stl": {
+      "triangles": 728,
+      "closed_consistently_wound_edges": true,
+      "bounds_mm": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          28.0,
+          60.0,
+          22.399999618530273
+        ]
+      ]
+    },
+    "sensors-back.stl": {
+      "triangles": 10976,
+      "closed_consistently_wound_edges": true,
+      "bounds_mm": [
+        [
+          -6.0,
+          0.0,
+          0.0
+        ],
+        [
+          104.0,
+          124.0,
+          35.79999923706055
+        ]
+      ]
+    },
+    "sensors-fit_coupon.stl": {
+      "triangles": 552,
+      "closed_consistently_wound_edges": true,
+      "bounds_mm": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          44.0,
+          30.0,
+          2.3999996185302734
+        ]
+      ]
+    },
+    "sensors-front.stl": {
+      "triangles": 10224,
+      "closed_consistently_wound_edges": true,
+      "bounds_mm": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          104.0,
+          124.0,
+          16.0
+        ]
+      ]
+    },
+    "sensors-gps_retainer.stl": {
+      "triangles": 832,
+      "closed_consistently_wound_edges": true,
+      "bounds_mm": [
+        [
+          2.0,
+          -1.0999994277954102,
+          0.0
+        ],
+        [
+          22.0,
+          27.099998474121094,
+          1.7999992370605469
+        ]
+      ]
+    },
+    "sensors-keyboard_tray.stl": {
+      "triangles": 384,
+      "closed_consistently_wound_edges": true,
+      "bounds_mm": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          93.0,
+          59.0,
+          5.0
+        ]
+      ]
+    },
+    "sensors-retrofit_ads.stl": {
+      "triangles": 1092,
+      "closed_consistently_wound_edges": true,
+      "bounds_mm": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          20.399999618530273,
+          28.450000762939453,
+          2.0
+        ]
+      ]
+    },
+    "sensors-retrofit_antenna.stl": {
+      "triangles": 48,
+      "closed_consistently_wound_edges": true,
+      "bounds_mm": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          25.0,
+          25.0,
+          2.0
+        ]
+      ]
+    },
+    "sensors-retrofit_gps.stl": {
+      "triangles": 1132,
+      "closed_consistently_wound_edges": true,
+      "bounds_mm": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          25.93000030517578,
+          36.58000183105469,
+          4.0
+        ]
+      ]
+    }
+  }
+}

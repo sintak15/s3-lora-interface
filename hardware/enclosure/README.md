@@ -4,6 +4,10 @@ All OpenSCAD sources, published STL exports, JSON geometry reports and fit
 coupons live in this folder. Run tool commands from the repository root. Part
 names and geometry are unchanged by the repository reorganization.
 
+## Sensor revision and existing-case adapters
+
+The [sensor enclosure guide](../../docs/ENCLOSURE_SENSORS.md) contains new direct-mount shells and separate ATGM336H, antenna and ADS1115 retrofit parts for trying the current printed case. Dimensions are provisional; print the small fit parts first.
+
 ## Current print set
 
 | Part | Printable file | Notes |

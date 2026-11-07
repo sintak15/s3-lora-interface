@@ -186,19 +186,20 @@ function separated(a,b,g=0) =
 function inside(a) = a[0]>=wall && a[1]>=wall && a[2]>=skin &&
     a[0]+a[3]<=case_w-wall && a[1]+a[4]<=case_l-wall &&
     a[2]+a[5]<=case_depth-skin;
-front_boxes = [
+front_boxes = concat([
     [cyd_x,cyd_y,cyd_face_z,cyd_w,cyd_l,cyd_h],
     [heltec_x,heltec_y,heltec_oled_face_z,heltec_w,heltec_l,heltec_h],
+    ], (!is_undef(sensor_revision) && sensor_revision) ? sensor_front_boxes() : [
     [gps_xy[0],gps_xy[1],gps_board_z,gps_size[1],gps_size[0],gps_size[2]],
     [patch_xy[0],patch_xy[1],patch_effective_face_z,patch_size[0],patch_size[1],patch_size[2]
         + ((!is_undef(patch_height_includes_pcb) && patch_height_includes_pcb) ? 0 : patch_board_t)
-        +patch_back_relief]];
+        +patch_back_relief]]);
 rear_boxes = [
     [battery_xy[0],battery_xy[1],
         (!is_undef(open_battery_bay) && open_battery_bay)
-            ? case_depth-1.6-1-battery_size[2] : case_depth-skin-battery_seat-battery_size[2],
+            ? case_depth-((!is_undef(sensor_revision) && sensor_revision) ? skin : 1.6)-1-battery_size[2] : case_depth-skin-battery_seat-battery_size[2],
         battery_size[0],battery_size[1],battery_size[2]],
-    for (m=[[power_xy,power_size],[gauge_xy,gauge_size]])
+    for (m=concat([[power_xy,power_size]], (!is_undef(sensor_revision) && sensor_revision) ? [] : [[gauge_xy,gauge_size]]))
         [m[0][0],m[0][1],case_depth-module_z-m[1][2],m[1][0],m[1][1],m[1][2]]];
 switch_box = [switch_x-switch_body[0]/2,case_l-wall-switch_body[1],switch_z-switch_body[2]/2,
     switch_body[0],switch_body[1],switch_body[2]];
@@ -206,7 +207,8 @@ switch_box = [switch_x-switch_body[0]/2,case_l-wall-switch_body[1],switch_z-swit
 sma_box = [sma_x-6,case_l-wall-10,sma_z-6,12,10,12];
 speaker_box = [speaker_xy[0],speaker_xy[1],case_depth-skin-speaker_face_gap-speaker_size[2],
     speaker_size[0],speaker_size[1],speaker_size[2]];
-all_boxes = concat(front_boxes,rear_boxes,[sma_box],
+all_boxes = concat(front_boxes,rear_boxes,
+    (!is_undef(sensor_revision) && sensor_revision) ? sensor_rear_boxes() : [], [sma_box],
     switch_enabled ? [switch_box] : [],speaker_enabled ? [speaker_box] : []);
 assert(case_depth > front_depth+skin+lip_h, "Rear shell too shallow");
 assert(skin>=1.6 && wall>=2 && lip_clearance>0, "Check print wall/fit values");
@@ -329,6 +331,8 @@ module front_mounts() {
             translate([cyd_x+cyd_w+0.7,0,0]) cube([case_w,case_l,case_depth]);
         } else cyl_at([x,y],skin-eps,5.2,clamp_post_top_z-skin+eps);
     }
+    if(!is_undef(sensor_revision) && sensor_revision) sensor_front_mounts();
+    else {
     gps_frame() gps_mounts();
     // Bearing ledges touch only the backing PCB margins, never the ceramic.
     for(x=[patch_xy[0]-1.5-(is_undef(patch_ledge_extra) ? patch_fit_extra : patch_ledge_extra),
@@ -336,6 +340,7 @@ module front_mounts() {
         translate([x,y,skin-eps]) cube([2.7,3,patch_ledge_z-skin+eps]);
     for(x=patch_post_xs,y=patch_post_ys)
         cyl_at([x,y],skin-eps,4.2,patch_support_z-skin+eps);
+    }
 }
 module gps_frame() {
     translate([gps_xy[0],gps_xy[1]+gps_size[0],0]) rotate([0,0,-90]) children();
@@ -431,7 +436,8 @@ module front() {
             rounded_block(heltec_window_w,heltec_window_l,skin+2*eps,1);
         for(p=cyd_pts) cyl_at(p,skin+0.5,cyd_mount_pilot_d,cyd_pcb_z);
         for(x=clamp_xs,y=clamp_ys) cyl_at([x,y],clamp_post_top_z-8,clamp_pilot_d,9);
-        for(x=patch_post_xs,y=patch_post_ys) cyl_at([x,y],skin+1,1.6,patch_support_z);
+        if(is_undef(sensor_revision) || !sensor_revision)
+            for(x=patch_post_xs,y=patch_post_ys) cyl_at([x,y],skin+1,1.6,patch_support_z);
         for(p=case_pts) {
             if(!is_undef(face_entry_case_screws) && face_entry_case_screws)
                 cyl_at(p,-eps,case_clearance_d,front_depth+2*eps);
@@ -487,7 +493,8 @@ module rear_features() {
     // of sharing an exactly coincident vertical face with those fences.
     assembly_seat(power_xy,power_size,power_tie_ys,
         anchor_gap=(!is_undef(power_usb_at_bottom) && power_usb_at_bottom) ? 0.2 : 0);
-    if(!is_undef(max_screw_mounts) && max_screw_mounts)
+    if(!is_undef(sensor_revision) && sensor_revision) sensor_rear_mounts();
+    else if(!is_undef(max_screw_mounts) && max_screw_mounts)
         pcb_seat(gauge_xy,gauge_size,anchors=false,screw_mounts=true);
     else pcb_seat(gauge_xy,gauge_size);
     if(speaker_enabled) speaker_seat();
@@ -680,7 +687,7 @@ else if(part=="clamps") clamps_print();
 else if(part=="antenna_retainers") antenna_retainers_print();
 else if(part=="speaker_retainer") speaker_retainer_print();
 else if(part=="fit_coupon") fit_coupon();
-else if(part=="components") { if($preview) ghosts(); }
+else if(part=="components") { if($preview && (is_undef(sensor_revision) || !sensor_revision)) ghosts(); }
 else if(part=="assembled") assembly();
 else if(part=="exploded") assembly(explosion);
 else if(part=="interference") intersection() {
