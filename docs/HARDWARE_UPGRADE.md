@@ -8,6 +8,7 @@ No automatic flash or Heltec configuration changes have been performed.
 - ATGM336H breakout with its supplied antenna.
 - ADS1115 breakout; four 10 kohm 1% divider resistors and two 100 nF filter capacitors.
 - TEMT6000 analog breakout powered from 3.3 V (bare sensor needs its own 10k load).
+- Existing AM2302, a pullup if not built in, and 100 nF supply decoupling.
 - The existing TP4056, MT3608, cell, switch, CYD and Heltec remain.
 - No fuel gauge, compass or charging detection is installed.
 
@@ -20,8 +21,10 @@ R14/R15/GPIO9 untouched and BAT socket empty. A1 senses boosted 5 V via a
 second 10k/10k divider; A2 reads TEMT6000 SIG. See BATTERY_STATS.md for the
 complete sensor wiring, placement and power-off checks. No CYD modifications are needed.
 
-ATGM336H TX -> CYD GPIO3; GPS GND -> system ground. GPS RX, PPS and CYD GPIO2
-remain disconnected. Verify the actual breakout supply rating and regulator
+ATGM336H TX -> CYD GPIO3; GPS GND -> system ground. GPS RX and PPS
+remain disconnected. GPIO2 is repurposed for AM2302 DATA, with GPS TX disabled
+in firmware. Follow [AM2302 wiring and connector budget](AM2302.md); UART0 and
+USB remain untouched. Verify the actual breakout supply rating and regulator
 before choosing VCC: the bare receiver and a regulated carrier have different
 limits. Do not assume the old GPS boosted-5V wire is suitable. UART signals must
 be 3.3 V compatible. Attach the supplied antenna gently and place its ceramic

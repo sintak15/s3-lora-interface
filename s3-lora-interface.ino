@@ -42,6 +42,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 #include "src/FieldStatus.h"
 #include "src/BatteryVoltage.h"
 #include "src/Ads1115.h"
+#include "src/Am2302.h"
 #include "src/SampleVariation.h"
 #include "src/LogRotation.h"
 #include "src/ChatText.h"
@@ -60,6 +61,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 #include "src/tests/ReliabilityTests.h"
 #include "src/tests/FieldStatusTests.h"
 #include "src/tests/BatteryVoltageTests.h"
+#include "src/tests/Am2302Tests.h"
 #include "src/tests/SampleVariationTests.h"
 #include "src/tests/LogRotationTests.h"
 #include "src/tests/ChatTextTests.h"
@@ -84,6 +86,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 #include "src/firmware/Storage.inc"
 #include "src/firmware/DirectMessages.inc"
 #include "src/firmware/Gps.inc"
+#include "src/firmware/Environment.inc"
 #include "src/firmware/Battery.inc"
 #include "src/firmware/PowerLogStorage.inc"
 #include "src/firmware/BatteryCycle.inc"
@@ -207,6 +210,7 @@ void setup() {
 
 void loop() {
   pollLocalGps();
+  serviceEnvironment();
   serviceUsbSerialCommands();
   pollLoRa();
   serviceRadioApiKeepalive();

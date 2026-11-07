@@ -84,6 +84,12 @@ static void appendBatteryCycleStatusJson(String& json) {
 }
 
 static void appendBatteryStatusJson(String& json) {
+  const bool environmentValid = environmentAvailable();
+  json += "\"environmentAvailable\":" + String(environmentValid ? "true" : "false") + ",";
+  json += "\"ambientTemperatureC\":" + (environmentValid ? String(environmentReading.temperatureTenths / 10.0f, 1) : String("null")) + ",";
+  json += "\"ambientHumidityPercent\":" + (environmentValid ? String(environmentReading.humidityTenths / 10.0f, 1) : String("null")) + ",";
+  json += "\"environmentErrors\":" + String(environmentErrors) + ",";
+  json += "\"environmentAttempts\":" + String(environmentAttempts) + ",";
   json += "\"boostVoltageAvailable\":" + String(auxiliaryAnalog.boostValid ? "true" : "false") + ",";
   json += "\"boostVoltage\":" + (auxiliaryAnalog.boostValid ? String(auxiliaryAnalog.boostMv / 1000.0f, 3) : String("null")) + ",";
   json += "\"ambientLightAvailable\":" + String(auxiliaryAnalog.lightValid ? "true" : "false") + ",";

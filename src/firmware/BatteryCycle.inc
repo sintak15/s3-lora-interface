@@ -107,6 +107,11 @@ static bool writeBatteryCycleRow(const char* event) {
   else strlcpy(light, "unavailable", sizeof(light));
   int analogLength = snprintf(entry, sizeof(entry), "  Boost A1: %s | Light A2: %s\n", boost, light);
   readableOk = readableOk && analogLength > 0 && (size_t)analogLength < sizeof(entry) && readable.print(entry) == (size_t)analogLength;
+  if (environmentAvailable()) {
+    int count = snprintf(entry, sizeof(entry), "  Outside: %.1f C | Humidity: %.1f%% RH\n",
+        environmentReading.temperatureTenths / 10.0f, environmentReading.humidityTenths / 10.0f);
+    readableOk = readableOk && count > 0 && (size_t)count < sizeof(entry) && readable.print(entry) == (size_t)count;
+  } else readableOk = readableOk && readable.print("  Outside AM2302: unavailable\n") > 0;
   if (batteryCycle.bootPending || rotated) {
     int count = snprintf(entry, sizeof(entry),
       "  %s | %s | boot %08lx | Rotation: %s. Variation and step use 1 Hz samples; fast spikes may be missed.\n",

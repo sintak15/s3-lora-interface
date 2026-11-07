@@ -46,6 +46,7 @@ async function testRendering() {
     wifiMode: 'AP', ip: '192.168.4.1', gpsValid: false,
     heltecConfig: {}, channels: [{ index: 0, name: attack, role: 'PRIMARY', enabled: true }],
     nodes: [], battery: 50, voltage: 3.8,
+    environmentAvailable:true, ambientTemperatureC:-10.1, ambientHumidityPercent:65.2,
     boostVoltageAvailable:true, boostVoltage:5.01, ambientLightAvailable:true, ambientLightVoltage:0.825, ambientLightRelativePercent:25,
     linkHealth: 'stale', lastRadioResponseSec: 95,
     fuelGaugePresent: false, batteryMeasurementAvailable: true, batteryChargingStatus: "charging", batteryRuntimeMinutes: 125,
@@ -59,6 +60,8 @@ async function testRendering() {
   for (const id of ['stats', 'firmwareStats', 'storageStats', 'configRef', 'diagStats', 'packetStats', 'channelRef', 'txHistoryBody']) {
     assert(!elements[id].innerHTML.includes('<img'), `${id} must escape dynamic HTML`);
   }
+  assert(elements.diagBatteryStats.innerHTML.includes('-10.1'));
+  assert(elements.diagBatteryStats.innerHTML.includes('65.2% RH'));
   assert(elements.diagBatteryStats.innerHTML.includes('5.01 V'));
   assert(elements.diagBatteryStats.innerHTML.includes('25% relative'));
   vm.runInContext('renderHealth({boostVoltageAvailable:true,boostVoltage:0,ambientLightAvailable:true,ambientLightRelativePercent:0,ambientLightVoltage:0})', context);

@@ -3,7 +3,7 @@
 ## ATGM336H (current branch)
 
 The selected receiver is ATGM336H, receiving standard GP/GN NMEA at 9600 baud
-on GPIO3. GPS RX stays disconnected (GPIO2 stays disconnected). Position reception, maps,
+on GPIO3. GPS RX stays disconnected; GPS_TX_PIN=-1. GPIO2 is AM2302 DATA. Position reception, maps,
 fix diagnostics and sharing with Heltec remain available. Read/apply/save and
 rate/model/power/SBAS controls are disabled explicitly, not allowed to time out.
 The API reports gpsReceiver=ATGM336H and gpsConfigSupported=false.
@@ -13,7 +13,8 @@ module output on the bench before adding receiver-specific settings.
 See [installation](HARDWARE_UPGRADE.md). The following section documents the
 legacy u-blox implementation retained for existing tests and possible reuse.
 To restore it with appropriate hardware, set GPS_RECEIVER_UBLOX=1 and connect
-the receiver RX to CYD GPIO2; do not enable it for ATGM336H.
+the receiver RX to CYD GPIO2; disable/unwire the AM2302 first. Do not enable
+u-blox configuration for ATGM336H.
 
 ## Legacy NEO-6M configuration
 

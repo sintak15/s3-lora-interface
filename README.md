@@ -30,7 +30,7 @@ All modules share a common ground; UART and I²C signals use 3.3 V logic.
 | **GPIO14 — RX** | **Heltec GPIO39 — TX** | Heltec → CYD, 115200 baud |
 | **GPIO21 — TX** | **Heltec GPIO38 — RX** | CYD → Heltec, 115200 baud |
 | **GPIO3 — GPS RX** | **GPS TX** | GPS → CYD, 9600 baud; positions can be shared over the existing Heltec link |
-| **GPIO2** | Leave disconnected | ATGM336H receiver RX is unused |
+| **GPIO2** | AM2302 DATA, pullup to 3V3 | Outside temperature and humidity; GPS RX stays disconnected |
 | **GPIO16 - SDA** | ADS1115 SDA and built-in touch/codec | Shared I2C bus; ADS1115 address 0x48 |
 | **GPIO15 — SCL** | ADS1115 SCL; built-in touch/codec | Shared I²C clock |
 | **3V3** | ADS1115 VDD | ADC supply and 3.3 V I2C pullups |
@@ -188,10 +188,16 @@ Keep the CYD battery socket empty while using the external charger.
 In the Meshtastic serial module, set **Enabled**, **PROTO / Protobuf** mode,
 **115200 baud**, **RX pin 38** and **TX pin 39** for this wiring.
 
+### Outside temperature and humidity
+
+AM2302 DATA uses expansion GPIO2 with a 3.3 V pullup. GPS is receive-only on
+GPIO3, with its TX function disabled in firmware. UART0 and USB pins stay
+untouched. See [AM2302 wiring and outside mounting](docs/AM2302.md).
+
 ### GPS
 
 ATGM336H TX connects to CYD GPIO3; GND connects to common system ground.
-Leave GPS RX and CYD GPIO2 disconnected. Default is 9600 baud, 8N1, receive-only
+Leave GPS RX disconnected; GPIO2 is now AM2302 data. Default is 9600 baud, 8N1, receive-only
 NMEA. Supply voltage must match the purchased BREAKOUT's documented rating;
 never assume a bare ATGM336H supports 5 V. Confirm its regulator/input labels
 before reusing the old GPS supply wire.

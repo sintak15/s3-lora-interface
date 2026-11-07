@@ -27,10 +27,15 @@
 // GPS TX -> CYD GPIO3; CYD GPIO2 -> GPS RX.
 // The Heltec receives CYD positions through the radio UART, with no direct GPS wire.
 #define GPS_RX_PIN 3
-#define GPS_TX_PIN 2 // UART TX remains assigned, but leave GPS RX disconnected.
 // ATGM336H receive-only NMEA. Set to 1 only with a legacy u-blox receiver.
 #ifndef GPS_RECEIVER_UBLOX
 #define GPS_RECEIVER_UBLOX 0
+#endif
+// Explicit RX pin plus TX=-1 creates an RX-only UART in the pinned core.
+#if GPS_RECEIVER_UBLOX
+#define GPS_TX_PIN 2
+#else
+#define GPS_TX_PIN -1
 #endif
 #define GPS_BAUD 9600
 
@@ -132,4 +137,13 @@
 
 #ifndef FORCE_INTERFACE_SETTINGS
 #define FORCE_INTERFACE_SETTINGS 0
+#endif
+
+// AM2302 reuses GPIO2 only with RX-only GPS. No UART0/USB header wiring.
+#ifndef AM2302_DATA_PIN
+#if GPS_RECEIVER_UBLOX
+#define AM2302_DATA_PIN -1
+#else
+#define AM2302_DATA_PIN 2
+#endif
 #endif

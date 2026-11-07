@@ -16,3 +16,6 @@
 
 // ADS1115 A1: separate 10k/10k divider on boosted 5V; A2: 3.3V TEMT6000 SIG.
 // #define BOOST_ADC_SCALE 1.0f
+
+// AM2302 outside sensor: expansion GPIO2 (GPS is RX-only), pullup to 3V3.
+// #define AM2302_DATA_PIN 2 // -1 disables sensor

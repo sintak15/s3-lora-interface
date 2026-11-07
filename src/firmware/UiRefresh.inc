@@ -582,6 +582,13 @@ static void refreshScreenUi() {
     if (auxiliaryAnalog.lightValid) snprintf(lightText, sizeof(lightText), "%u%% relative (%.3f V)",
         (unsigned)auxiliaryAnalog.lightPercent, auxiliaryAnalog.lightMv / 1000.0f);
     else strlcpy(lightText, "Unavailable", sizeof(lightText));
+    char environmentText[80];
+    if (environmentAvailable()) snprintf(environmentText, sizeof(environmentText), "%.1f C / %.1f%% RH",
+        environmentReading.temperatureTenths / 10.0f, environmentReading.humidityTenths / 10.0f);
+    else strlcpy(environmentText, "Unavailable", sizeof(environmentText));
+    size_t environmentUsed = strlen(batteryText);
+    snprintf(batteryText + environmentUsed, sizeof(batteryText) - environmentUsed,
+             "\n\nOutside AM2302: %s\nSensor errors: %lu", environmentText, (unsigned long)environmentErrors);
     size_t analogUsed = strlen(batteryText);
     snprintf(batteryText + analogUsed, sizeof(batteryText) - analogUsed,
              "\n\nBoosted supply (A1): %s\nAmbient light (A2): %s\nAux ADC errors: %lu",

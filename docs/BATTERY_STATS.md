@@ -169,3 +169,8 @@ Historical enclosure files may still include unused MAX mounting posts.
 - [Vishay TEMT6000 documentation](https://www.vishay.com/en/product/81579/)
 - [TI ADS1115 datasheet](https://www.ti.com/lit/ds/symlink/ads1115.pdf)
 - [LCDWiki schematic](https://www.lcdwiki.com/res/ES3C28P/2.8inch_ESP32-S3_Display_Schematic.pdf)
+
+## Outside temperature/humidity
+
+An AM2302 uses expansion GPIO2 (not ADS1115 or I2C) and appears beside these
+measurements. See [wiring, pin budget and enclosure placement](AM2302.md).

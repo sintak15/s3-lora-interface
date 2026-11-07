@@ -427,6 +427,8 @@ function renderHealth(s){
   ['Wi-Fi',s.wifiEnabled?`${s.wifiMode} · ${s.ip}`:'Off'],['Power',s.powerState]
  ]);
  renderStatGroup('diagBatteryStats',[
+  ['Outside temperature',s.environmentAvailable?`${s.ambientTemperatureC} °C`:'Unavailable'],
+  ['Outside humidity',s.environmentAvailable?`${s.ambientHumidityPercent}% RH`:'Unavailable'],
   ['Boosted supply',s.boostVoltageAvailable?`${s.boostVoltage} V`:'Unavailable'],
   ['Ambient light',s.ambientLightAvailable?`${s.ambientLightRelativePercent}% relative · ${s.ambientLightVoltage} V`:'Unavailable'],
   ['Battery alert',s.batteryHealth||'ok'],['Discharge',`${s.batteryDischargePercentHr||0}%/hr`],
