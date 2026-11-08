@@ -4,6 +4,11 @@ The [project README](../README.md) contains the hardware overview, wiring and
 first connection. These guides describe the current firmware unless marked as
 historical.
 
+## Hardware wiring
+
+- [Core build: ATGM336H GPS and ADS1115 battery sensing, without optional sensors](WIRING.md)
+- [Expanded sensor installation checklist](HARDWARE_UPGRADE.md)
+
 ## Firmware and operation
 
 - [Build, verification and source layout](BUILD.md)

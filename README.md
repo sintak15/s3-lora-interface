@@ -19,6 +19,13 @@ Percentage is a rough voltage estimate; no fuel gauge or charging detection is
 used. The ATGM336H supplies NMEA positions at 9600 baud. See the
 [battery wiring](docs/BATTERY_STATS.md) and [installation checklist](docs/HARDWARE_UPGRADE.md).
 
+## Core-build wiring guide
+
+Use the [ATGM336H and ADS1115 wiring guide](docs/WIRING.md) for the build
+without DHT22/AM2302, a light sensor, or boosted-5V rail monitoring. It replaces
+the NEO-6M and MAX17048. The sensor additions described below belong to the
+expanded hardware variant and are not required for this core build.
+
 ## Pin mapping — quick reference
 
 For the **LCDWiki 2.8-inch ESP32-S3 CYD** and **Heltec V3.2**. Numbers below
