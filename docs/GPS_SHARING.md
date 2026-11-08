@@ -1,6 +1,6 @@
 # Share CYD GPS with the Heltec
 
-Firmware v0.1.96 can supply positions from the CYD's NEO-6M over the existing
+The CYD supplies positions from its ATGM336H over the existing
 115200-baud Protobuf UART. The Heltec's Meshtastic 2.7.15 application already
 supports client-provided positions; no Heltec firmware update is required.
 

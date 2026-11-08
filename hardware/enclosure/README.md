@@ -8,13 +8,16 @@ names and geometry are unchanged by the repository reorganization.
 
 The [sensor enclosure guide](../../docs/ENCLOSURE_SENSORS.md) contains new direct-mount shells and separate ATGM336H, antenna and ADS1115 retrofit parts for trying the current printed case. Dimensions are provisional; print the small fit parts first.
 
-## Current print set
+## Existing V4 print set
+
+These mounts predate the ATGM336H/ADS1115 build. Use the adapters above and
+verify fit; the older board dimensions do not specify the current modules.
 
 | Part | Printable file | Notes |
 | --- | --- | --- |
 | Front face | [Tapered GPS supports](enclosure-v4-front-gps-tapered-rims.stl) | [GPS supports and 1.8 mm CYD pilots](../../docs/GPS_TAPERED_RIMS.md) |
 | Base and two Heltec brackets | [Combined 180 mm plate](enclosure-v4-latest-base-and-heltec-brackets.stl) | [Base screw posts](../../docs/MAX_SCREW_POSTS.md) |
-| Base alone | [MAX screw-post base](enclosure-v4-base-max-screw-posts.stl) | Same base as the combined plate |
+| Base alone | [Existing breakout screw-post base](enclosure-v4-base-max-screw-posts.stl) | Same base as the combined plate |
 | Antenna retainers | [Matching brackets](enclosure-v4-antenna-rails-repair.stl) | [GPS repair and matching rails](../../docs/GPS_PHOTO_REPAIR.md) |
 | Speaker retainer | [Frame](enclosure-v4-speaker-frame.stl) | [Remaining printed parts](../../docs/REMAINING_PRINTED_PARTS.md) |
 
@@ -36,7 +39,7 @@ checks. Earlier variants are retained for existing prints and fit investigations
 - [Open battery area](../../docs/BASE_OPEN_BATTERY.md) and [bottom power USB opening](../../docs/BASE_POWER_USB_BOTTOM.md)
 - [Flat antenna ledges](../../docs/ANTENNA_FLAT_LEDGES.md)
 - [GPS pins-down fit](../../docs/GPS_PINS_DOWN.md), [solid rims](../../docs/GPS_SOLID_RIMS.md), and [tapered rims](../../docs/GPS_TAPERED_RIMS.md)
-- [NEO-6M screw posts](../../docs/NEO6M_SCREW_POSTS.md) and [lowered Heltec posts](../../docs/HELTEC_POSTS_LOWERED_5P2MM.md)
+- [Historical GPS screw posts](../../docs/NEO6M_SCREW_POSTS.md) and [lowered Heltec posts](../../docs/HELTEC_POSTS_LOWERED_5P2MM.md)
 
 The [export helper](../../tools/export_enclosure.ps1) reads sources from this
 folder and writes new renders under ignored `build/enclosure-v4/` by default.

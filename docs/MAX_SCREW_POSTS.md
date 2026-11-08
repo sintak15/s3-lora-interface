@@ -1,5 +1,9 @@
 # MAX module screw-post base
 
+Historical mechanical revision: these dimensions describe earlier hardware.
+For current ATGM336H/ADS1115 connections use the [wiring guide](WIRING.md);
+verify replacement-module fit with the [adapter guide](ENCLOSURE_SENSORS.md).
+
 STL: `hardware/enclosure/enclosure-v4-base-max-screw-posts.stl`.
 Source: `hardware/enclosure/enclosure_v4_base_max_screws.scad`.
 

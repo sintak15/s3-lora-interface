@@ -1,5 +1,9 @@
 # Flat antenna between lowered ledges and level brackets
 
+Historical mechanical revision: these dimensions describe earlier hardware.
+For current ATGM336H/ADS1115 connections use the [wiring guide](WIRING.md);
+verify replacement-module fit with the [adapter guide](ENCLOSURE_SENSORS.md).
+
 Full face: `hardware/enclosure/enclosure-v4-front-antenna-ledges-lower.stl`.
 Small test: `hardware/enclosure/enclosure-v4-antenna-ledges-coupon.stl`.
 Source: `hardware/enclosure/enclosure_v4_front_antenna_ledges_lower.scad`.

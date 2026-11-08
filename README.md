@@ -14,7 +14,7 @@ readings under expandable topics. CYD label/value readouts use light blue
 labels and white measurements. See the [web UI and display guide](docs/WEB_UI.md).
 
 Battery voltage is measured through an external ADS1115 and a 10k/10k divider.
-ADS1115 A1 also monitors boosted 5 V; A2 reads a TEMT6000 light sensor.
+Only A0 is used for battery sensing; unused A1/A2/A3 are grounded.
 Percentage is a rough voltage estimate; no fuel gauge or charging detection is
 used. The ATGM336H supplies NMEA positions at 9600 baud. See the
 [battery wiring](docs/BATTERY_STATS.md) and [installation checklist](docs/HARDWARE_UPGRADE.md).
@@ -22,9 +22,8 @@ used. The ATGM336H supplies NMEA positions at 9600 baud. See the
 ## Core-build wiring guide
 
 Use the [ATGM336H and ADS1115 wiring guide](docs/WIRING.md) for the build
-without DHT22/AM2302, a light sensor, or boosted-5V rail monitoring. It replaces
-the NEO-6M and MAX17048. The sensor additions described below belong to the
-expanded hardware variant and are not required for this core build.
+without DHT22/AM2302, a light sensor, or boosted-5V rail monitoring.
+ATGM336H and ADS1115 are the current GPS and battery-sensing hardware.
 
 ## Pin mapping — quick reference
 
@@ -37,7 +36,7 @@ All modules share a common ground; UART and I²C signals use 3.3 V logic.
 | **GPIO14 — RX** | **Heltec GPIO39 — TX** | Heltec → CYD, 115200 baud |
 | **GPIO21 — TX** | **Heltec GPIO38 — RX** | CYD → Heltec, 115200 baud |
 | **GPIO3 — GPS RX** | **GPS TX** | GPS → CYD, 9600 baud; positions can be shared over the existing Heltec link |
-| **GPIO2** | AM2302 DATA, pullup to 3V3 | Outside temperature and humidity; GPS RX stays disconnected |
+| **GPIO2** | Leave disconnected | GPS is receive-only; no outside sensor installed |
 | **GPIO16 - SDA** | ADS1115 SDA and built-in touch/codec | Shared I2C bus; ADS1115 address 0x48 |
 | **GPIO15 — SCL** | ADS1115 SCL; built-in touch/codec | Shared I²C clock |
 | **3V3** | ADS1115 VDD | ADC supply and 3.3 V I2C pullups |
@@ -105,7 +104,7 @@ The current build uses:
 | [LCDWiki 2.8-inch ESP32-S3 display / CYD](https://www.lcdwiki.com/2.8inch_ESP32-S3_Display) | Touchscreen, web interface and SD storage |
 | Heltec V3.2 running Meshtastic | LoRa radio |
 | ATGM336H GPS breakout and antenna | NMEA location input to CYD |
-| ADS1115 breakout, four 10k 1% divider resistors, filter capacitors, TEMT6000 | Battery/5 V monitoring and relative ambient light |
+| ADS1115 breakout, two 10k 1% divider resistors and filter/decoupling capacitors | Battery voltage monitoring |
 | Single-cell rechargeable battery, 2500 mAh 18650 in this build | Portable power |
 | TP4056 charger and MT3608 5V boost converter | Charging and boosted supply |
 | FAT32 MicroSD card, optional | Offline maps and persistent logs |
@@ -114,6 +113,10 @@ The verified CYD has 16 MiB flash and 8 MiB PSRAM. Pin assignments below are
 specific to this hardware. GPIO numbers are not physical header positions.
 
 ## Enclosure
+
+The V4 print set predates the current GPS/ADC hardware. Its mounting envelopes
+are historical; check the [ATGM336H/ADS1115 adapters](docs/ENCLOSURE_SENSORS.md)
+and verify fit before printing.
 
 [V4 OpenSCAD enclosure](hardware/enclosure/enclosure_v4.scad) uses measured component envelopes,
 the single-battery holder, intact power assembly and oval speaker. It provides
@@ -130,7 +133,7 @@ Enclosure sources, printable files and fit coupons are grouped under
 
 - [Current face: tapered GPS supports and 1.8 mm CYD pilots](hardware/enclosure/enclosure-v4-front-gps-tapered-rims.stl).
 - [Current base plus two Heltec brackets on one 180 mm plate](hardware/enclosure/enclosure-v4-latest-base-and-heltec-brackets.stl).
-- [Current base alone: MAX screw posts and open battery area](hardware/enclosure/enclosure-v4-base-max-screw-posts.stl).
+- [Existing base alone: breakout screw posts and open battery area](hardware/enclosure/enclosure-v4-base-max-screw-posts.stl).
 - [Matching antenna brackets](hardware/enclosure/enclosure-v4-antenna-rails-repair.stl).
 - [Speaker retaining frame](hardware/enclosure/enclosure-v4-speaker-frame.stl).
 
@@ -195,16 +198,17 @@ Keep the CYD battery socket empty while using the external charger.
 In the Meshtastic serial module, set **Enabled**, **PROTO / Protobuf** mode,
 **115200 baud**, **RX pin 38** and **TX pin 39** for this wiring.
 
-### Outside temperature and humidity
+### Unused sensor connections
 
-AM2302 DATA uses expansion GPIO2 with a 3.3 V pullup. GPS is receive-only on
-GPIO3, with its TX function disabled in firmware. UART0 and USB pins stay
-untouched. See [AM2302 wiring and outside mounting](docs/AM2302.md).
+Leave GPIO2 disconnected and ground ADS1115 A1/A2/A3. No outside sensor,
+light sensor or 5V monitoring divider is installed. Disable absent outside-sensor
+polling with `AM2302_DATA_PIN=-1` in the local configuration; see the
+[core wiring guide](docs/WIRING.md).
 
 ### GPS
 
 ATGM336H TX connects to CYD GPIO3; GND connects to common system ground.
-Leave GPS RX disconnected; GPIO2 is now AM2302 data. Default is 9600 baud, 8N1, receive-only
+Leave GPS RX and CYD GPIO2 disconnected. Default is 9600 baud, 8N1, receive-only
 NMEA. Supply voltage must match the purchased BREAKOUT's documented rating;
 never assume a bare ATGM336H supports 5 V. Confirm its regulator/input labels
 before reusing the old GPS supply wire.

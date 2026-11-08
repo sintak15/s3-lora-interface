@@ -9,7 +9,7 @@ These parts target the current V4 tapered-GPS front and MAX screw-post base. Kee
 | Part | File | Installation |
 | --- | --- | --- |
 | ATGM336H receiver adapter | [GPS plate](../hardware/enclosure/sensors-retrofit_gps.stl) | Remove old GPS; use its four screw towers and retain the new board with a narrow nylon tie through the slots. |
-| ADS1115 adapter | [ADS plate](../hardware/enclosure/sensors-retrofit_ads.stl) | Remove MAX17048; use its four screw posts. Insulate and tie the ADS board to the plate. |
+| ADS1115 adapter | [ADS plate](../hardware/enclosure/sensors-retrofit_ads.stl) | Use the existing four breakout screw posts. Insulate and tie the ADS board to the plate. |
 | Smaller antenna carrier | [Antenna insert](../hardware/enclosure/sensors-retrofit_antenna.stl) | Trial-fit in the old 25 mm patch bay. Support carrier edges only; do not clamp or load the ceramic. |
 | External keyboard support | [CardKB tray](../hardware/enclosure/sensors-keyboard_tray.stl) | Removable standalone tray, retained with soft ties; connector edge stays open. |
 | Cable samples | [Fit coupon](../hardware/enclosure/sensors-fit_coupon.stl) | Check cable/plug clearance before making holes. |

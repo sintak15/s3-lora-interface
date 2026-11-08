@@ -1,5 +1,9 @@
 # NEO-6M screw-post face
 
+Historical mechanical revision: these dimensions describe earlier hardware.
+For current ATGM336H/ADS1115 connections use the [wiring guide](WIRING.md);
+verify replacement-module fit with the [adapter guide](ENCLOSURE_SENSORS.md).
+
 STL: `hardware/enclosure/enclosure-v4-front-neo6m-screw-posts.stl`.
 Source: `hardware/enclosure/enclosure_v4_front_neo6m_screws.scad`.
 

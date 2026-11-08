@@ -1,9 +1,11 @@
 # ADS1115 battery voltage monitoring
 
-This branch uses an external ADS1115, not a fuel gauge. It requires no CYD
-component changes. Leave R14/R15 and GPIO9 untouched. Remove the failed MAX17048
-and its battery/I2C wiring. Keep the existing TP4056 charger and MT3608 boost.
+Battery voltage is measured with an external ADS1115. It requires no CYD
+component changes. Leave R14/R15 and GPIO9 untouched. Keep the existing TP4056 charger and MT3608 boost.
 There is no charging detection or remaining-runtime estimate.
+
+For the current battery-only build, use the [core wiring guide](WIRING.md).
+The A1/A2 and outside-sensor sections below describe an optional expanded variant.
 
 ## Wiring (all power disconnected)
 
@@ -162,7 +164,7 @@ include A1/A2 observations every 10 seconds; legacy CSV columns stay unchanged. 
 columns remain for compatibility with validity false and unused raw values zero.
 soc_percent holds voltage-estimated percent (-1 when unavailable). cell_mv and
 voltage variation columns now use ADS1115 observations. Archives are unchanged.
-Historical enclosure files may still include unused MAX mounting posts.
+Historical enclosure files may still include unused breakout mounting posts.
 
 ## References
 

@@ -1,5 +1,9 @@
 # Antenna shifted toward the right wall for pins-down NEO-6M mounting
 
+Historical mechanical revision: these dimensions describe earlier hardware.
+For current ATGM336H/ADS1115 connections use the [wiring guide](WIRING.md);
+verify replacement-module fit with the [adapter guide](ENCLOSURE_SENSORS.md).
+
 Full face: `hardware/enclosure/enclosure-v4-front-gps-pins-down.stl`.
 Small first-print test section: `hardware/enclosure/enclosure-v4-gps-pins-down-coupon.stl`.
 Source: `hardware/enclosure/enclosure_v4_front_gps_pins_down.scad`.

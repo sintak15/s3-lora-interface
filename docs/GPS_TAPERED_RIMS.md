@@ -1,5 +1,9 @@
 # Support-saving GPS rims and tighter CYD pilots
 
+Historical mechanical revision: these dimensions describe earlier hardware.
+For current ATGM336H/ADS1115 connections use the [wiring guide](WIRING.md);
+verify replacement-module fit with the [adapter guide](ENCLOSURE_SENSORS.md).
+
 Full face: `hardware/enclosure/enclosure-v4-front-gps-tapered-rims.stl`.
 GPS test section: `hardware/enclosure/enclosure-v4-gps-tapered-rims-coupon.stl`.
 CYD screw-fit test: `hardware/enclosure/enclosure-v4-cyd-tight-test.stl`.

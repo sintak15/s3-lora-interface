@@ -2,7 +2,7 @@
 
 This is the core build for the LCDWiki 2.8-inch ESP32-S3 CYD and Heltec
 V3.2 running Meshtastic. It uses an ATGM336H GPS and ADS1115 battery ADC.
-The NEO-6M and MAX17048 are no longer used. No DHT22/AM2302, light sensor,
+No DHT22/AM2302, light sensor,
 or boosted-5V monitoring divider is installed. The 5V rail still powers the boards.
 GPIO numbers below belong to the named board, not physical header positions.
 
@@ -49,7 +49,7 @@ unavailable for ATGM336H; no u-blox configuration commands are sent.
 
 ## ADS1115 battery sensing only
 
-Remove the MAX17048 and its old battery/I2C wires. Identify the CYD I2C
+Identify the CYD I2C
 connector pins by signal label, not wire color or connector orientation.
 
 | ADS1115 | Connection |

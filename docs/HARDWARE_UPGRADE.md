@@ -3,6 +3,9 @@
 Software preparation is complete; physical behavior is NOT yet bench verified.
 No automatic flash or Heltec configuration changes have been performed.
 
+The current build uses the [core wiring guide](WIRING.md), without outside,
+light or 5V-rail sensors. The checklist below describes the optional expanded variant.
+
 ## Parts and wiring
 
 - ATGM336H breakout with its supplied antenna.
@@ -12,8 +15,7 @@ No automatic flash or Heltec configuration changes have been performed.
 - The existing TP4056, MT3608, cell, switch, CYD and Heltec remain.
 - No fuel gauge, compass or charging detection is installed.
 
-Disconnect battery and all USB before changing wiring. Remove failed MAX17048
-and its old battery connections. Do not reuse its battery socket for ADS1115.
+Disconnect battery and all USB before changing wiring. Do not connect ADS1115 through a battery socket.
 The CYD I2C connector supplies 3V3/GND/SDA16/SCL15 to ADS1115. ADDR -> GND;
 A0 -> the 10k/10k divider on switched unboosted cell positive. Follow the
 [complete battery wiring and power-off tests](BATTERY_STATS.md). Leave CYD

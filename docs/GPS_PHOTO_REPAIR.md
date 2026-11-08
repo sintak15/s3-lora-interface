@@ -1,5 +1,9 @@
 # GPS fit and post-strength revision from the new photographs
 
+Historical mechanical revision: these dimensions describe earlier hardware.
+For current ATGM336H/ADS1115 connections use the [wiring guide](WIRING.md);
+verify replacement-module fit with the [adapter guide](ENCLOSURE_SENSORS.md).
+
 Full face: `hardware/enclosure/enclosure-v4-front-gps-repair.stl`.
 Matching antenna rails: `hardware/enclosure/enclosure-v4-antenna-rails-repair.stl`.
 Small first-print test: `hardware/enclosure/enclosure-v4-gps-repair-coupon.stl`.

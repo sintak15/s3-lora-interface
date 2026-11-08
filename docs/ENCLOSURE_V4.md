@@ -1,5 +1,9 @@
 # V4 enclosure — measured parts, single battery
 
+Historical mechanical revision: these dimensions describe earlier hardware.
+For current ATGM336H/ADS1115 connections use the [wiring guide](WIRING.md);
+verify replacement-module fit with the [adapter guide](ENCLOSURE_SENSORS.md).
+
 [OpenSCAD source](../hardware/enclosure/enclosure_v4.scad). This revision uses your component
 measurements and photograph, including the confirmed **70 mm** power board and
 the final **76.4 × 22.6 × 20.9 mm single-battery holder**. V3 remains available

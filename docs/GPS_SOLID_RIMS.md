@@ -1,5 +1,9 @@
 # Filled NEO-6M post rims
 
+Historical mechanical revision: these dimensions describe earlier hardware.
+For current ATGM336H/ADS1115 connections use the [wiring guide](WIRING.md);
+verify replacement-module fit with the [adapter guide](ENCLOSURE_SENSORS.md).
+
 Full face: `hardware/enclosure/enclosure-v4-front-gps-solid-rims.stl`.
 Small test: `hardware/enclosure/enclosure-v4-gps-solid-rims-coupon.stl`.
 
