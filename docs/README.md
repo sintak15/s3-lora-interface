@@ -6,7 +6,7 @@ historical.
 
 ## Hardware wiring
 
-- [Core build: ATGM336H GPS and ADS1115 battery sensing, without optional sensors](WIRING.md)
+- [Beginner wiring: exact connections, battery divider, meter checks and troubleshooting](WIRING.md)
 - [Expanded sensor installation checklist](HARDWARE_UPGRADE.md)
 
 ## Firmware and operation

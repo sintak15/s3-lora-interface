@@ -19,9 +19,11 @@ Percentage is a rough voltage estimate; no fuel gauge or charging detection is
 used. The ATGM336H supplies NMEA positions at 9600 baud. See the
 [battery wiring](docs/BATTERY_STATS.md) and [installation checklist](docs/HARDWARE_UPGRADE.md).
 
-## Core-build wiring guide
+## Beginner wiring guide
 
-Use the [ATGM336H and ADS1115 wiring guide](docs/WIRING.md) for the build
+Follow the [step-by-step beginner wiring guide](docs/WIRING.md) for exact
+wire connections, battery-divider assembly, meter checks and troubleshooting
+for the build
 without DHT22/AM2302, a light sensor, or boosted-5V rail monitoring.
 ATGM336H and ADS1115 are the current GPS and battery-sensing hardware.
 

@@ -24,7 +24,8 @@ current enclosure, skip the branch-removal step.
    Accepted are separate counters. A queue acceptance confirms local ingestion,
    not a LoRa transmission or remote delivery.
 5. Power off before removing only the branch from **GPS TX to Heltec GPIO5**.
-   Keep GPS TX to CYD GPIO3, GPS RX to CYD GPIO2, GPS power and common ground.
+   Keep GPS TX to CYD GPIO3, GPS power and common ground. Leave GPS RX
+   and CYD GPIO2 disconnected for the current receive-only ATGM336H.
    The CYD GPIO14 RX / GPIO21 TX to Heltec GPIO39 TX / GPIO38 RX link stays connected.
 
 The Heltec pin pair above was read directly from the radio on October 25, 2026.
